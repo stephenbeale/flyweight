@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F25E3F2A-7C09-4566-84E7-AAB0BCDBFE00}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Flyweight.Core", "src\Flyweight.Core\Flyweight.Core.csproj", "{3D1757B1-C9A4-460F-86D5-9A598E4A7948}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{1F034763-25F3-448E-AE0A-74E56A78EBB9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Flyweight.Core.Tests", "tests\Flyweight.Core.Tests\Flyweight.Core.Tests.csproj", "{45270269-6A42-498B-904F-C4EDD31F8A7F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3D1757B1-C9A4-460F-86D5-9A598E4A7948}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D1757B1-C9A4-460F-86D5-9A598E4A7948}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D1757B1-C9A4-460F-86D5-9A598E4A7948}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D1757B1-C9A4-460F-86D5-9A598E4A7948}.Release|Any CPU.Build.0 = Release|Any CPU
+		{45270269-6A42-498B-904F-C4EDD31F8A7F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{45270269-6A42-498B-904F-C4EDD31F8A7F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{45270269-6A42-498B-904F-C4EDD31F8A7F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{45270269-6A42-498B-904F-C4EDD31F8A7F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{3D1757B1-C9A4-460F-86D5-9A598E4A7948} = {F25E3F2A-7C09-4566-84E7-AAB0BCDBFE00}
+		{45270269-6A42-498B-904F-C4EDD31F8A7F} = {1F034763-25F3-448E-AE0A-74E56A78EBB9}
+	EndGlobalSection
+EndGlobal
