@@ -1,4 +1,4 @@
-<img src="assets/icon-128.png" width="96" align="right" alt="Flyweight icon: a gold boxing glove with a film-strip cuff">
+<img src="assets/icon-128.png" width="96" align="right" alt="Flyweight icon: a gold boxing glove inside a film frame">
 
 # Flyweight
 

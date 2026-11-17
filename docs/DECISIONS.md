@@ -76,8 +76,10 @@ Accepted improvements: choose output size when creating a project (v0.1); later,
 (540p/720p), an opt-in "save disk space" mode (keep an output-size copy instead of the original), and exporting
 from a high-quality mid-size copy if export speed becomes a problem.
 
-### D16. Icon: gold boxing glove with a film-strip cuff
-Plays on the name/tagline ("punches above its weight"). Early drafts used a red glove with a white play
-triangle, but that read as the YouTube logo (confusing and a trademark risk), so the rule is: **no red + white
-play button**. Video is signalled by the film-strip cuff instead. Source: `assets/icon.svg`; rendered PNGs in
-`assets/`, multi-size `src/Flyweight.App/flyweight.ico` (16–256 px). Re-render the PNGs/ICO if the SVG changes.
+### D16. Icon: gold boxing glove inside a single film frame
+Plays on the name/tagline ("punches above its weight"). The tile is one frame of film (sprocket holes on both
+edges) with a gold glove mid-punch in the blue picture window. The owner chose this over a film-strip cuff and a
+film strip behind the glove (both in `assets/concepts/`, compared in `comparison.png`).
+Rule: **no red + white play button**. Early drafts read as the YouTube logo (confusing and a trademark risk).
+Source: `assets/icon.svg`; rendered `assets/icon-128.png`/`icon-512.png`; multi-size
+`src/Flyweight.App/flyweight.ico` (16–256 px). Re-render the PNGs/ICO if the SVG changes.
