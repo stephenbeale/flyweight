@@ -5,7 +5,8 @@ Cut your clips, put them in order, draw **arrows, boxes and text** on them, and 
 YouTube-ready MP4, without the lag and crashes of heavyweight editors.
 
 > Status: MVP scaffold. Core editing/export logic is covered by tests; the WinForms UI compiles
-> but needs a first run-through on Windows.
+> but needs a first run-through on Windows. See [docs/ROADMAP.md](docs/ROADMAP.md) for status and next steps,
+> [docs/DECISIONS.md](docs/DECISIONS.md) for the reasoning behind the design, and [CLAUDE.md](CLAUDE.md) for AI-session context.
 
 ## Features (v0.1)
 
