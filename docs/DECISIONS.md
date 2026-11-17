@@ -65,3 +65,13 @@ in Core, behind an interface (e.g. `IMediaCatalog`). The project file stays JSON
 A WinForms desktop app can't usefully run in a container, and users get a normal exe/installer. For reproducible
 testing use GitHub Actions: an Ubuntu job (apt ffmpeg, `dotnet test`, including export pixel checks) plus a
 Windows job (build Flyweight.App). Revisit Docker only if a server component appears (cloud render, licence/update server).
+
+### D15. Edit on proxies, export from originals (don't replace originals with downscaled copies)
+Owner asked: why not scale videos down on load, since the output is compressed anyway? That is what the proxy
+step (D3) already does: all editing uses 960×540 proxies, and originals are only read once, at export. We
+deliberately do NOT replace originals with output-size copies, because that would mean double compression
+(quality loss), no way to change output resolution upward later, and no headroom to zoom/crop. Zooming into
+part of a 4K frame matters for tutorial/annotation videos.
+Accepted improvements: choose output size when creating a project (v0.1); later, a choosable proxy quality
+(540p/720p), an opt-in "save disk space" mode (keep an output-size copy instead of the original), and exporting
+from a high-quality mid-size copy if export speed becomes a problem.

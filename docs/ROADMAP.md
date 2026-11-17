@@ -18,10 +18,12 @@ _Last updated: 2026-11-17_
 
 0. **Add GitHub Actions CI** (agreed, not yet done): Ubuntu job = install ffmpeg + `dotnet test`;
    Windows job = build `Flyweight.App`. See DECISIONS D14.
-1. **First run on Windows.** Add ffmpeg/ffprobe to `src/Flyweight.App/ffmpeg/`, F5, then work through the smoke test below and fix what breaks.
-2. **Playback polish.** Smooth playhead, clip-boundary transitions, scrubbing feel (`PlaybackEngine`).
-3. **Layout/DPI polish.** Splitter sizes, dark theme consistency (ToolStrip, PropertyGrid), high-DPI scaling.
-4. **Success test:** 10 real phone clips (incl. 4K HEVC + a portrait clip), add 5 annotations, export a ~2 min
+1. **Output size chosen at project creation** (agreed, small): New project → 1080p / 1440p / 4K, stored in
+   `Project` (e.g. `OutputResolution`) and used as the export default. See DECISIONS D15.
+2. **First run on Windows.** Add ffmpeg/ffprobe to `src/Flyweight.App/ffmpeg/`, F5, then work through the smoke test below and fix what breaks.
+3. **Playback polish.** Smooth playhead, clip-boundary transitions, scrubbing feel (`PlaybackEngine`).
+4. **Layout/DPI polish.** Splitter sizes, dark theme consistency (ToolStrip, PropertyGrid), high-DPI scaling.
+5. **Success test:** 10 real phone clips (incl. 4K HEVC + a portrait clip), add 5 annotations, export a ~2 min
    1080p video in under 15 min total, with the export matching the preview exactly. No freezes, no crashes.
 
 ### Smoke-test checklist (first Windows run)
@@ -54,6 +56,10 @@ _Last updated: 2026-11-17_
 - Captions (.srt) export
 
 ## Later (v0.3+)
+- Preview quality setting (540p / 720p proxies)
+- Opt-in "save disk space" mode: keep an output-size copy instead of 4K originals (D15)
+- Export from a high-quality mid-size copy if export speed becomes a pain point (D15)
+- Zoom/crop (Ken Burns, zoom into a screen region) that uses 4K headroom
 - Cross-project media library / proxy-cache manager → SQLite + Dapper (DECISIONS D13)
 
 ## Explicitly not planned (for now)
