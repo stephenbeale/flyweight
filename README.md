@@ -1,5 +1,7 @@
 # Flyweight
 
+**A small but mighty video editor that punches above its weight.**
+
 A simple, lightweight video editor for Windows, focused on long-form content (YouTube).
 Cut your clips, put them in order, draw **arrows, boxes and text** on them, and export a
 YouTube-ready MP4, without the lag and crashes of heavyweight editors.
