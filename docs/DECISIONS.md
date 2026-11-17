@@ -54,3 +54,14 @@ ffmpeg runs out of process. Projects save atomically (temp + move). Autosave eve
 ### D12. Licensing
 Repo is MIT. ffmpeg is invoked as a separate executable (not linked); LibVLC is LGPL. When distributing binaries,
 prefer an LGPL ffmpeg build or accept GPL terms for the bundled ffmpeg (x264).
+
+### D13. No database (yet): Dapper + SQLite only when a feature needs querying
+Owner asked about Dapper. There is no SQL today: a project is one JSON file, which keeps save/undo/autosave
+trivial and projects portable. **If** a cross-project media library (tags/search), a proxy-cache index
+(size/last-used/auto-cleanup) or a large presets store is built, use **SQLite + Microsoft.Data.Sqlite + Dapper**,
+in Core, behind an interface (e.g. `IMediaCatalog`). The project file stays JSON regardless.
+
+### D14. No Docker for the app; GitHub Actions for CI
+A WinForms desktop app can't usefully run in a container, and users get a normal exe/installer. For reproducible
+testing use GitHub Actions: an Ubuntu job (apt ffmpeg, `dotnet test`, including export pixel checks) plus a
+Windows job (build Flyweight.App). Revisit Docker only if a server component appears (cloud render, licence/update server).

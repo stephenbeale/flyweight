@@ -16,6 +16,8 @@ _Last updated: 2026-11-17_
 
 ## Next steps (in order)
 
+0. **Add GitHub Actions CI** (agreed, not yet done): Ubuntu job = install ffmpeg + `dotnet test`;
+   Windows job = build `Flyweight.App`. See DECISIONS D14.
 1. **First run on Windows.** Add ffmpeg/ffprobe to `src/Flyweight.App/ffmpeg/`, F5, then work through the smoke test below and fix what breaks.
 2. **Playback polish.** Smooth playhead, clip-boundary transitions, scrubbing feel (`PlaybackEngine`).
 3. **Layout/DPI polish.** Splitter sizes, dark theme consistency (ToolStrip, PropertyGrid), high-DPI scaling.
@@ -50,6 +52,9 @@ _Last updated: 2026-11-17_
 - Blurred-background fill for portrait clips
 - Title cards
 - Captions (.srt) export
+
+## Later (v0.3+)
+- Cross-project media library / proxy-cache manager → SQLite + Dapper (DECISIONS D13)
 
 ## Explicitly not planned (for now)
 Vertical / 9:16 output · multi-track video compositing · real-time GPU effects · AI features · transitions library
