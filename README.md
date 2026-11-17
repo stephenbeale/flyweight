@@ -1,3 +1,5 @@
+<img src="assets/icon-128.png" width="96" align="right" alt="Flyweight icon: a gold boxing glove with a film-strip cuff">
+
 # Flyweight
 
 **Flyweight: the video editor that punches above its weight.**

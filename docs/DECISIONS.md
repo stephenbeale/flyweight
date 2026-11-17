@@ -75,3 +75,9 @@ part of a 4K frame matters for tutorial/annotation videos.
 Accepted improvements: choose output size when creating a project (v0.1); later, a choosable proxy quality
 (540p/720p), an opt-in "save disk space" mode (keep an output-size copy instead of the original), and exporting
 from a high-quality mid-size copy if export speed becomes a problem.
+
+### D16. Icon: gold boxing glove with a film-strip cuff
+Plays on the name/tagline ("punches above its weight"). Early drafts used a red glove with a white play
+triangle, but that read as the YouTube logo (confusing and a trademark risk), so the rule is: **no red + white
+play button**. Video is signalled by the film-strip cuff instead. Source: `assets/icon.svg`; rendered PNGs in
+`assets/`, multi-size `src/Flyweight.App/flyweight.ico` (16–256 px). Re-render the PNGs/ICO if the SVG changes.

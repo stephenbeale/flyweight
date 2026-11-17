@@ -12,6 +12,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Lets the project compile on non-Windows build machines/CI; harmless on Windows. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationIcon>flyweight.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +27,7 @@
   <!-- Drop ffmpeg.exe + ffprobe.exe into src/Flyweight.App/ffmpeg/ and they ship next to the app. -->
   <ItemGroup>
     <None Include="ffmpeg\*.exe" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="flyweight.ico" LogicalName="Flyweight.App.flyweight.ico" />
   </ItemGroup>
 
 </Project>

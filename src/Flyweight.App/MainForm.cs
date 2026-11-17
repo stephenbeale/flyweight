@@ -43,6 +43,8 @@ public sealed class MainForm : Form
         ForeColor = Color.Gainsboro;
         KeyPreview = true;
         AllowDrop = true;
+        using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("Flyweight.App.flyweight.ico"))
+            if (iconStream is not null) Icon = new Icon(iconStream);
 
         _engine = new PlaybackEngine(_session, _library);
         _preview.Bind(_session, _engine);
