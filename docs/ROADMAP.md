@@ -1,6 +1,6 @@
 # Roadmap & status
 
-_Last updated: 2026-11-17_
+_Last updated: 2026-11-19_
 
 ## Where things stand
 
@@ -13,13 +13,13 @@ _Last updated: 2026-11-17_
 | Export (concat, trim, fit/pad 16:9, audio, timed overlays) | ✅ Done, integration-tested down to output pixels |
 | WinForms UI (preview, timeline, bin, properties, export dialog) | 🟡 Written and compiles; **never run** |
 | LibVLC playback engine | 🟡 Written and compiles; **never run**: highest risk |
+| CI (GitHub Actions: Ubuntu tests + ffmpeg, Windows app build) | ✅ Done (`.github/workflows/ci.yml`) |
+| Output size chosen at New project (`Project.OutputResolution`) | ✅ Done; export dialog defaults to it |
 
 ## Next steps (in order)
 
-0. **Add GitHub Actions CI** (agreed, not yet done): Ubuntu job = install ffmpeg + `dotnet test`;
-   Windows job = build `Flyweight.App`. See DECISIONS D14.
-1. **Output size chosen at project creation** (agreed, small): New project → 1080p / 1440p / 4K, stored in
-   `Project` (e.g. `OutputResolution`) and used as the export default. See DECISIONS D15.
+0. ~~Add GitHub Actions CI~~ ✅ (D14). CI sets `FLYWEIGHT_REQUIRE_FFMPEG=1` so integration tests fail rather than skip.
+1. ~~Output size chosen at project creation~~ ✅ (D15). Old project files load as 1080p.
 2. **First run on Windows.** Add ffmpeg/ffprobe to `src/Flyweight.App/ffmpeg/`, F5, then work through the smoke test below and fix what breaks.
 3. **Playback polish.** Smooth playhead, clip-boundary transitions, scrubbing feel (`PlaybackEngine`).
 4. **Layout/DPI polish.** Splitter sizes, dark theme consistency (ToolStrip, PropertyGrid), high-DPI scaling.

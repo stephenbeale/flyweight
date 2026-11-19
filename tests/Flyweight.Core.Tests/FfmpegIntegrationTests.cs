@@ -18,10 +18,19 @@ public sealed class FfmpegIntegrationTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
 
+    /// <summary>
+    /// True if ffmpeg runs. Locally the tests self-skip without it; CI sets
+    /// FLYWEIGHT_REQUIRE_FFMPEG=1 so a broken ffmpeg install fails loudly instead of skipping.
+    /// </summary>
     static bool FfmpegAvailable()
     {
         try { FfmpegRunner.RunFfmpegAsync(new[] { "-version" }).Wait(); return true; }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1")
+                throw new InvalidOperationException("ffmpeg is required (FLYWEIGHT_REQUIRE_FFMPEG=1) but could not run.", ex);
+            return false;
+        }
     }
 
     async Task<string> MakeClip(string name, int w, int h, double seconds, string color, bool audio, double fps = 30)

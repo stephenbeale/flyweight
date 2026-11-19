@@ -18,6 +18,17 @@ public static class Canvas
 
 public enum ExportResolution { P1080, P1440, P2160 }
 
+public static class ExportResolutions
+{
+    /// <summary>Dropdown order matches the enum, so an index maps straight to a value.</summary>
+    public static readonly IReadOnlyList<(ExportResolution Value, string Label)> All = new[]
+    {
+        (ExportResolution.P1080, "1080p (1920×1080)"),
+        (ExportResolution.P1440, "1440p (2560×1440): better YouTube quality"),
+        (ExportResolution.P2160, "4K (3840×2160)"),
+    };
+}
+
 /// <summary>Settings for YouTube-friendly export. Codec choices are fixed on purpose.</summary>
 public sealed record ExportSettings
 {

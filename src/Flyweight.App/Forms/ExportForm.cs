@@ -30,8 +30,8 @@ public sealed class ExportForm : Form
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Padding = new Padding(14);
 
-        _resolution.Items.AddRange(new object[] { "1080p (1920×1080)", "1440p (2560×1440): better YouTube quality", "4K (3840×2160)" });
-        _resolution.SelectedIndex = 0;
+        foreach (var (_, label) in ExportResolutions.All) _resolution.Items.Add(label);
+        _resolution.SelectedIndex = (int)project.OutputResolution; // the size chosen at New project
         _path.Text = suggestedPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "My video.mp4");
 
         var layout = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
@@ -70,7 +70,7 @@ public sealed class ExportForm : Form
         if (string.IsNullOrEmpty(output)) { Browse(); return; }
         if (!output.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) output += ".mp4";
 
-        var settings = new ExportSettings { Resolution = (ExportResolution)_resolution.SelectedIndex };
+        var settings = new ExportSettings { Resolution = ExportResolutions.All[_resolution.SelectedIndex].Value };
         var (w, h) = settings.Size;
         var temp = Path.Combine(Path.GetTempPath(), "Flyweight-export-" + Guid.NewGuid().ToString("N"));
 

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Flyweight.Core.Media;
 
 namespace Flyweight.Core.Model;
 
@@ -9,6 +10,12 @@ namespace Flyweight.Core.Model;
 public sealed class Project
 {
     public int Version { get; set; } = 1;
+
+    /// <summary>
+    /// Output size chosen when the project was created; the export dialog's default.
+    /// Older project files without it load as 1080p.
+    /// </summary>
+    public ExportResolution OutputResolution { get; set; } = ExportResolution.P1080;
 
     /// <summary>Every source file imported into the media bin.</summary>
     public List<SourceMedia> Media { get; set; } = new();

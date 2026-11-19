@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Core tests (Ubuntu + ffmpeg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+
+      # Only Core + tests: the App targets net8.0-windows and is built by the Windows job.
+      - name: Test
+        env:
+          FLYWEIGHT_REQUIRE_FFMPEG: "1"
+        run: dotnet test tests/Flyweight.Core.Tests/Flyweight.Core.Tests.csproj --configuration Release --logger "console;verbosity=normal"
+
+  app-build:
+    name: App build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build solution
+        run: dotnet build Flyweight.sln --configuration Release
