@@ -59,10 +59,16 @@ public sealed class MainForm : Form
 
     void BuildLayout()
     {
-        var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, RenderMode = ToolStripRenderMode.System, Padding = new Padding(6, 2, 6, 2) };
+        // System-rendered (light) toolbar: set its colours explicitly, otherwise items inherit the
+        // form's dark-theme Gainsboro text and come out pale grey on the light strip.
+        var tools = new ToolStrip
+        {
+            GripStyle = ToolStripGripStyle.Hidden, RenderMode = ToolStripRenderMode.System, Padding = new Padding(6, 2, 6, 2),
+            BackColor = SystemColors.Control, ForeColor = Color.Black,
+        };
         ToolStripButton Btn(string text, string tip, Action click)
         {
-            var b = new ToolStripButton(text) { ToolTipText = tip, DisplayStyle = ToolStripItemDisplayStyle.Text };
+            var b = new ToolStripButton(text) { ToolTipText = tip, DisplayStyle = ToolStripItemDisplayStyle.Text, ForeColor = Color.Black };
             b.Click += (_, _) => click();
             return b;
         }
@@ -70,6 +76,7 @@ public sealed class MainForm : Form
         _redoBtn.Click += (_, _) => _session.Redo();
         _undoBtn.ToolTipText = "Undo (Ctrl+Z)";
         _redoBtn.ToolTipText = "Redo (Ctrl+Y)";
+        _undoBtn.ForeColor = _redoBtn.ForeColor = Color.Black; // still greys out when disabled
 
         tools.Items.AddRange(new ToolStripItem[]
         {
