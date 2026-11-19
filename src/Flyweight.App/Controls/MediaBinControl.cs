@@ -60,6 +60,7 @@ public sealed class MediaBinControl : UserControl
             var st = library.GetState(m.Id);
             item.SubItems[1].Text = st.Status switch
             {
+                ProxyStatus.Ready when m.IsStill => $"Image  ·  {m.Width}×{m.Height}",
                 ProxyStatus.Ready => $"{TimelineControl.FormatTime(m.Duration)}  ·  {m.Width}×{m.Height}  ·  {m.Fps:0.##} fps",
                 ProxyStatus.Optimising => $"Optimising {st.Progress:P0}",
                 ProxyStatus.Failed => $"Failed: {st.Error}",

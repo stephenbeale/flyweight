@@ -31,8 +31,9 @@ public sealed class ExportPlan
         if (p.Timeline.Count == 0) throw new InvalidOperationException("The timeline is empty.");
 
         var (w, h) = settings.Size;
+        // Frame rate: the first VIDEO clip's (a still's nominal 30 fps shouldn't decide it).
         double fps = settings.FrameRate > 0 ? settings.FrameRate
-                   : p.FindMedia(p.Timeline[0].SourceId)?.Fps is > 0 and var f ? f : 30;
+                   : p.Timeline.Select(c => p.FindMedia(c.SourceId)).FirstOrDefault(m => m is { IsStill: false })?.Fps is > 0 and var f ? f : 30;
         string fpsStr = Num(Math.Round(fps, 3));
 
         var args = new List<string>();
@@ -44,7 +45,15 @@ public sealed class ExportPlan
         {
             var clip = p.Timeline[i];
             var media = p.FindMedia(clip.SourceId) ?? throw new InvalidOperationException($"Clip {i + 1} refers to missing media.");
-            args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.Duration), "-i", media.OriginalPath });
+            // A zero/negative length would become trim=duration=0, which ffmpeg reads as "no
+            // limit": with tpad's endless clone that is an export that never finishes.
+            if (clip.Duration < TimelineOps.MinClipLength)
+                throw new InvalidOperationException($"Clip {i + 1} ({media.DisplayName}) is too short to export. Delete it and re-import the file.");
+
+            if (media.IsStill)
+                args.AddRange(new[] { "-loop", "1", "-framerate", fpsStr, "-t", Sec(clip.Duration), "-i", media.OriginalPath });
+            else
+                args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.Duration), "-i", media.OriginalPath });
             var d = Sec(clip.Duration);
 
             graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{Canvas.FitFilter(w, h)},format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");

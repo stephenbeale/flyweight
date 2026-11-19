@@ -16,6 +16,9 @@ public static class TimelineOps
 
     public static readonly TimeSpan DefaultAnnotationLength = TimeSpan.FromSeconds(3);
 
+    /// <summary>How long an imported still image runs on the timeline.</summary>
+    public static readonly TimeSpan DefaultStillLength = TimeSpan.FromSeconds(8);
+
     public static TimeSpan TotalDuration(Project p) =>
         p.Timeline.Aggregate(TimeSpan.Zero, (sum, c) => sum + c.Duration);
 
@@ -46,7 +49,7 @@ public static class TimelineOps
 
     public static Clip Append(Project p, SourceMedia media)
     {
-        var clip = new Clip { SourceId = media.Id, In = TimeSpan.Zero, Out = media.Duration };
+        var clip = new Clip { SourceId = media.Id, In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration };
         p.Timeline.Add(clip);
         return clip;
     }
@@ -82,6 +85,32 @@ public static class TimelineOps
             }
         }
         return right;
+    }
+
+    /// <summary>How long a freeze frame holds by default.</summary>
+    public static readonly TimeSpan DefaultFreezeLength = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Insert a still (the frame grabbed at <paramref name="t"/>) at the playhead, held for
+    /// <paramref name="length"/>. The clip under the playhead is split there first, and the rest
+    /// of the timeline ripples right. At (or near) a clip boundary no split is needed.
+    /// Returns the new still clip, or null if <paramref name="t"/> is outside the timeline.
+    /// </summary>
+    public static Clip? InsertFreezeFrame(Project p, TimeSpan t, SourceMedia still, TimeSpan length)
+    {
+        if (!still.IsStill) throw new ArgumentException("Freeze frames must be still images.", nameof(still));
+        if (Locate(p, t) is not { } hit) return null;
+
+        int insertAt;
+        if (hit.SourceTime - hit.Clip.In < MinClipLength) insertAt = hit.Index;               // at the clip's start
+        else if (hit.Clip.Out - hit.SourceTime < MinClipLength) insertAt = hit.Index + 1;     // at its end
+        else { SplitAt(p, t); insertAt = hit.Index + 1; }
+
+        if (p.FindMedia(still.Id) is null) p.Media.Add(still);
+        var hold = Clamp(length, MinClipLength, still.Duration);
+        var clip = new Clip { SourceId = still.Id, In = TimeSpan.Zero, Out = hold };
+        p.Timeline.Insert(insertAt, clip);
+        return clip;
     }
 
     /// <summary>Ripple delete: remove the clip and close the gap. Its annotations go too.</summary>

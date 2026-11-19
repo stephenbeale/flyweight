@@ -83,3 +83,12 @@ film strip behind the glove (both in `assets/concepts/`, compared in `comparison
 Rule: **no red + white play button**. Early drafts read as the YouTube logo (confusing and a trademark risk).
 Source: `assets/icon.svg`; rendered `assets/icon-128.png`/`icon-512.png`; multi-size
 `src/Flyweight.App/flyweight.ico` (16–256 px). Re-render the PNGs/ICO if the SVG changes.
+
+### D17. Still images and freeze frames are first-class "stills"
+Images are probed as stills (`SourceMedia.IsStill`), never as near-zero-length videos (that caused unbounded
+ffmpeg output and a never-finishing export). Defaults: 8s on the timeline (`DefaultStillLength`), 5s for a freeze
+frame, and a 5-minute cap (`StillMaxDuration`) so the looped proxy stays cheap (~8s to build for 5 min). Export loops
+the original image at the fps of the first non-still clip and errors on clips shorter than `MinClipLength`.
+Freeze frames are full-res PNGs extracted from the original into `%LocalAppData%\Flyweightrames`.
+Known limitation: that folder is not portable with the `.flyweight` file, so a project moved to another machine
+loses its freeze-frame images. Revisit (e.g. store beside the project) if this bites.

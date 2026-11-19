@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Flyweight.Core.Model;
+using static Flyweight.Core.Media.FfmpegRunner;
 
 namespace Flyweight.Core.Media;
 
@@ -72,12 +73,22 @@ public sealed class MediaLibrary
             var tmp = Path.Combine(dir, "proxy.partial.mp4");
             var fps = FfmpegRunner.Num(media.Fps > 0 ? media.Fps : 30);
 
-            var args = new List<string>
-            {
-                "-i", media.OriginalPath,
-                "-vf", $"{Canvas.FitFilter(Canvas.ProxyWidth, Canvas.ProxyHeight)},fps={fps},format=yuv420p",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", "1", "-bf", "0",
-            };
+            // Stills: loop the image, decoding it only once a second (decoding a 12 MP photo
+            // 30×/s is what makes this slow). A static picture compresses to almost nothing, and
+            // a keyframe every second is plenty for seeking because the other frames are trivial.
+            var args = media.IsStill
+                ? new List<string>
+                {
+                    "-loop", "1", "-framerate", "1", "-t", Sec(media.Duration), "-i", media.OriginalPath,
+                    "-vf", $"{Canvas.FitFilter(Canvas.ProxyWidth, Canvas.ProxyHeight)},fps={fps},format=yuv420p",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-g", fps, "-bf", "0",
+                }
+                : new List<string>
+                {
+                    "-i", media.OriginalPath,
+                    "-vf", $"{Canvas.FitFilter(Canvas.ProxyWidth, Canvas.ProxyHeight)},fps={fps},format=yuv420p",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", "1", "-bf", "0",
+                };
             args.AddRange(media.HasAudio
                 ? new[] { "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2" }
                 : new[] { "-an" });
@@ -87,7 +98,7 @@ public sealed class MediaLibrary
             await FfmpegRunner.RunFfmpegAsync(args, media.Duration, progress, ct);
             File.Move(tmp, proxy, overwrite: true);
 
-            var thumbAt = TimeSpan.FromTicks(media.Duration.Ticks / 10);
+            var thumbAt = media.IsStill ? TimeSpan.Zero : TimeSpan.FromTicks(media.Duration.Ticks / 10);
             await FfmpegRunner.RunFfmpegAsync(new[]
             {
                 "-ss", FfmpegRunner.Sec(thumbAt), "-i", proxy, "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", thumb,
@@ -108,6 +119,25 @@ public sealed class MediaLibrary
         {
             _jobs.Release();
         }
+    }
+
+    /// <summary>
+    /// Save one full-resolution frame of the ORIGINAL file (not the 540p proxy) as a PNG, for a
+    /// freeze frame. Stored under the app's data folder so it outlives the proxy cache.
+    /// Returns the PNG path; probe it to get a still <see cref="SourceMedia"/>.
+    /// </summary>
+    public async Task<string> ExtractFrameAsync(SourceMedia media, TimeSpan sourceTime, CancellationToken ct = default)
+    {
+        var dir = Path.Combine(Path.GetDirectoryName(CacheDirectory)!, "frames");
+        Directory.CreateDirectory(dir);
+        var png = Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} at {sourceTime.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}s {Guid.NewGuid().ToString("N")[..6]}.png");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            // -ss before -i seeks fast; ffmpeg still decodes to the exact frame.
+            "-ss", Sec(sourceTime), "-i", media.OriginalPath, "-frames:v", "1", "-update", "1", png,
+        }, ct: ct);
+        if (!File.Exists(png)) throw new FfmpegException($"Couldn't grab a frame from '{media.DisplayName}'.", "");
+        return png;
     }
 
     void Set(Guid id, Action<MediaState> change)

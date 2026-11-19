@@ -147,6 +147,94 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.True(IsBlack(await Pixel(output, 4.5, 50, 540)), "vertical clip: black side bars");
     }
 
+    async Task<string> MakeImage(string name, int w, int h, string color)
+    {
+        var path = Path.Combine(_dir, name);
+        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", $"color=c={color}:s={w}x{h}", "-frames:v", "1", path });
+        return path;
+    }
+
+    [Theory]
+    [InlineData("still.png")]
+    [InlineData("still.jpg")]
+    public async Task Images_import_as_8s_stills_with_proxy_and_thumbnail(string name)
+    {
+        if (!FfmpegAvailable()) return;
+        var img = await MakeImage(name, 800, 1000, "yellow");
+        var lib = new MediaLibrary(Path.Combine(_dir, "cache"));
+        var m = await lib.ProbeAsync(img);
+        Assert.True(m.IsStill);
+        Assert.False(m.HasAudio);
+        Assert.Equal((800, 1000), (m.Width, m.Height));
+        Assert.Equal(SourceMedia.StillMaxDuration, m.Duration);
+
+        var p = new Project();
+        p.Media.Add(m);
+        Assert.Equal(TimelineOps.DefaultStillLength, TimelineOps.Append(p, m).Duration);
+
+        await lib.EnsureProxyAsync(m);
+        var st = lib.GetState(m.Id);
+        Assert.Equal(ProxyStatus.Ready, st.Status);
+        Assert.True(File.Exists(st.ThumbnailPath));
+        var proxy = await MediaProbe.ProbeAsync(st.ProxyPath!);
+        Assert.Equal((960, 540), (proxy.Width, proxy.Height));
+        Assert.InRange(proxy.Duration.TotalSeconds, SourceMedia.StillMaxDuration.TotalSeconds - 1, SourceMedia.StillMaxDuration.TotalSeconds + 1);
+    }
+
+    [Fact]
+    public async Task Export_holds_a_still_for_its_clip_length_after_video()
+    {
+        if (!FfmpegAvailable()) return;
+        var red = await MakeClip("red2.mp4", 1280, 720, 2, "red", audio: true, fps: 25);
+        var img = await MakeImage("blue.png", 1200, 1600, "blue"); // portrait screenshot
+
+        var p = new Project();
+        var mRed = await MediaProbe.ProbeAsync(red);
+        var mImg = await MediaProbe.ProbeAsync(img);
+        p.Media.AddRange(new[] { mImg, mRed });
+        var still = TimelineOps.Append(p, mImg);
+        TimelineOps.TrimOut(p, still.Id, TimeSpan.FromSeconds(3)); // 8s default → 3s to keep the test fast
+        TimelineOps.Append(p, mRed);
+
+        var output = Path.Combine(_dir, "still-out.mp4");
+        var plan = ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output);
+        var run = plan.RunAsync();
+        var finished = await Task.WhenAny(run, Task.Delay(TimeSpan.FromMinutes(2)));
+        Assert.True(finished == run, "export of a still must finish (a 0-length trim used to run forever)");
+        await run;
+
+        var outInfo = await MediaProbe.ProbeAsync(output);
+        Assert.InRange(outInfo.Duration.TotalSeconds, 4.9, 5.15);
+        Assert.Equal(25, outInfo.Fps, 1); // the video's rate, not the still's nominal 30
+
+        var c = await Pixel(output, 1.5, 960, 540);
+        Assert.True(c.B > 200 && c.R < 60 && c.G < 60, "still: blue centre");
+        var bar = await Pixel(output, 1.5, 50, 540);
+        Assert.True(bar.R < 40 && bar.G < 40 && bar.B < 40, "portrait still: black side bars");
+        var v = await Pixel(output, 4.0, 960, 540);
+        Assert.True(v.R > 200 && v.G < 60 && v.B < 60, "then the video: red");
+    }
+
+    [Fact]
+    public async Task Freeze_frame_grabs_full_resolution_frame_from_the_original()
+    {
+        if (!FfmpegAvailable()) return;
+        // 1s green then 1s magenta: grab at 1.5s must be magenta, at full 1280×720.
+        var green = await MakeClip("g.mp4", 1280, 720, 1, "green", audio: false);
+        var magenta = await MakeClip("m.mp4", 1280, 720, 1, "magenta", audio: false);
+        var both = Path.Combine(_dir, "both.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[] { "-i", green, "-i", magenta, "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", "-c:v", "libx264", "-g", "250", both });
+
+        var lib = new MediaLibrary(Path.Combine(_dir, "cache"));
+        var m = await lib.ProbeAsync(both);
+        var png = await lib.ExtractFrameAsync(m, TimeSpan.FromSeconds(1.5));
+        var still = await lib.ProbeAsync(png);
+        Assert.True(still.IsStill);
+        Assert.Equal((1280, 720), (still.Width, still.Height));
+        var c = await Pixel(png, 0, 640, 360);
+        Assert.True(c.R > 200 && c.G < 60 && c.B > 200, $"expected magenta, got {c}");
+    }
+
     sealed class SyncProgress(Action<double> a) : IProgress<double>
     {
         public void Report(double value) => a(value);

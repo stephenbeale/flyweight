@@ -44,6 +44,15 @@ public sealed class SourceMedia
     public int Height { get; set; }
     public bool HasAudio { get; set; }
 
+    /// <summary>
+    /// A still image (photo, screenshot) rather than a video. Its <see cref="Duration"/> is
+    /// <see cref="StillMaxDuration"/>: the longest a single image clip can be trimmed out to.
+    /// </summary>
+    public bool IsStill { get; set; }
+
+    /// <summary>How long a still image can be held on the timeline (also its proxy length).</summary>
+    public static readonly TimeSpan StillMaxDuration = TimeSpan.FromMinutes(5);
+
     [JsonIgnore] public string DisplayName => Path.GetFileName(OriginalPath);
 }
 
