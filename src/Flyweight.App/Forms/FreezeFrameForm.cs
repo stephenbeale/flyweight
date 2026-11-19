@@ -16,7 +16,13 @@ public sealed class FreezeFrameForm : Form
         Width = 80,
     };
 
+    readonly CheckBox _copyAnnotations = new()
+    {
+        Text = "Include the arrows, boxes and text on screen (for the whole hold)", Checked = true, AutoSize = true,
+    };
+
     public TimeSpan Length => TimeSpan.FromSeconds((double)_seconds.Value);
+    public bool CopyAnnotations => _copyAnnotations.Checked;
 
     public FreezeFrameForm()
     {
@@ -41,11 +47,13 @@ public sealed class FreezeFrameForm : Form
         layout.Controls.Add(new Label { Text = "Hold for", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
         layout.Controls.Add(_seconds, 1, 0);
         layout.Controls.Add(new Label { Text = "seconds", AutoSize = true, Anchor = AnchorStyles.Left }, 2, 0);
-        layout.Controls.Add(hint, 0, 1);
+        layout.Controls.Add(_copyAnnotations, 0, 1);
+        layout.SetColumnSpan(_copyAnnotations, 3);
+        layout.Controls.Add(hint, 0, 2);
         layout.SetColumnSpan(hint, 3);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         buttons.Controls.AddRange(new Control[] { cancel, ok });
-        layout.Controls.Add(buttons, 0, 2);
+        layout.Controls.Add(buttons, 0, 3);
         layout.SetColumnSpan(buttons, 3);
         Controls.Add(layout);
 

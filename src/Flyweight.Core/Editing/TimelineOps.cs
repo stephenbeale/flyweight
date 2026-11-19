@@ -110,6 +110,7 @@ public static class TimelineOps
             }
             else if (a.End > cut)
             {
+                a.LinkId ??= Guid.NewGuid(); // the two halves stay one annotation
                 var copy = a.Clone();
                 copy.Id = Guid.NewGuid();
                 copy.ClipId = right.Id;
@@ -128,10 +129,12 @@ public static class TimelineOps
     /// of the timeline ripples right. At (or near) a clip boundary no split is needed.
     /// Returns the new still clip, or null if <paramref name="t"/> is outside the timeline.
     /// </summary>
-    public static Clip? InsertFreezeFrame(Project p, TimeSpan t, SourceMedia still, TimeSpan length)
+    public static Clip? InsertFreezeFrame(Project p, TimeSpan t, SourceMedia still, TimeSpan length, bool copyAnnotations = false)
     {
         if (!still.IsStill) throw new ArgumentException("Freeze frames must be still images.", nameof(still));
         if (Locate(p, t) is not { } hit) return null;
+        // What's on screen at the frozen moment, captured before the split below moves things around.
+        var onScreen = copyAnnotations ? VisibleAt(p, t).Select(a => a.Clone()).ToList() : new List<Annotation>();
 
         int insertAt;
         if (hit.SourceTime - hit.Clip.In < MinClipLength) insertAt = hit.Index;               // at the clip's start
@@ -142,6 +145,16 @@ public static class TimelineOps
         var hold = Clamp(length, MinClipLength, still.Duration);
         var clip = new Clip { SourceId = still.Id, In = TimeSpan.Zero, Out = hold };
         p.Timeline.Insert(insertAt, clip);
+
+        // Copies (not burned in) so they stay editable; they hold for the whole freeze.
+        foreach (var a in onScreen)
+        {
+            a.Id = Guid.NewGuid();
+            a.ClipId = clip.Id;
+            a.Start = TimeSpan.Zero;
+            a.End = hold;
+            p.Annotations.Add(a);
+        }
         return clip;
     }
 
@@ -233,6 +246,196 @@ public static class TimelineOps
         var e = Clamp(clip.In + (timelineEnd - clipStart), s + MinClipLength, clip.Out);
         a.Start = s;
         a.End = e;
+    }
+
+    /// <summary>
+    /// Drag an annotation bar: its length never changes (unless the clip is shorter than it). It belongs
+    /// to the clip under its MIDDLE and is pushed fully inside that clip, so near a cut it slides up
+    /// against the edge, then hops onto the neighbouring clip once its middle crosses over. Re-anchoring
+    /// converts its times to the new clip's source time.
+    /// </summary>
+    public static void MoveAnnotation(Project p, Guid annotationId, TimeSpan timelineStart, TimeSpan length)
+    {
+        if (p.Timeline.Count == 0) return;
+        var total = TotalDuration(p);
+        if (length > total) length = total;
+        var start = Clamp(timelineStart, TimeSpan.Zero, total - length); // length never changes
+        SetRunRange(p, annotationId, start, start + length);
+    }
+
+    /// <summary>
+    /// Place an annotation's whole run (all its linked pieces) at a timeline range. The piece
+    /// <paramref name="annotationId"/> is kept (so selection survives) and anchored to the clip at
+    /// <paramref name="timelineStart"/>; the rest of the run is rebuilt as pieces on following clips.
+    /// Used for every annotation-bar drag: move, and either edge.
+    /// </summary>
+    public static void SetRunRange(Project p, Guid annotationId, TimeSpan timelineStart, TimeSpan timelineEnd)
+    {
+        if (p.FindAnnotation(annotationId) is not { } a || p.Timeline.Count == 0) return;
+        if (a.LinkId is { } link) p.Annotations.RemoveAll(x => x.LinkId == link && x.Id != a.Id);
+        a.LinkId = null;
+
+        var total = TotalDuration(p);
+        var s = Clamp(timelineStart, TimeSpan.Zero, Max(TimeSpan.Zero, total - MinClipLength));
+        var e = Clamp(timelineEnd, s + MinClipLength, total);
+        if (Locate(p, s) is not { } hit) return;
+        a.ClipId = hit.Clip.Id;
+        a.Start = hit.SourceTime;
+        a.End = Min(hit.Clip.Out, hit.SourceTime + MinClipLength);
+        ExtendAnnotationEnd(p, a.Id, e);
+    }
+
+    /// <summary>The timeline range of a whole run (first piece's start to last piece's end).</summary>
+    public static (TimeSpan Start, TimeSpan End)? RunRange(Project p, Annotation a)
+    {
+        var ranges = LinkedPieces(p, a).Select(x => AnnotationRange(p, x)).Where(r => r is not null).Select(r => r!.Value).ToList();
+        return ranges.Count == 0 ? null : (ranges.Min(r => r.Start), ranges.Max(r => r.End));
+    }
+
+    // ---------------- Linked annotations (one annotation running across cuts) ----------------
+
+    /// <summary>All pieces of <paramref name="a"/>'s run (just <paramref name="a"/> if it isn't linked), in timeline order.</summary>
+    public static List<Annotation> LinkedPieces(Project p, Annotation a) =>
+        a.LinkId is not { } link ? new List<Annotation> { a }
+        : p.Annotations.Where(x => x.LinkId == link).OrderBy(x => ClipIndex(p, x.ClipId)).ThenBy(x => x.Start).ToList();
+
+    /// <summary>Copy look and position from one piece to the rest of its run (not times or clip).</summary>
+    public static void SyncLinked(Project p, Guid annotationId)
+    {
+        if (p.FindAnnotation(annotationId) is not { LinkId: not null } src) return;
+        foreach (var m in LinkedPieces(p, src).Where(m => m.Id != src.Id))
+        {
+            m.Kind = src.Kind;
+            (m.X1, m.Y1, m.X2, m.Y2) = (src.X1, src.Y1, src.X2, src.Y2);
+            m.Text = src.Text;
+            m.StrokeColor = src.StrokeColor;
+            m.FillColor = src.FillColor;
+            m.StrokeWidth = src.StrokeWidth;
+            m.FontSize = src.FontSize;
+            m.FontFamily = src.FontFamily;
+        }
+    }
+
+    /// <summary>Delete an annotation, and the rest of its run if it's linked.</summary>
+    public static void DeleteAnnotation(Project p, Guid annotationId)
+    {
+        if (p.FindAnnotation(annotationId) is not { } a) return;
+        if (a.LinkId is { } link) p.Annotations.RemoveAll(x => x.LinkId == link);
+        else p.Annotations.Remove(a);
+    }
+
+    /// <summary>
+    /// Drag the END of an annotation bar to <paramref name="timelineEnd"/>. Past its clip's end it
+    /// continues onto the following clip(s) as linked pieces, each anchored to its own footage.
+    /// Pieces of the run on later clips are rebuilt each call, so dragging back removes them.
+    /// </summary>
+    public static void ExtendAnnotationEnd(Project p, Guid annotationId, TimeSpan timelineEnd)
+    {
+        if (p.FindAnnotation(annotationId) is not { } a) return;
+        int idx = ClipIndex(p, a.ClipId);
+        if (idx < 0) return;
+        if (a.LinkId is { } link)
+            p.Annotations.RemoveAll(x => x.LinkId == link && x.Id != a.Id && ClipIndex(p, x.ClipId) > idx);
+
+        var clip = p.Timeline[idx];
+        var clipStart = ClipStart(p, idx);
+        var clipEnd = clipStart + clip.Duration;
+        var startTl = clipStart + (a.Start - clip.In);
+        if (timelineEnd <= clipEnd || idx == p.Timeline.Count - 1)
+        {
+            RetimeAnnotation(p, annotationId, startTl, timelineEnd);
+            TidyLink(p, a.LinkId);
+            return;
+        }
+
+        a.End = clip.Out;
+        a.LinkId ??= Guid.NewGuid();
+        var remaining = timelineEnd - clipEnd;
+        for (int k = idx + 1; k < p.Timeline.Count && remaining >= MinClipLength; k++)
+        {
+            var c = p.Timeline[k];
+            var len = Min(remaining, c.Duration);
+            AddPiece(p, a, c, c.In, c.In + len);
+            remaining -= len;
+        }
+        TidyLink(p, a.LinkId);
+    }
+
+    /// <summary>Mirror of <see cref="ExtendAnnotationEnd"/> for the START edge: continues onto earlier clips.</summary>
+    public static void ExtendAnnotationStart(Project p, Guid annotationId, TimeSpan timelineStart)
+    {
+        if (p.FindAnnotation(annotationId) is not { } a) return;
+        int idx = ClipIndex(p, a.ClipId);
+        if (idx < 0) return;
+        if (a.LinkId is { } link)
+            p.Annotations.RemoveAll(x => x.LinkId == link && x.Id != a.Id && ClipIndex(p, x.ClipId) < idx);
+
+        var clip = p.Timeline[idx];
+        var clipStart = ClipStart(p, idx);
+        var endTl = clipStart + (a.End - clip.In);
+        if (timelineStart >= clipStart || idx == 0)
+        {
+            RetimeAnnotation(p, annotationId, timelineStart, endTl);
+            TidyLink(p, a.LinkId);
+            return;
+        }
+
+        a.Start = clip.In;
+        a.LinkId ??= Guid.NewGuid();
+        var remaining = clipStart - timelineStart;
+        for (int k = idx - 1; k >= 0 && remaining >= MinClipLength; k--)
+        {
+            var c = p.Timeline[k];
+            var len = Min(remaining, c.Duration);
+            AddPiece(p, a, c, c.Out - len, c.Out);
+            remaining -= len;
+        }
+        TidyLink(p, a.LinkId);
+    }
+
+    static void AddPiece(Project p, Annotation from, Clip clip, TimeSpan start, TimeSpan end)
+    {
+        var piece = from.Clone();
+        piece.Id = Guid.NewGuid();
+        piece.ClipId = clip.Id;
+        piece.Start = start;
+        piece.End = end;
+        p.Annotations.Add(piece);
+    }
+
+    /// <summary>A run with only one piece left is just a normal annotation again.</summary>
+    static void TidyLink(Project p, Guid? link)
+    {
+        if (link is null) return;
+        var members = p.Annotations.Where(x => x.LinkId == link).ToList();
+        if (members.Count == 1) members[0].LinkId = null;
+    }
+
+    static int ClipIndex(Project p, Guid clipId) => p.Timeline.FindIndex(c => c.Id == clipId);
+
+    /// <summary>Start of the next clip after <paramref name="t"/> (or the timeline end), for "next clip".</summary>
+    public static TimeSpan NextClipBoundary(Project p, TimeSpan t) =>
+        Boundaries(p).FirstOrDefault(b => b > t + BoundaryTolerance, TotalDuration(p));
+
+    /// <summary>
+    /// Start of the clip before <paramref name="t"/>: the current clip's start if you're inside it,
+    /// else the previous clip's. For "previous clip".
+    /// </summary>
+    public static TimeSpan PreviousClipBoundary(Project p, TimeSpan t) =>
+        Boundaries(p).LastOrDefault(b => b < t - BoundaryTolerance, TimeSpan.Zero);
+
+    /// <summary>Within this of a cut counts as "on" it, so repeated presses keep moving.</summary>
+    static readonly TimeSpan BoundaryTolerance = TimeSpan.FromMilliseconds(50);
+
+    static IEnumerable<TimeSpan> Boundaries(Project p)
+    {
+        var t = TimeSpan.Zero;
+        foreach (var c in p.Timeline)
+        {
+            yield return t;
+            t += c.Duration;
+        }
+        yield return t;
     }
 
     static TimeSpan Clamp(TimeSpan v, TimeSpan lo, TimeSpan hi) => v < lo ? lo : v > hi ? hi : v;

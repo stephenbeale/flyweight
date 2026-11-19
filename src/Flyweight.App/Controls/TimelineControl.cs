@@ -74,12 +74,16 @@ public sealed class TimelineControl : Control
         return new RectangleF(X(start), TrackTop, (float)(c.Duration.TotalSeconds * _pps), TrackH);
     }
 
-    /// <summary>Visible annotations with their timeline range and a lane assigned so bars don't overlap.</summary>
+    /// <summary>
+    /// One bar per annotation (a run across cuts is ONE bar, represented by its first piece), with its
+    /// timeline range and a lane assigned so bars don't overlap.
+    /// </summary>
     List<(Annotation A, TimeSpan S, TimeSpan E, int Lane)> AnnotationBars()
     {
         var p = _session.Project;
         var bars = p.Annotations
-            .Select(a => (A: a, R: TimelineOps.AnnotationRange(p, a)))
+            .Where(a => a.LinkId is null || TimelineOps.LinkedPieces(p, a)[0].Id == a.Id)
+            .Select(a => (A: a, R: TimelineOps.RunRange(p, a)))
             .Where(x => x.R is not null)
             .Select(x => (x.A, S: x.R!.Value.Start, E: x.R!.Value.End))
             .OrderBy(x => x.S)
@@ -232,7 +236,7 @@ public sealed class TimelineControl : Control
         };
         using var path = Rounded(r, 4);
         using (var b = new SolidBrush(col)) g.FillPath(b, path);
-        if (SelectedAnnotationId == a.Id)
+        if (SelectedAnnotationId is { } sel && (sel == a.Id || (a.LinkId is { } l && _session.Project.FindAnnotation(sel)?.LinkId == l)))
             using (var pen = new Pen(Accent, 2)) g.DrawPath(pen, path);
         var text = a.Kind == AnnotationKind.Text ? $"T  {a.Text.Split('\n')[0]}" : a.Kind == AnnotationKind.Arrow ? "→  Arrow" : "▭  Box";
         TextRenderer.DrawText(g, text, Font, Rectangle.Round(new RectangleF(r.X + 4, r.Y, r.Width - 6, r.Height)),
@@ -336,6 +340,9 @@ public sealed class TimelineControl : Control
         var dt = TimeSpan.FromSeconds((e.X - _downX) / _pps);
         if (Math.Abs(e.X - _downX) > 3) _dragMoved = true;
         var id = _dragId;
+        // A click is not a drag: nothing changes until the mouse has really moved (a stray 1 px move
+        // used to "move" an annotation piece and break its link).
+        if (!_dragMoved && _drag is not Drag.Scrub) return;
 
         switch (_drag)
         {
@@ -353,13 +360,13 @@ public sealed class TimelineControl : Control
                 break;
             case Drag.AnnoMove:
                 var len = _originB - _originA;
-                _session.Preview(p => TimelineOps.RetimeAnnotation(p, id, _originA + dt, _originA + dt + len));
+                _session.Preview(p => TimelineOps.MoveAnnotation(p, id, _originA + dt, len)); // fixed length; spans cuts as one run
                 break;
             case Drag.AnnoStart:
-                _session.Preview(p => TimelineOps.RetimeAnnotation(p, id, _originA + dt, _originB));
+                _session.Preview(p => TimelineOps.SetRunRange(p, id, _originA + dt, _originB));
                 break;
             case Drag.AnnoEnd:
-                _session.Preview(p => TimelineOps.RetimeAnnotation(p, id, _originA, _originB + dt));
+                _session.Preview(p => TimelineOps.SetRunRange(p, id, _originA, _originB + dt));
                 break;
         }
     }
@@ -394,20 +401,43 @@ public sealed class TimelineControl : Control
         return p.Timeline.Count;
     }
 
+    readonly ToolTip _tip = new() { InitialDelay = 300, ReshowDelay = 100, AutoPopDelay = 10000 };
+    Guid? _tipFor;
+
     void UpdateCursor(Point pt)
     {
         var p = _session.Project;
         foreach (var (a, s, en, lane) in AnnotationBars())
         {
             var r = BarRect(s, en, lane);
-            if (r.Contains(pt)) { Cursor = pt.X <= r.Left + EdgeGrab || pt.X >= r.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand; return; }
+            if (!r.Contains(pt)) continue;
+            Cursor = pt.X <= r.Left + EdgeGrab || pt.X >= r.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand;
+            if (_tipFor != a.Id) { _tipFor = a.Id; _tip.SetToolTip(this, Summary(a, s, en)); }
+            return;
         }
+        if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
         for (int i = 0; i < p.Timeline.Count; i++)
         {
             var r = ClipRect(i);
             if (r.Contains(pt)) { Cursor = pt.X <= r.Left + EdgeGrab || pt.X >= r.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand; return; }
         }
         Cursor = Cursors.Default;
+    }
+
+    /// <summary>Hover text for an annotation bar: what it is, when, and which clip it's on.</summary>
+    string Summary(Annotation a, TimeSpan start, TimeSpan end)
+    {
+        var p = _session.Project;
+        var what = a.Kind switch
+        {
+            AnnotationKind.Text => $"Text: \"{(a.Text.Length > 40 ? a.Text[..40] + "…" : a.Text)}\"",
+            AnnotationKind.Box => a.FillColor is null ? "Box" : "Box (filled)",
+            _ => "Arrow",
+        };
+        var clip = p.FindClip(a.ClipId) is { } c && p.FindMedia(c.SourceId) is { } m ? m.DisplayName : "?";
+        var pieces = TimelineOps.LinkedPieces(p, a);
+        var part = pieces.Count > 1 ? $"\nRuns across {pieces.Count} clips" : "";
+        return $"{what}\n{FormatTime(start, tenths: true)} – {FormatTime(end, tenths: true)}  ({(end - start).TotalSeconds:0.0}s)\nOn: {clip}{part}";
     }
 
     void SelectClip(Guid? id)

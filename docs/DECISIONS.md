@@ -110,6 +110,15 @@ ORIGINAL) now run first in their own 2-wide queue, so the bin, timeline and prev
 While a clip's proxy isn't ready the preview shows a stand-in: the photo itself for stills (EXIF-rotated, capped to
 ~1080p in memory), or the thumbnail for videos, with an "Optimising for playback…" badge.
 
+### D21. Annotations that span cuts are linked pieces
+Rule 4 (each annotation is anchored to ONE clip's source time) stays. To let an annotation run across a cut,
+dragging a bar's end/start past its clip creates pieces on the neighbouring clips that share `Annotation.LinkId`
+(`TimelineOps.ExtendAnnotationEnd/Start`, rebuilt on every drag step so dragging back removes them). Each piece
+stays glued to its own footage. Look and position are synced across the run (`SyncLinked`, called from the
+panel, canvas drags and text edits); deleting one piece deletes the run; moving one piece's body detaches it.
+Split now links the two halves of an annotation it cuts. Export needs no change: pieces are ordinary annotations.
+Moving a bar keeps its length fixed: it belongs to the clip under its middle (`MoveAnnotation`).
+
 ### D20. Flyweight.App is in the solution
 It was missing from `Flyweight.sln`, so `dotnet build Flyweight.sln` (and the CI "App build (Windows)" job)
 only built Core. This hid a compile error and made local "builds" silently run a stale exe. Now added.

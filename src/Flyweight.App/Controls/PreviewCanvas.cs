@@ -22,6 +22,10 @@ public sealed class PreviewCanvas : Control
     MediaLibrary _library = null!;
     Tool _tool = Tool.Select;
 
+    // Short on-screen notice (e.g. why F did nothing), cleared by a timer.
+    string? _notice;
+    readonly System.Windows.Forms.Timer _noticeTimer = new() { Interval = 3000 };
+
     // Stand-in picture while a clip's proxy is still being made (one cached at a time).
     string? _standInPath;
     Image? _standIn;
@@ -41,6 +45,16 @@ public sealed class PreviewCanvas : Control
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         BackColor = Color.FromArgb(18, 18, 20);
+        _noticeTimer.Tick += (_, _) => { _noticeTimer.Stop(); _notice = null; Invalidate(); };
+    }
+
+    /// <summary>Show a message over the top of the preview for a few seconds.</summary>
+    public void ShowNotice(string message)
+    {
+        _notice = message;
+        _noticeTimer.Stop();
+        _noticeTimer.Start();
+        Invalidate();
     }
 
     public Guid? SelectedAnnotationId { get; private set; }
@@ -134,6 +148,14 @@ public sealed class PreviewCanvas : Control
         g.ResetClip();
 
         if (Selected() is { } sel && IsVisibleNow(sel)) DrawSelection(g, sel, canvas);
+
+        if (_notice is { } notice)
+        {
+            var size = TextRenderer.MeasureText(g, notice, Font);
+            var r = new Rectangle((int)(canvas.X + (canvas.Width - size.Width) / 2) - 14, (int)canvas.Y + 14, size.Width + 28, size.Height + 14);
+            using (var bb = new SolidBrush(Color.FromArgb(215, 20, 20, 24))) g.FillRectangle(bb, r);
+            TextRenderer.DrawText(g, notice, Font, r, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
     }
 
     /// <summary>Picture for the clip under the playhead while its proxy is being made, or null.</summary>
@@ -359,6 +381,7 @@ public sealed class PreviewCanvas : Control
                 case DragMode.Corner12: a.X1 = norm.X; a.Y2 = norm.Y; break;
                 case DragMode.Corner21: a.X2 = norm.X; a.Y1 = norm.Y; break;
             }
+            TimelineOps.SyncLinked(p, id);
         });
     }
 
@@ -449,9 +472,9 @@ public sealed class PreviewCanvas : Control
         CloseEditor();
         _session.Execute(p =>
         {
-            if (p.FindAnnotation(id) is not { } a) return;
-            if (string.IsNullOrWhiteSpace(text)) p.Annotations.Remove(a); // empty text = delete
-            else a.Text = text;
+            if (p.FindAnnotation(id) is null) return;
+            if (string.IsNullOrWhiteSpace(text)) TimelineOps.DeleteAnnotation(p, id); // empty text = delete
+            else { p.FindAnnotation(id)!.Text = text; TimelineOps.SyncLinked(p, id); }
         });
     }
 
