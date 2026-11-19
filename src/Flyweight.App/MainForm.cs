@@ -12,7 +12,8 @@ public sealed class MainForm : Form
     static readonly string AppDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Flyweight");
     static readonly string AutosavePath = Path.Combine(AppDataDir, "autosave" + ProjectSerializer.FileExtension);
     static readonly string LockPath = Path.Combine(AppDataDir, "session.lock");
-    static readonly string[] VideoExtensions = { ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts", ".wmv" };
+    static readonly string[] VideoExtensions = { ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts", ".wmv", ".gif" };
+    static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff" };
 
     readonly ProjectSession _session = new();
     readonly MediaLibrary _library = new();
@@ -84,7 +85,7 @@ public sealed class MainForm : Form
             Btn("Open…", "Open project (Ctrl+O)", OpenProject),
             Btn("Save", "Save project (Ctrl+S)", () => SaveProject(false)),
             new ToolStripSeparator(),
-            Btn("Import…", "Import video files (Ctrl+I)", ImportDialog),
+            Btn("Import…", "Import video or images (Ctrl+I)", ImportDialog),
             new ToolStripSeparator(),
             _undoBtn, _redoBtn,
             new ToolStripSeparator(),
@@ -105,6 +106,7 @@ public sealed class MainForm : Form
         {
             new ToolStripSeparator(),
             Btn("Split", "Split clip at playhead (S)", Split),
+            Btn("Freeze", "Freeze this frame: hold it for a few seconds (F)", () => _ = FreezeFrameAsync()),
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
             new ToolStripSeparator(),
@@ -210,7 +212,7 @@ public sealed class MainForm : Form
             {
                 var project = files.FirstOrDefault(f => f.EndsWith(ProjectSerializer.FileExtension, StringComparison.OrdinalIgnoreCase));
                 if (project is not null) { if (ConfirmDiscard()) LoadProject(project); }
-                else await ImportAsync(files.Where(IsVideo));
+                else await ImportAsync(files.Where(IsImportable));
             }
         };
 
@@ -261,6 +263,7 @@ public sealed class MainForm : Form
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
+            case Keys.F: _ = FreezeFrameAsync(); return true;
             case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
             case Keys.V: case Keys.Escape: _preview.Tool = Tool.Select; return true;
             case Keys.A: _preview.Tool = Tool.Arrow; return true;
@@ -286,6 +289,45 @@ public sealed class MainForm : Form
         _session.Execute(p => TimelineOps.SplitAt(p, _engine.Position));
     }
 
+    async Task FreezeFrameAsync()
+    {
+        _engine.Pause();
+        var at = _engine.Position;
+        var p = _session.Project;
+        if (TimelineOps.Locate(p, at) is not { } hit || p.FindMedia(hit.Clip.SourceId) is not { } media)
+        {
+            _statusText.Text = "Move the playhead onto a clip first, then press F.";
+            return;
+        }
+        if (media.IsStill)
+        {
+            _statusText.Text = "That's already a still image: drag its right edge to hold it longer.";
+            return;
+        }
+
+        using var dlg = new FreezeFrameForm();
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        _statusText.Text = "Grabbing frame…";
+        SourceMedia still;
+        try
+        {
+            var png = await _library.ExtractFrameAsync(media, hit.SourceTime);
+            still = await _library.ProbeAsync(png);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't grab that frame:
+
+{ex.Message}", "Freeze frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            UpdateStatus();
+            return;
+        }
+        _session.Execute(proj => TimelineOps.InsertFreezeFrame(proj, at, still, dlg.Length));
+        StartProxy(still);
+        UpdateStatus();
+    }
+
     void DeleteSelection()
     {
         if (_preview.SelectedAnnotationId is { } aid)
@@ -309,8 +351,10 @@ public sealed class MainForm : Form
         using var dlg = new OpenFileDialog
         {
             Multiselect = true,
-            Title = "Import video",
-            Filter = "Video files|" + string.Join(";", VideoExtensions.Select(e => "*" + e)) + "|All files|*.*",
+            Title = "Import video or images",
+            Filter = "Video and images|" + string.Join(";", VideoExtensions.Concat(ImageExtensions).Select(e => "*" + e)) +
+                     "|Video|" + string.Join(";", VideoExtensions.Select(e => "*" + e)) +
+                     "|Images|" + string.Join(";", ImageExtensions.Select(e => "*" + e)) + "|All files|*.*",
         };
         if (dlg.ShowDialog(this) == DialogResult.OK) _ = ImportAsync(dlg.FileNames);
     }
@@ -514,5 +558,6 @@ public sealed class MainForm : Form
         else if (_statusText.Text is { } s && (s.StartsWith("Optimising") || s.StartsWith("Reading"))) _statusText.Text = "Ready";
     }
 
-    static bool IsVideo(string path) => VideoExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+    static bool IsImportable(string path) =>
+        VideoExtensions.Concat(ImageExtensions).Contains(Path.GetExtension(path).ToLowerInvariant());
 }

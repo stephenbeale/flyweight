@@ -27,6 +27,7 @@ public static class MediaProbe
             if (type == "video" && video is null && !isCoverArt) video = s;
             if (type == "audio") hasAudio = true;
         }
+        var format = root.TryGetProperty("format", out var fmtEl) ? Str(fmtEl, "format_name") ?? "" : "";
         if (video is not { } v) throw new InvalidDataException($"'{Path.GetFileName(path)}' has no video stream.");
 
         int w = v.GetProperty("width").GetInt32();
@@ -43,6 +44,18 @@ public static class MediaProbe
         double seconds = ParseDouble(root.TryGetProperty("format", out var fmt) ? Str(fmt, "duration") : null)
                          ?? ParseDouble(Str(v, "duration")) ?? 0;
 
+        if (IsStillFormat(format))
+            return new SourceMedia
+            {
+                OriginalPath = Path.GetFullPath(path),
+                Duration = SourceMedia.StillMaxDuration,
+                Fps = 30,
+                Width = w,
+                Height = h,
+                HasAudio = false,
+                IsStill = true,
+            };
+
         return new SourceMedia
         {
             OriginalPath = Path.GetFullPath(path),
@@ -53,6 +66,13 @@ public static class MediaProbe
             HasAudio = hasAudio,
         };
     }
+
+    /// <summary>
+    /// ffprobe reads images through the image2 demuxer or a "*_pipe" one (png_pipe, jpeg_pipe…),
+    /// and reports a meaningless 0–0.04 s duration. GIF has its own demuxer and is treated as video.
+    /// </summary>
+    internal static bool IsStillFormat(string formatName) =>
+        formatName.Split(',').Any(f => f == "image2" || f.EndsWith("_pipe", StringComparison.Ordinal));
 
     static int ReadRotation(JsonElement v)
     {
