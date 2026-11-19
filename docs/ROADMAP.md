@@ -34,11 +34,15 @@ _Last updated: 2026-11-19_
   (edge trim ripples: later clips close the gap. Owner is fine with that for now.)
 - [x] Draw arrow / box / text; move and resize; edit text inline; change style in Properties
   (follow-ups done: opacity shown as % with slider, picking a fill colour ticks Filled, resize cursor on handles)
-- [ ] Drag an annotation bar to retime; trim its clip and confirm the annotation stays on the footage
-- [ ] Undo/redo everything above
-- [ ] Save, close, reopen (proxies come from cache instantly)
-- [ ] Kill the process mid-edit and relaunch: recovery prompt restores work
-- [ ] Export 1080p: progress bar and cancel work; output plays, and annotations match the preview
+- [x] Drag an annotation bar to retime; trim its clip and confirm the annotation stays on the footage
+  (now also: runs across cuts as one linked bar, D21)
+- [x] Undo/redo everything above
+- [x] Save, close, reopen (proxies come from cache instantly)
+- [x] Kill the process mid-edit and relaunch: recovery prompt restores work
+- [x] New project: output-size dialog appears
+- [x] Export progress bar moves and Cancel stops cleanly (no half-written file)
+- **Smoke test complete (2026-11-19).** Next: `feature/audio`, then clip speed (see v0.2 "NEXT").
+- [x] Export 1080p: output plays, and annotations match the preview (owner, 2026-11-19, build 20:46)
 
 ### First Windows run: status (2026-11-19, branch `fix/first-windows-run`)
 - Passed so far: launch, import, playback, timeline edits, drawing/styling annotations, freeze frame, toolbar text,
@@ -75,10 +79,20 @@ _Last updated: 2026-11-19_
 - Blur/redact box; numbered callouts; freehand pen
 - **Chapter markers** → copy YouTube description timestamps (`0:00 Intro…`)
 - Thumbnail export (current frame + annotations at 1280×720)
-- Audio: background music track, clip volume, fades
+- **NEXT after the smoke test (owner's order, 2026-11-19):**
+  1. `feature/audio`: clip volume/mute (0–200%), one audio track for narration + music (import MP3/WAV/M4A,
+     drag to position), per-item volume, optional ducking of clip audio under narration. Mic recording later.
+  2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).
+  3. Reverse: parked (ffmpeg `reverse` buffers the whole clip; would be short clips only).
+- Audio fades
 - Blurred-background fill for portrait clips
 - Title cards
 - Captions (.srt) export
+- **Royalty-free media search** (owner request, 2026-11-19, parked until after the smoke test): an in-app "Find
+  media" panel searching Pexels/Pixabay (photos, video, Pixabay music) and Freesound (sound effects); preview,
+  then Add downloads into the project + bin. Keep credit details per item (author, source, licence, URL) and a
+  "Copy credits" button for the YouTube description. Needs free API keys (entered once in settings). Audio depends
+  on the background-music track above.
 
 ## Later (v0.3+)
 - Preview quality setting (540p / 720p proxies)
