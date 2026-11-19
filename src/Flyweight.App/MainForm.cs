@@ -317,9 +317,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Couldn't grab that frame:
-
-{ex.Message}", "Freeze frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, $"Couldn't grab that frame:\n\n{ex.Message}", "Freeze frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             UpdateStatus();
             return;
         }
