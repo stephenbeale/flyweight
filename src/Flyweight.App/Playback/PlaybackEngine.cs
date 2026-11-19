@@ -66,6 +66,9 @@ public sealed class PlaybackEngine : IDisposable
     /// <summary>Raised on the UI thread whenever <see cref="Position"/> changes.</summary>
     public event EventHandler? PositionChanged;
 
+    /// <summary>Raised on the UI thread when playback starts or stops (pausing doesn't move the playhead).</summary>
+    public event EventHandler? PlayingChanged;
+
     public PlaybackEngine(ProjectSession session, MediaLibrary library)
     {
         _session = session;
@@ -147,12 +150,15 @@ public sealed class PlaybackEngine : IDisposable
         _player.Mute = false;
         if (_player.State == VLCState.Paused && _clipId is not null) _player.SetPause(false);
         else ApplySeek(Position, force: true);
+        PlayingChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void Pause()
     {
+        var was = _playing;
         _playing = false;
         if (_player.State == VLCState.Playing) _player.SetPause(true);
+        if (was) PlayingChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Step whole frames (negative = backwards). Pauses playback.</summary>

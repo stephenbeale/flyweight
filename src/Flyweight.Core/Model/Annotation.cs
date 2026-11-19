@@ -47,5 +47,11 @@ public sealed class Annotation
 
     public string FontFamily { get; set; } = "Segoe UI";
 
+    /// <summary>
+    /// Shared by the pieces of one annotation that runs across a cut (each piece is anchored to its own
+    /// clip). Look and position are kept in sync across pieces; deleting one deletes the run. Null = single.
+    /// </summary>
+    public Guid? LinkId { get; set; }
+
     public Annotation Clone() => (Annotation)MemberwiseClone();
 }

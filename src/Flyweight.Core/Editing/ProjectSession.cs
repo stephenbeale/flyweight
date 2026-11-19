@@ -80,12 +80,14 @@ public sealed class ProjectSession
 
     public void Load(Project project, string? path)
     {
+        // Old projects: fix images saved as zero-length videos. Marks the project dirty so it gets saved.
+        var upgraded = TimelineOps.UpgradeLegacyStills(project);
         Project = project;
         FilePath = path;
         _undo.Clear();
         _redo.Clear();
         _pendingSnapshot = null;
-        IsDirty = false;
+        IsDirty = upgraded;
         Changed?.Invoke(this, EventArgs.Empty);
     }
 

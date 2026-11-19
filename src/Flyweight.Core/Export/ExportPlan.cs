@@ -51,7 +51,9 @@ public sealed class ExportPlan
                 throw new InvalidOperationException($"Clip {i + 1} ({media.DisplayName}) is too short to export. Delete it and re-import the file.");
 
             if (media.IsStill)
-                args.AddRange(new[] { "-loop", "1", "-framerate", fpsStr, "-t", Sec(clip.Duration), "-i", media.OriginalPath });
+                // Decode the photo once a second, not at the output rate: the fps filter below repeats
+                // frames. Decoding a 12 MP image 30×/s was the slow part of exporting stills.
+                args.AddRange(new[] { "-loop", "1", "-framerate", "1", "-t", Sec(clip.Duration), "-i", media.OriginalPath });
             else
                 args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.Duration), "-i", media.OriginalPath });
             var d = Sec(clip.Duration);

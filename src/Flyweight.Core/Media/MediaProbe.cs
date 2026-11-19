@@ -71,6 +71,12 @@ public static class MediaProbe
     /// ffprobe reads images through the image2 demuxer or a "*_pipe" one (png_pipe, jpeg_pipe…),
     /// and reports a meaningless 0–0.04 s duration. GIF has its own demuxer and is treated as video.
     /// </summary>
+    static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif", ".jfif" };
+
+    /// <summary>True for common still-image file extensions (GIF excluded: it is treated as video).</summary>
+    public static bool IsImageFile(string path) => ImageExtensions.Contains(Path.GetExtension(path));
+
     internal static bool IsStillFormat(string formatName) =>
         formatName.Split(',').Any(f => f == "image2" || f.EndsWith("_pipe", StringComparison.Ordinal));
 

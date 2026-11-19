@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 using Flyweight.App.Playback;
 using Flyweight.App.Rendering;
 using Flyweight.Core.Editing;
+using Flyweight.Core.Media;
 using Flyweight.Core.Model;
 
 namespace Flyweight.App.Controls;
@@ -18,7 +19,16 @@ public sealed class PreviewCanvas : Control
 
     ProjectSession _session = null!;
     PlaybackEngine _engine = null!;
+    MediaLibrary _library = null!;
     Tool _tool = Tool.Select;
+
+    // Short on-screen notice (e.g. why F did nothing), cleared by a timer.
+    string? _notice;
+    readonly System.Windows.Forms.Timer _noticeTimer = new() { Interval = 3000 };
+
+    // Stand-in picture while a clip's proxy is still being made (one cached at a time).
+    string? _standInPath;
+    Image? _standIn;
 
     // Drag state
     enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21 }
@@ -35,6 +45,16 @@ public sealed class PreviewCanvas : Control
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         BackColor = Color.FromArgb(18, 18, 20);
+        _noticeTimer.Tick += (_, _) => { _noticeTimer.Stop(); _notice = null; Invalidate(); };
+    }
+
+    /// <summary>Show a message over the top of the preview for a few seconds.</summary>
+    public void ShowNotice(string message)
+    {
+        _notice = message;
+        _noticeTimer.Stop();
+        _noticeTimer.Start();
+        Invalidate();
     }
 
     public Guid? SelectedAnnotationId { get; private set; }
@@ -48,10 +68,11 @@ public sealed class PreviewCanvas : Control
         set { _tool = value; Cursor = value == Tool.Select ? Cursors.Default : Cursors.Cross; ToolChanged?.Invoke(this, EventArgs.Empty); }
     }
 
-    public void Bind(ProjectSession session, PlaybackEngine engine)
+    public void Bind(ProjectSession session, PlaybackEngine engine, MediaLibrary library)
     {
         _session = session;
         _engine = engine;
+        _library = library;
         _engine.FrameReady += (_, _) => { if (IsHandleCreated) BeginInvoke(Invalidate); };
         _engine.PositionChanged += (_, _) => Invalidate();
     }
@@ -98,6 +119,16 @@ public sealed class PreviewCanvas : Control
             g.InterpolationMode = InterpolationMode.Bilinear;
             lock (_engine.FrameLock) g.DrawImage(_engine.Frame, canvas);
         }
+        else if (_engine.WaitingForProxy && StandIn() is { } img)
+        {
+            // Proxy not ready: show the photo itself (stills) or the thumbnail (videos) so you can keep working.
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            g.DrawImage(img, Fit(img.Size, canvas));
+            var badge = new Rectangle((int)canvas.X + 8, (int)canvas.Bottom - 30, 190, 22);
+            using (var bb = new SolidBrush(Color.FromArgb(170, 0, 0, 0))) g.FillRectangle(bb, badge);
+            TextRenderer.DrawText(g, "Optimising for playback…", Font, badge, Color.Gainsboro,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
         else
         {
             var msg = _session.Project.Timeline.Count == 0 ? "Drop video files here, or click Import"
@@ -117,6 +148,65 @@ public sealed class PreviewCanvas : Control
         g.ResetClip();
 
         if (Selected() is { } sel && IsVisibleNow(sel)) DrawSelection(g, sel, canvas);
+
+        if (_notice is { } notice)
+        {
+            var size = TextRenderer.MeasureText(g, notice, Font);
+            var r = new Rectangle((int)(canvas.X + (canvas.Width - size.Width) / 2) - 14, (int)canvas.Y + 14, size.Width + 28, size.Height + 14);
+            using (var bb = new SolidBrush(Color.FromArgb(215, 20, 20, 24))) g.FillRectangle(bb, r);
+            TextRenderer.DrawText(g, notice, Font, r, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+    }
+
+    /// <summary>Picture for the clip under the playhead while its proxy is being made, or null.</summary>
+    Image? StandIn()
+    {
+        if (TimelineOps.Locate(_session.Project, _engine.Position) is not { } hit ||
+            _session.Project.FindMedia(hit.Clip.SourceId) is not { } media) return null;
+        var path = media.IsStill ? media.OriginalPath : _library.GetState(media.Id).ThumbnailPath;
+        if (path is null || !File.Exists(path)) return null;
+        if (path == _standInPath) return _standIn;
+
+        _standIn?.Dispose();
+        _standIn = null;
+        _standInPath = path;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var src = Image.FromStream(fs);
+            ApplyExifOrientation(src);
+            // Keep at most ~1080p in memory: a 12 MP photo is 48 MB as a bitmap.
+            float scale = Math.Min(1f, Math.Min(1920f / src.Width, 1080f / src.Height));
+            _standIn = new Bitmap(src, Math.Max(1, (int)(src.Width * scale)), Math.Max(1, (int)(src.Height * scale)));
+        }
+        catch (Exception) { /* unreadable by GDI+ (e.g. HEIC): fall back to the text message */ }
+        return _standIn;
+    }
+
+    /// <summary>Phone photos store rotation in EXIF tag 0x0112; GDI+ doesn't apply it on its own.</summary>
+    static void ApplyExifOrientation(Image img)
+    {
+        if (!img.PropertyIdList.Contains(0x0112)) return;
+        var rf = img.GetPropertyItem(0x0112)?.Value?[0] switch
+        {
+            2 => RotateFlipType.RotateNoneFlipX,
+            3 => RotateFlipType.Rotate180FlipNone,
+            4 => RotateFlipType.Rotate180FlipX,
+            5 => RotateFlipType.Rotate90FlipX,
+            6 => RotateFlipType.Rotate90FlipNone,
+            7 => RotateFlipType.Rotate270FlipX,
+            8 => RotateFlipType.Rotate270FlipNone,
+            _ => (RotateFlipType?)null,
+        };
+        if (rf is { } r) img.RotateFlip(r);
+    }
+
+    /// <summary>Letterbox/pillarbox <paramref name="size"/> into <paramref name="box"/>, like Canvas.FitFilter.</summary>
+    static RectangleF Fit(Size size, RectangleF box)
+    {
+        float s = Math.Min(box.Width / size.Width, box.Height / size.Height);
+        float w = size.Width * s, h = size.Height * s;
+        return new RectangleF(box.X + (box.Width - w) / 2, box.Y + (box.Height - h) / 2, w, h);
     }
 
     void DrawSelection(Graphics g, Annotation a, RectangleF canvas)
@@ -158,6 +248,22 @@ public sealed class PreviewCanvas : Control
         },
         _ => Array.Empty<PointF>(),
     };
+
+    /// <summary>Resize cursor when hovering a handle of the selected annotation, else null.</summary>
+    Cursor? HandleCursorAt(Point p)
+    {
+        if (Selected() is not { } sel || !IsVisibleNow(sel)) return null;
+        var hs = Handles(sel, CanvasRect);
+        foreach (var h in hs)
+        {
+            if (Distance(h, p) > HandleSize) continue;
+            if (sel.Kind != AnnotationKind.Box) return Cursors.Cross; // arrow end: free movement
+            // Box corner: diagonal depends on which corner it is relative to the box centre.
+            float cx = hs.Average(q => q.X), cy = hs.Average(q => q.Y);
+            return (h.X - cx) * (h.Y - cy) > 0 ? Cursors.SizeNWSE : Cursors.SizeNESW;
+        }
+        return null;
+    }
 
     Annotation? Selected() => SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
 
@@ -239,9 +345,8 @@ public sealed class PreviewCanvas : Control
         {
             if (_tool == Tool.Select)
             {
-                var over = TimelineOps.VisibleAt(_session.Project, _engine.Position)
-                    .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location));
-                Cursor = over ? Cursors.SizeAll : Cursors.Default;
+                Cursor = HandleCursorAt(e.Location) ?? (TimelineOps.VisibleAt(_session.Project, _engine.Position)
+                    .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location)) ? Cursors.SizeAll : Cursors.Default);
             }
             return;
         }
@@ -276,6 +381,7 @@ public sealed class PreviewCanvas : Control
                 case DragMode.Corner12: a.X1 = norm.X; a.Y2 = norm.Y; break;
                 case DragMode.Corner21: a.X2 = norm.X; a.Y1 = norm.Y; break;
             }
+            TimelineOps.SyncLinked(p, id);
         });
     }
 
@@ -366,9 +472,9 @@ public sealed class PreviewCanvas : Control
         CloseEditor();
         _session.Execute(p =>
         {
-            if (p.FindAnnotation(id) is not { } a) return;
-            if (string.IsNullOrWhiteSpace(text)) p.Annotations.Remove(a); // empty text = delete
-            else a.Text = text;
+            if (p.FindAnnotation(id) is null) return;
+            if (string.IsNullOrWhiteSpace(text)) TimelineOps.DeleteAnnotation(p, id); // empty text = delete
+            else { p.FindAnnotation(id)!.Text = text; TimelineOps.SyncLinked(p, id); }
         });
     }
 

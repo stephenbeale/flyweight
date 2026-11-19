@@ -22,10 +22,11 @@ public sealed class MainForm : Form
     readonly PreviewCanvas _preview = new() { Dock = DockStyle.Fill };
     readonly TimelineControl _timeline = new() { Dock = DockStyle.Fill };
     readonly MediaBinControl _bin = new() { Dock = DockStyle.Fill };
-    readonly PropertyGrid _props = new() { Dock = DockStyle.Fill, ToolbarVisible = false, HelpVisible = true, Visible = false };
+    readonly AnnotationStylePanel _props = new() { Dock = DockStyle.Fill, Visible = false };
     readonly Label _propsEmpty = new() { Dock = DockStyle.Fill, ForeColor = Color.Gray, TextAlign = ContentAlignment.MiddleCenter,
         Text = "Select an arrow, box or text\nto edit its style.\n\nA  arrow    R  box    T  text" };
-    readonly Label _timecode = new() { AutoSize = false, Width = 230, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
+    // AutoSize: a fixed pixel width clipped "/ total" once Windows display scaling enlarged the font.
+    readonly Label _timecode = new() { AutoSize = true, Padding = new Padding(12, 0, 12, 0), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
         Font = new Font("Consolas", 11f), Dock = DockStyle.Left };
     readonly ToolStripStatusLabel _statusText = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     readonly ToolStripButton _undoBtn = new("Undo");
@@ -48,7 +49,7 @@ public sealed class MainForm : Form
             if (iconStream is not null) Icon = new Icon(iconStream);
 
         _engine = new PlaybackEngine(_session, _library);
-        _preview.Bind(_session, _engine);
+        _preview.Bind(_session, _engine, _library);
         _timeline.Bind(_session, _library, () => _engine.Position);
 
         BuildLayout();
@@ -115,9 +116,9 @@ public sealed class MainForm : Form
 
         // Transport bar under the preview
         var transport = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Color.FromArgb(32, 32, 38), Padding = new Padding(8, 4, 8, 4) };
-        Button TBtn(string text, string tip, Action click)
+        Button TBtn(string text, string tip, Action click, int width = 46)
         {
-            var b = new Button { Text = text, Width = 40, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
+            var b = new Button { Text = text, Width = width, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
             b.FlatAppearance.BorderSize = 0;
             new ToolTip().SetToolTip(b, tip);
             b.Click += (_, _) => { click(); _preview.Focus(); };
@@ -126,10 +127,13 @@ public sealed class MainForm : Form
         _playBtn.FlatAppearance.BorderSize = 0;
         _playBtn.Click += (_, _) => { _engine.TogglePlay(); _preview.Focus(); };
         transport.Controls.Add(_timecode);
+        // Docked Left, so the LAST added is leftmost: ⏮  |◀◀  ◀|  ▶  |▶  ▶▶|  ⏭  timecode
         transport.Controls.Add(TBtn("⏭", "End (End)", () => _engine.Seek(TimelineOps.TotalDuration(_session.Project))));
+        transport.Controls.Add(TBtn("▶▶|", "Next clip (↓)", NextClip, width: 56));
         transport.Controls.Add(TBtn("|▶", "Next frame (→)", () => _engine.StepFrames(1)));
         transport.Controls.Add(_playBtn);
         transport.Controls.Add(TBtn("◀|", "Previous frame (←)", () => _engine.StepFrames(-1)));
+        transport.Controls.Add(TBtn("|◀◀", "Previous clip (↑)", PreviousClip, width: 56));
         transport.Controls.Add(TBtn("⏮", "Start (Home)", () => _engine.Seek(TimeSpan.Zero)));
 
         var previewPanel = new Panel { Dock = DockStyle.Fill };
@@ -173,14 +177,24 @@ public sealed class MainForm : Form
 
     void WireEvents()
     {
-        _session.Changed += (_, _) => { _engine.Refresh(); UpdateUi(); };
+        _session.Changed += (_, _) =>
+        {
+            // Only re-seek the player when the CLIPS changed. Annotation/style edits are drawn on top, and
+            // re-seeking on every mouse move of an annotation drag queued dozens of VLC seeks (laggy play after).
+            var sig = TimelineSignature(_session.Project);
+            if (sig != _timelineSig) { _timelineSig = sig; _engine.Refresh(); }
+            UpdateUi();
+        };
         _library.StateChanged += (_, id) => { if (IsHandleCreated) BeginInvoke(() => OnMediaStateChanged(id)); };
         _engine.PositionChanged += (_, _) =>
         {
             UpdateTimecode();
-            if (_engine.IsPlaying) _timeline.EnsurePlayheadVisible(); else _timeline.Invalidate();
+            // Any playhead move (play, step, seek, clip jump) brings it back into view. Scrolling or
+            // zooming the timeline alone doesn't move the playhead, so it doesn't fight the user.
+            _timeline.EnsurePlayheadVisible();
             _preview.Invalidate();
         };
+        _engine.PlayingChanged += (_, _) => UpdateTimecode(); // flips the ▶ / ❚❚ button
 
         _timeline.SeekRequested += (_, t) => { _engine.Pause(); _engine.Seek(t); };
         _timeline.AnnotationSelected += (_, _) => _preview.Select(_timeline.SelectedAnnotationId);
@@ -194,16 +208,29 @@ public sealed class MainForm : Form
         };
         _preview.ToolChanged += (_, _) => UpdateToolButtons();
 
-        _props.PropertyValueChanged += (_, _) =>
+        _props.Edit += (edit, phase) =>
         {
-            if (_props.SelectedObject is not AnnotationProperties vm || _preview.SelectedAnnotationId is not { } id) return;
-            _session.Execute(p => { if (p.FindAnnotation(id) is { } a) vm.ApplyTo(a); });
+            if (_preview.SelectedAnnotationId is not { } id) return;
+            void Apply(Project p)
+            {
+                if (p.FindAnnotation(id) is not { } a) return;
+                edit(a);
+                TimelineOps.SyncLinked(p, id); // same look on every piece of a run across cuts
+            }
+            switch (phase)
+            {
+                case StyleEditPhase.Single: _session.Execute(Apply); break;
+                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(Apply); break;
+                case StyleEditPhase.Commit: _session.Preview(Apply); _session.CommitEdit(); break;
+            }
         };
 
         _bin.AddToTimelineRequested += (_, id) => _session.Execute(p =>
         {
             if (p.FindMedia(id) is { } m) TimelineOps.Append(p, m);
         });
+        _bin.InsertRequested += (mediaId, after) => InsertMedia(mediaId, CurrentClipId(), after);
+        _timeline.ClipMenuRequested += ShowClipMenu;
 
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += async (_, e) =>
@@ -234,6 +261,7 @@ public sealed class MainForm : Form
     {
         _bin.Sync(_session.Project, _library);
         _timeline.Invalidate();
+        _preview.Invalidate(); // a thumbnail may have arrived for the stand-in picture
         var st = _library.GetState(id);
         if (st.Status == ProxyStatus.Ready) _engine.Refresh(); // the clip under the playhead may just have become playable
         if (st.Status == ProxyStatus.Failed && _session.Project.FindMedia(id) is { } m)
@@ -246,8 +274,9 @@ public sealed class MainForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        // Let text boxes (inline text editor, property grid) have their keys.
-        if (_preview.IsEditingText || _props.ContainsFocus || ActiveControl is TextBoxBase)
+        // Let text inputs (inline text editor, panel text/number/font boxes) have their keys. Only the
+        // focused control itself counts: a swatch or slider keeping focus mustn't kill the shortcuts.
+        if (_preview.IsEditingText || FocusedControl() is TextBoxBase or UpDownBase or ComboBox)
             return base.ProcessCmdKey(ref msg, keyData);
 
         switch (keyData)
@@ -256,6 +285,8 @@ public sealed class MainForm : Form
             case Keys.K: _engine.Pause(); return true;
             case Keys.L: _engine.Play(); return true;
             case Keys.J: _engine.Seek(_engine.Position - TimeSpan.FromSeconds(1)); return true;
+            case Keys.Up: PreviousClip(); return true;
+            case Keys.Down: NextClip(); return true;
             case Keys.Left: _engine.StepFrames(-1); return true;
             case Keys.Right: _engine.StepFrames(1); return true;
             case Keys.Shift | Keys.Left: _engine.Seek(_engine.Position - TimeSpan.FromSeconds(1)); return true;
@@ -281,7 +312,79 @@ public sealed class MainForm : Form
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
+    /// <summary>The innermost focused control (Form.ActiveControl stops at the first container).</summary>
+    Control? FocusedControl()
+    {
+        Control? c = ActiveControl;
+        while (c is ContainerControl { ActiveControl: { } inner }) c = inner;
+        // NumericUpDown focuses an inner edit box; report the UpDownBase itself.
+        return c?.Parent is UpDownBase ud ? ud : c;
+    }
+
     // ---------------- Commands ----------------
+
+    void NextClip()
+    {
+        _engine.Pause();
+        _engine.Seek(TimelineOps.NextClipBoundary(_session.Project, _engine.Position));
+        _timeline.EnsurePlayheadVisible();
+    }
+
+    void PreviousClip()
+    {
+        _engine.Pause();
+        _engine.Seek(TimelineOps.PreviousClipBoundary(_session.Project, _engine.Position));
+        _timeline.EnsurePlayheadVisible();
+    }
+
+    /// <summary>The selected clip, else the clip under the playhead.</summary>
+    Guid? CurrentClipId() =>
+        _timeline.SelectedClipId is { } id && _session.Project.FindClip(id) is not null ? id
+        : TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id;
+
+    /// <summary>Insert a bin item before/after <paramref name="anchorClipId"/> (or at the end if none), then jump to it.</summary>
+    void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after)
+    {
+        _engine.Pause();
+        Clip? inserted = null;
+        _session.Execute(p =>
+        {
+            if (p.FindMedia(mediaId) is not { } m) return;
+            int anchor = anchorClipId is { } a ? p.Timeline.FindIndex(c => c.Id == a) : -1;
+            int index = anchor < 0 ? p.Timeline.Count : after ? anchor + 1 : anchor;
+            inserted = TimelineOps.InsertMedia(p, m, index);
+        });
+        if (inserted is null) return;
+        _timeline.SelectedClipId = inserted.Id;
+        _engine.Seek(TimelineOps.ClipStart(_session.Project, inserted.Id));
+        _timeline.EnsurePlayheadVisible();
+        _timeline.Invalidate();
+    }
+
+    void ShowClipMenu(Guid clipId, Point screen)
+    {
+        var menu = new ContextMenuStrip();
+        menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        var before = new ToolStripMenuItem("Insert before");
+        var after = new ToolStripMenuItem("Insert after");
+        foreach (var m in _session.Project.Media)
+        {
+            var id = m.Id;
+            before.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertMedia(id, clipId, after: false));
+            after.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertMedia(id, clipId, after: true));
+        }
+        if (_session.Project.Media.Count == 0)
+        {
+            before.Enabled = after.Enabled = false;
+            before.ToolTipText = after.ToolTipText = "Import some media first";
+        }
+        menu.Items.Add(before);
+        menu.Items.Add(after);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Split at playhead (S)", null, (_, _) => Split());
+        menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
+        menu.Show(screen);
+    }
 
     void Split()
     {
@@ -294,14 +397,17 @@ public sealed class MainForm : Form
         _engine.Pause();
         var at = _engine.Position;
         var p = _session.Project;
+        // At the very end of the timeline (End key / ▶▶), freeze the last frame.
+        var total = TimelineOps.TotalDuration(p);
+        if (p.Timeline.Count > 0 && at >= total) at = total - _engine.OneFrame();
         if (TimelineOps.Locate(p, at) is not { } hit || p.FindMedia(hit.Clip.SourceId) is not { } media)
         {
-            _statusText.Text = "Move the playhead onto a clip first, then press F.";
+            _preview.ShowNotice("Move the playhead onto a clip first, then press F.");
             return;
         }
         if (media.IsStill)
         {
-            _statusText.Text = "That's already a still image: drag its right edge to hold it longer.";
+            _preview.ShowNotice("That's already a still image: drag its right edge to hold it longer.");
             return;
         }
 
@@ -321,7 +427,7 @@ public sealed class MainForm : Form
             UpdateStatus();
             return;
         }
-        _session.Execute(proj => TimelineOps.InsertFreezeFrame(proj, at, still, dlg.Length));
+        _session.Execute(proj => TimelineOps.InsertFreezeFrame(proj, at, still, dlg.Length, dlg.CopyAnnotations));
         StartProxy(still);
         UpdateStatus();
     }
@@ -330,7 +436,7 @@ public sealed class MainForm : Form
     {
         if (_preview.SelectedAnnotationId is { } aid)
         {
-            _session.Execute(p => p.Annotations.RemoveAll(a => a.Id == aid));
+            _session.Execute(p => TimelineOps.DeleteAnnotation(p, aid)); // the whole run if it spans cuts
             _preview.Select(null);
         }
         else if (_timeline.SelectedClipId is { } cid)
@@ -492,10 +598,23 @@ public sealed class MainForm : Form
 
     // ---------------- UI refresh ----------------
 
+    string? _timelineSig;
+    string? _mediaSig;
+
+#if DEBUG
+    // So the owner can see at a glance which build is running while smoke-testing.
+    static readonly string BuildTag = $"  [debug build {File.GetLastWriteTime(typeof(MainForm).Assembly.Location):HH:mm}]";
+#else
+    const string BuildTag = "";
+#endif
+
+    static string TimelineSignature(Project p) =>
+        string.Join('|', p.Timeline.Select(c => $"{c.Id}:{c.SourceId}:{c.In.Ticks}:{c.Out.Ticks}"));
+
     void UpdateUi()
     {
         var name = _session.FilePath is { } p ? Path.GetFileNameWithoutExtension(p) : "Untitled";
-        Text = $"{name}{(_session.IsDirty ? " •" : "")} · Flyweight";
+        Text = $"{name}{(_session.IsDirty ? " •" : "")} · Flyweight{BuildTag}";
         _undoBtn.Enabled = _session.CanUndo;
         _redoBtn.Enabled = _session.CanRedo;
 
@@ -503,7 +622,8 @@ public sealed class MainForm : Form
         if (_preview.SelectedAnnotationId is { } aid && _session.Project.FindAnnotation(aid) is null) _preview.Select(null);
         if (_timeline.SelectedClipId is { } cid && _session.Project.FindClip(cid) is null) _timeline.SelectedClipId = null;
 
-        _bin.Sync(_session.Project, _library);
+        var mediaSig = string.Join('|', _session.Project.Media.Select(m => m.Id));
+        if (mediaSig != _mediaSig) { _mediaSig = mediaSig; _bin.Sync(_session.Project, _library); } // status updates come via OnMediaStateChanged
         _timeline.Invalidate();
         _preview.Invalidate();
         UpdatePropertyGrid();
@@ -517,14 +637,11 @@ public sealed class MainForm : Form
         var a = _preview.SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
         if (a is null)
         {
-            _props.SelectedObject = null;
             _props.Visible = false;
             _propsEmpty.Visible = true;
             return;
         }
-        // Don't rebuild while the user is typing in the grid; it would reset their cursor.
-        if (_props.ContainsFocus && _props.SelectedObject is AnnotationProperties) return;
-        _props.SelectedObject = AnnotationProperties.For(a);
+        _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
         _props.Visible = true;
         _propsEmpty.Visible = false;
     }
