@@ -63,6 +63,10 @@ tests/Flyweight.Core.Tests/  xUnit; FfmpegIntegrationTests runs real ffmpeg (sel
 - Add/adjust tests in `tests/` for any change to Core behaviour; export changes should extend
   `FfmpegIntegrationTests` (it checks real output pixels).
 - Commit messages: imperative summary line, then bullet details.
+- **Backslash escapes have been mangled before.** Text written through a shell on Windows turned `\n` and `\f` into
+  real line breaks/form feeds (a C# string that wouldn't compile, `bin\Debug\net8.0-windows` and `...\frames` paths
+  in docs). Write files with the Edit/Write tools, not shell echo/heredocs, and grep for control characters
+  (`[\x00-\x08\x0b\x0c\x0e-\x1f]`) before committing.
 
 ## Working style: show progress visually
 

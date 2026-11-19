@@ -1,7 +1,9 @@
 using Flyweight.App.Controls;
 using Flyweight.App.Forms;
 using Flyweight.App.Playback;
+using Flyweight.App.Rendering;
 using Flyweight.Core.Editing;
+using Flyweight.Core.Export;
 using Flyweight.Core.Media;
 using Flyweight.Core.Model;
 
@@ -110,8 +112,17 @@ public sealed class MainForm : Form
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
             new ToolStripSeparator(),
+            Btn("Export frame", "Save the current frame as a PNG next to your footage, and add it to Media (Ctrl+Shift+E)", () => _ = ExportFrameAsync(chooseLocation: false)),
             Btn("Export for YouTube…", "Export MP4 (Ctrl+E)", Export),
         });
+
+        // Right-click on the preview offers the same thing, plus "choose where".
+        var previewMenu = new ContextMenuStrip();
+        previewMenu.Items.Add("Export this frame as image", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false));
+        previewMenu.Items.Add("Export this frame as image…  (choose location)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
+        previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
+        previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
+        _preview.ContextMenuStrip = previewMenu;
 
         // Transport bar under the preview
         var transport = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Color.FromArgb(32, 32, 38), Padding = new Padding(8, 4, 8, 4) };
@@ -276,6 +287,7 @@ public sealed class MainForm : Form
             case Keys.Control | Keys.O: OpenProject(); return true;
             case Keys.Control | Keys.I: ImportDialog(); return true;
             case Keys.Control | Keys.E: Export(); return true;
+            case Keys.Control | Keys.Shift | Keys.E: _ = ExportFrameAsync(chooseLocation: false); return true;
             case Keys.Control | Keys.D0: _timeline.ZoomToFit(); return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
@@ -312,7 +324,7 @@ public sealed class MainForm : Form
         SourceMedia still;
         try
         {
-            var png = await _library.ExtractFrameAsync(media, hit.SourceTime);
+            var png = await _library.ExtractFrameAsync(media, hit.SourceTime, ExportLocations.DefaultFolder(p)); // travels with the footage (D18)
             still = await _library.ProbeAsync(png);
         }
         catch (Exception ex)
@@ -357,8 +369,10 @@ public sealed class MainForm : Form
         if (dlg.ShowDialog(this) == DialogResult.OK) _ = ImportAsync(dlg.FileNames);
     }
 
-    async Task ImportAsync(IEnumerable<string> paths)
+    /// <param name="addToTimeline">False = media bin only (used for exported frames).</param>
+    async Task<List<SourceMedia>> ImportAsync(IEnumerable<string> paths, bool addToTimeline = true)
     {
+        var imported = new List<SourceMedia>();
         foreach (var path in paths)
         {
             _statusText.Text = $"Reading {Path.GetFileName(path)}…";
@@ -369,11 +383,13 @@ public sealed class MainForm : Form
                 MessageBox.Show(this, $"Couldn't read {Path.GetFileName(path)}:\n\n{ex.Message}", "Import", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 continue;
             }
-            _session.Execute(p => { p.Media.Add(media); TimelineOps.Append(p, media); });
-            if (_session.Project.Timeline.Count == 1) _timeline.ZoomToFit();
+            _session.Execute(p => { p.Media.Add(media); if (addToTimeline) TimelineOps.Append(p, media); });
+            imported.Add(media);
+            if (addToTimeline && _session.Project.Timeline.Count == 1) _timeline.ZoomToFit();
             StartProxy(media);
         }
         UpdateStatus();
+        return imported;
     }
 
     void StartProxy(SourceMedia media) => _ = Task.Run(async () =>
@@ -387,9 +403,61 @@ public sealed class MainForm : Form
         _engine.Pause();
         _preview.CommitTextEdit();
         if (_session.Project.Timeline.Count == 0) { MessageBox.Show(this, "Add some clips to the timeline first.", "Export"); return; }
-        var suggested = _session.FilePath is { } fp ? Path.ChangeExtension(fp, ".mp4") : null;
+        // Default: next to the largest video (the main footage), named after the project (D18).
+        var suggested = ExportLocations.Unique(ExportLocations.DefaultVideoPath(_session.Project, _session.FilePath));
         using var dlg = new ExportForm(_session.Project, suggested);
         dlg.ShowDialog(this);
+    }
+
+    bool _exportingFrame;
+
+    /// <summary>
+    /// Save the frame under the playhead (with annotations) as a PNG at the project's output size,
+    /// next to the largest video by default, then add it to the media bin straight away (D18).
+    /// </summary>
+    async Task ExportFrameAsync(bool chooseLocation)
+    {
+        if (_exportingFrame) return;
+        _engine.Pause();
+        _preview.CommitTextEdit();
+        var project = _session.Project;
+        if (project.Timeline.Count == 0) { _statusText.Text = "Add a clip to the timeline first, then export a frame."; return; }
+
+        var t = _engine.Position;
+        var path = ExportLocations.Unique(Path.Combine(ExportLocations.DefaultFolder(project),
+            FrameExport.DefaultFileName(project, _session.FilePath, t)));
+        if (chooseLocation)
+        {
+            using var dlg = new SaveFileDialog
+            {
+                Filter = "PNG image|*.png",
+                InitialDirectory = Path.GetDirectoryName(path),
+                FileName = Path.GetFileName(path),
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            path = dlg.FileName;
+        }
+
+        _exportingFrame = true;
+        _statusText.Text = "Exporting frame…";
+        try
+        {
+            var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.Size;
+            // Snapshot: the project may change while ffmpeg runs.
+            var snapshot = ProjectSerializer.Deserialize(ProjectSerializer.Serialize(project));
+            await FrameRenderer.ExportAsync(snapshot, t, w, h, path);
+            foreach (var m in await ImportAsync(new[] { path }, addToTimeline: false)) _bin.Highlight(m.Id);
+            _statusText.Text = $"Saved {Path.GetFileName(path)} to {Path.GetDirectoryName(path)}, and added it to Media.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't export the frame:\n\n{ex.Message}", "Export frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            _statusText.Text = "Frame export failed.";
+        }
+        finally
+        {
+            _exportingFrame = false;
+        }
     }
 
     void NewProject()

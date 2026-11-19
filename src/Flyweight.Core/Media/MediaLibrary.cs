@@ -123,14 +123,16 @@ public sealed class MediaLibrary
 
     /// <summary>
     /// Save one full-resolution frame of the ORIGINAL file (not the 540p proxy) as a PNG, for a
-    /// freeze frame. Stored under the app's data folder so it outlives the proxy cache.
+    /// freeze frame. Saved into <paramref name="folder"/> (normally next to the project's main footage,
+    /// so it travels with it, see DECISIONS D18); falls back to the app's data folder.
     /// Returns the PNG path; probe it to get a still <see cref="SourceMedia"/>.
     /// </summary>
-    public async Task<string> ExtractFrameAsync(SourceMedia media, TimeSpan sourceTime, CancellationToken ct = default)
+    public async Task<string> ExtractFrameAsync(SourceMedia media, TimeSpan sourceTime, string? folder = null, CancellationToken ct = default)
     {
-        var dir = Path.Combine(Path.GetDirectoryName(CacheDirectory)!, "frames");
+        var dir = folder ?? Path.Combine(Path.GetDirectoryName(CacheDirectory)!, "frames");
         Directory.CreateDirectory(dir);
-        var png = Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} at {sourceTime.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}s {Guid.NewGuid().ToString("N")[..6]}.png");
+        var png = Export.ExportLocations.Unique(Path.Combine(dir,
+            $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} freeze {Export.FrameExport.Stamp(sourceTime)}.png"));
         await FfmpegRunner.RunFfmpegAsync(new[]
         {
             // -ss before -i seeks fast; ffmpeg still decodes to the exact frame.

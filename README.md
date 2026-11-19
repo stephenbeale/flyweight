@@ -33,6 +33,12 @@ YouTube-ready MP4, without the lag and crashes of heavyweight editors.
 dotnet test     # core tests; the ffmpeg integration tests run if ffmpeg is on PATH
 ```
 
+## Export frame as image
+
+**Export frame** (toolbar, **Ctrl+Shift+E**, or right-click the preview) saves the frame under the playhead as a
+full-quality PNG at your project's output size, with annotations, next to your main footage, and adds it to the
+Media bin straight away. Video exports and freeze frames default to that same folder.
+
 ## Keyboard
 
 | Key | Action | Key | Action |

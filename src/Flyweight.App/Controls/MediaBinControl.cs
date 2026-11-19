@@ -45,6 +45,15 @@ public sealed class MediaBinControl : UserControl
         _images.Images.Add("placeholder", (Image)placeholder.Clone());
     }
 
+    /// <summary>Select and scroll to an item, e.g. a frame that was just exported.</summary>
+    public void Highlight(Guid id)
+    {
+        if (_list.Items[id.ToString()] is not { } item) return;
+        _list.SelectedItems.Clear();
+        item.Selected = item.Focused = true;
+        item.EnsureVisible();
+    }
+
     /// <summary>Bring the list in line with the project and current proxy states.</summary>
     public void Sync(Project project, MediaLibrary library)
     {

@@ -37,6 +37,9 @@ _Last updated: 2026-11-19_
 - [ ] Save, close, reopen (proxies come from cache instantly)
 - [ ] Kill the process mid-edit and relaunch: recovery prompt restores work
 - [ ] Export 1080p: progress bar and cancel work; output plays, and annotations match the preview
+- [ ] Export frame (Ctrl+Shift+E / right-click preview): PNG lands next to the largest video, includes annotations,
+      appears highlighted in Media; dragging it to the timeline works (D18)
+- [ ] Export dialog and freeze frames default to the largest video's folder (D18)
 
 ### First Windows run: status (2026-11-19, branch `fix/first-windows-run`)
 - Launch and video import passed. **Not yet tested:** playback (step 2, highest risk), timeline edits, annotations,
@@ -50,9 +53,8 @@ _Last updated: 2026-11-19_
 - **Open items:**
   1. The owner's open project has images imported the OLD way: delete and re-import them (export now errors clearly on them).
   2. Finish the smoke test above, starting with playback.
-  3. Freeze-frame PNGs live in `%LocalAppData%\Flyweightrames`, not next to the project file (D17).
-- Dev notes: launch the GUI outside the tool sandbox (`Start-Process bin\Debug
-et8.0-windows\Flyweight.exe`); close the app
+  3. ~~Freeze-frame PNGs live in `%LocalAppData%\Flyweight\frames`~~: now saved next to the largest video (D18).
+- Dev notes: launch the GUI outside the tool sandbox (`Start-Process bin\Debug\net8.0-windows\Flyweight.exe`); close the app
   before rebuilding Debug. Repo `nuget.config` pins nuget.org because the machine-wide config has a private feed (wf-lmx) that 401s.
 
 ## Known risks / likely first bugs

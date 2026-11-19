@@ -89,6 +89,19 @@ Images are probed as stills (`SourceMedia.IsStill`), never as near-zero-length v
 ffmpeg output and a never-finishing export). Defaults: 8s on the timeline (`DefaultStillLength`), 5s for a freeze
 frame, and a 5-minute cap (`StillMaxDuration`) so the looped proxy stays cheap (~8s to build for 5 min). Export loops
 the original image at the fps of the first non-still clip and errors on clips shorter than `MinClipLength`.
-Freeze frames are full-res PNGs extracted from the original into `%LocalAppData%\Flyweightrames`.
+Freeze frames are full-res PNGs extracted from the original into `%LocalAppData%\Flyweight\frames`.
 Known limitation: that folder is not portable with the `.flyweight` file, so a project moved to another machine
 loses its freeze-frame images. Revisit (e.g. store beside the project) if this bites.
+
+### D18. Export frame as image; exports and freeze frames default next to the largest video
+Owner request. **Export frame** (toolbar, Ctrl+Shift+E, right-click on the preview) saves the frame under the
+playhead as a PNG at the project's output size. The frame comes from the ORIGINAL file, fitted to the 16:9 canvas
+(`FrameExport`), and the annotations visible at that moment are drawn on with `AnnotationRenderer` (`FrameRenderer`),
+so it matches the preview and the video export. It is added to the **media bin immediately, highlighted**, but not
+to the timeline. (Freeze frame, D17, is the "insert into the timeline" counterpart.)
+**Default location** for exported frames, the video export and **freeze frames** is the folder of the **largest
+video file** in the project (the main recording), falling back to Videos. This resolves D17's limitation:
+freeze frames no longer hide in `%LocalAppData%`, so they travel with the footage. Names come from the project file,
+else that video ("Holiday - edit.mp4", "Holiday frame 1m23s.png", "Holiday freeze 0m12s.png"); exports never
+overwrite ("name (2).png").
+
