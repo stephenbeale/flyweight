@@ -17,6 +17,43 @@ Current branch: `feature/audio` (created from `main`, no feature commits yet). N
 | CI (GitHub Actions: Ubuntu tests + ffmpeg, Windows app build) | ✅ Done (`.github/workflows/ci.yml`) |
 | Output size chosen at New project (`Project.OutputResolution`) | ✅ Done; export dialog defaults to it |
 
+## Open questions for next session
+
+**Agreed order (unchanged):** first fix any bugs the owner hits during the real editing session, then
+`feature/audio` (clip volume/mute, narration + music track, ducking), then clip speed. Reverse is parked.
+Royalty-free media search is parked. Details under "v0.2 candidates" below.
+
+### 1. Sharing with friends (undecided)
+Not shareable yet:
+- No release build.
+- ffmpeg isn't bundled (the owner's PC has it via Chocolatey).
+- The exe is unsigned, so friends hit SmartScreen and must choose "Run anyway".
+- Only tested on the owner's PC.
+
+Plan: a "v0.1 preview" zip on a GitHub Release:
+- Self-contained win-x64 publish (.NET + LibVLC included).
+- Bundled ffmpeg/ffprobe, with their licence notices (LGPL/GPL obligations).
+- A short README.
+- A feedback route (GitHub Issues).
+
+Options offered for timing:
+1. After the owner's own real-editing session and fixes (recommended).
+2. First thing next session, before audio.
+3. Later, as v0.2 after audio + speed.
+
+### 2. App name (undecided, deferred to next time)
+The owner thinks "Flyweight" is too common. It is also the name of a well-known software design pattern, which
+hurts search. They want something that says lean / light / fast / nimble.
+- **Rejected so far:** Kestrel and Dart (already taken), Cutman (gendered), Jab and Bantam (fun but not relevant to
+  editing), Featherweight (likely crowded).
+- **Current shortlist:** Whittle (shave long footage down; favourite), Nib (pen point: light + annotations),
+  Featherframe (light + video frame).
+- **Other ideas:** Pare, Kerf, Quill (likely taken: Quill.js), Callout, Markcut.
+- **Next step:** check availability (existing apps, domains, trademarks, Microsoft Store) for the shortlist before
+  choosing.
+- Renaming is easiest before sharing with friends; it could ship with the preview zip.
+- The icon is a boxing glove in a film frame (D16). It may need revisiting if the name drops the boxing theme.
+
 ## Next steps (in order)
 
 0. ~~Add GitHub Actions CI~~ ✅ (D14). CI sets `FLYWEIGHT_REQUIRE_FFMPEG=1` so integration tests fail rather than skip.
