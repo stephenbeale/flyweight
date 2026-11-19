@@ -30,6 +30,8 @@ public sealed class MediaLibrary
 {
     readonly ConcurrentDictionary<Guid, MediaState> _states = new();
     readonly SemaphoreSlim _jobs = new(1, 1); // one transcode at a time keeps the UI machine responsive
+    readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
+    readonly SemaphoreSlim _thumbJobs = new(2, 2); // thumbnails are ~1 s each; don't queue them behind transcodes
 
     public string CacheDirectory { get; }
 
@@ -51,10 +53,18 @@ public sealed class MediaLibrary
     /// <summary>Make sure a proxy + thumbnail exist for this media. Safe to call repeatedly.</summary>
     public async Task EnsureProxyAsync(SourceMedia media, CancellationToken ct = default)
     {
+        if (!_inFlight.TryAdd(media.Id, 0)) return; // already queued/working (e.g. import + project reload)
+        try { await EnsureProxyCoreAsync(media, ct); }
+        finally { _inFlight.TryRemove(media.Id, out _); }
+    }
+
+    async Task EnsureProxyCoreAsync(SourceMedia media, CancellationToken ct)
+    {
         var state = GetState(media.Id);
         if (state.Status is ProxyStatus.Ready or ProxyStatus.Optimising) return;
 
-        var dir = Path.Combine(CacheDirectory, CacheKey(media.OriginalPath));
+        // Stills get their own key: images imported before D17 left ~0.04 s "video" proxies under the plain key.
+        var dir = Path.Combine(CacheDirectory, CacheKey(media.OriginalPath) + (media.IsStill ? "-still" : ""));
         Directory.CreateDirectory(dir);
         var proxy = Path.Combine(dir, "proxy.mp4");
         var thumb = Path.Combine(dir, "thumb.jpg");
@@ -66,6 +76,18 @@ public sealed class MediaLibrary
         }
 
         Set(media.Id, s => { s.Status = ProxyStatus.Queued; s.Progress = 0; s.Error = null; });
+
+        // Thumbnail first, straight from the original, in its OWN small queue: one seek + decode takes
+        // about a second, so the bin, timeline and preview get a picture without waiting behind
+        // minutes of proxy transcodes.
+        if (!File.Exists(thumb))
+        {
+            await _thumbJobs.WaitAsync(ct);
+            try { await MakeThumbnailAsync(media, thumb, ct); }
+            finally { _thumbJobs.Release(); }
+        }
+        if (File.Exists(thumb)) Set(media.Id, s => s.ThumbnailPath = thumb);
+
         await _jobs.WaitAsync(ct);
         try
         {
@@ -98,13 +120,25 @@ public sealed class MediaLibrary
             await FfmpegRunner.RunFfmpegAsync(args, media.Duration, progress, ct);
             File.Move(tmp, proxy, overwrite: true);
 
-            var thumbAt = media.IsStill ? TimeSpan.Zero : TimeSpan.FromTicks(media.Duration.Ticks / 10);
-            await FfmpegRunner.RunFfmpegAsync(new[]
+            if (!File.Exists(thumb)) // original couldn't be thumbnailed: fall back to the proxy's first frame
             {
-                "-ss", FfmpegRunner.Sec(thumbAt), "-i", proxy, "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", thumb,
-            }, ct: ct);
+                try
+                {
+                    await FfmpegRunner.RunFfmpegAsync(new[]
+                    {
+                        "-i", proxy, "-frames:v", "1", "-update", "1", "-vf", "scale=320:-2", "-q:v", "4", thumb,
+                    }, ct: ct);
+                }
+                catch (FfmpegException) { }
+            }
 
-            Set(media.Id, s => { s.ProxyPath = proxy; s.ThumbnailPath = thumb; s.Progress = 1; s.Status = ProxyStatus.Ready; });
+            Set(media.Id, s =>
+            {
+                s.ProxyPath = proxy;
+                s.ThumbnailPath = File.Exists(thumb) ? thumb : null;
+                s.Progress = 1;
+                s.Status = ProxyStatus.Ready;
+            });
         }
         catch (OperationCanceledException)
         {
@@ -138,6 +172,28 @@ public sealed class MediaLibrary
         }, ct: ct);
         if (!File.Exists(png)) throw new FfmpegException($"Couldn't grab a frame from '{media.DisplayName}'.", "");
         return png;
+    }
+
+    /// <summary>
+    /// 320×180 (16:9-padded) JPEG from the original. Written to a temp name then moved, so a reader
+    /// never sees half a file. Failure is not fatal: the proxy step falls back to its first frame.
+    /// </summary>
+    static async Task MakeThumbnailAsync(SourceMedia media, string thumb, CancellationToken ct)
+    {
+        var tmp = Path.Combine(Path.GetDirectoryName(thumb)!, "thumb.partial.jpg");
+        var args = new List<string>();
+        if (!media.IsStill) args.AddRange(new[] { "-ss", Sec(TimeSpan.FromTicks(media.Duration.Ticks / 10)) });
+        args.AddRange(new[]
+        {
+            "-i", media.OriginalPath, "-frames:v", "1", "-update", "1",
+            "-vf", Canvas.FitFilter(320, 180), "-q:v", "4", tmp,
+        });
+        try
+        {
+            await FfmpegRunner.RunFfmpegAsync(args, ct: ct);
+            if (File.Exists(tmp)) File.Move(tmp, thumb, overwrite: true);
+        }
+        catch (FfmpegException) { }
     }
 
     void Set(Guid id, Action<MediaState> change)

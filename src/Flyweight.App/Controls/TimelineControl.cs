@@ -50,6 +50,9 @@ public sealed class TimelineControl : Control
     public event EventHandler? ClipSelected;
     public event EventHandler? AnnotationSelected;
 
+    /// <summary>Right-click on a clip (already selected): clip id and screen position for a context menu.</summary>
+    public event Action<Guid, Point>? ClipMenuRequested;
+
     public void Bind(ProjectSession session, MediaLibrary library, Func<TimeSpan> playhead)
     {
         _session = session;
@@ -270,6 +273,18 @@ public sealed class TimelineControl : Control
     {
         base.OnMouseDown(e);
         Focus();
+        if (e.Button == MouseButtons.Right && _session is not null)
+        {
+            for (int i = 0; i < _session.Project.Timeline.Count; i++)
+            {
+                if (!ClipRect(i).Contains(e.Location)) continue;
+                var id = _session.Project.Timeline[i].Id;
+                SelectClip(id);
+                ClipMenuRequested?.Invoke(id, PointToScreen(e.Location));
+                return;
+            }
+            return;
+        }
         if (e.Button != MouseButtons.Left || _session is null) return;
         var p = _session.Project;
         _downX = e.X;

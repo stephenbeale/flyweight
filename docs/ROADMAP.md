@@ -29,9 +29,11 @@ _Last updated: 2026-11-19_
 ### Smoke-test checklist (first Windows run)
 - [x] App launches; LibVLC initialises (no missing native DLL errors)
 - [x] Import 2–3 clips (drag-drop and Import…); bin shows "Optimising n%" then thumbnails
-- [ ] Preview shows frames; Space plays across clip boundaries with audio; ←/→ step frames
-- [ ] Timeline: click/drag to scrub, drag to reorder, drag edges to trim, S splits, Del deletes
-- [ ] Draw arrow / box / text; move and resize; edit text inline; change style in Properties
+- [x] Preview shows frames; Space plays across clip boundaries with audio; ←/→ step frames
+- [x] Timeline: click/drag to scrub, drag to reorder, drag edges to trim, S splits, Del deletes
+  (edge trim ripples: later clips close the gap. Owner is fine with that for now.)
+- [x] Draw arrow / box / text; move and resize; edit text inline; change style in Properties
+  (follow-ups done: opacity shown as % with slider, picking a fill colour ticks Filled, resize cursor on handles)
 - [ ] Drag an annotation bar to retime; trim its clip and confirm the annotation stays on the footage
 - [ ] Undo/redo everything above
 - [ ] Save, close, reopen (proxies come from cache instantly)
@@ -39,21 +41,27 @@ _Last updated: 2026-11-19_
 - [ ] Export 1080p: progress bar and cancel work; output plays, and annotations match the preview
 
 ### First Windows run: status (2026-11-19, branch `fix/first-windows-run`)
-- Launch and video import passed. **Not yet tested:** playback (step 2, highest risk), timeline edits, annotations,
-  undo/redo, save/reopen, crash recovery, export, the New-project size dialog, and the new stills / freeze frame /
-  toolbar fix in the real app.
+- Passed so far: launch, import, playback, timeline edits, drawing/styling annotations, freeze frame, toolbar text,
+  insert before/after (timeline right-click), stills in old projects. **Not yet tested:** annotation retiming,
+  full undo/redo pass, save/reopen, crash recovery, export, the New-project size dialog, bin right-click insert,
+  the timecode "/ total" fix.
+- **Session 2 (evening) fixes/features:** App project added to the solution (D20); custom style panel (D18);
+  thumbnails first in their own queue + preview stand-in while optimising (D19); old image entries auto-upgraded
+  on load (D17); resize cursor on handles; insert before/after from the timeline and bin right-click menus;
+  timecode label auto-sizes so "/ total" isn't clipped at high DPI.
+- **Process note:** the Bash tool collapses `\\` to `\`, which corrupted a C# string and doc paths last session.
+  Write files with the Write/Edit tools.
 - **Bug found + fixed:** images imported as 0-0.04s videos, giving zero-length clips. `trim=duration=0` means
   "unlimited" in ffmpeg, so export never finished ("15 min for a 28s clip") and some images had no thumbnail.
   Fix: stills are detected at probe time (`SourceMedia.IsStill`) and handled properly (D17).
 - **Toolbar text** was pale grey on the light strip (inherited form ForeColor); now explicit black. Not yet visually verified.
 - **Freeze frame added** (F key / toolbar "Freeze"): grabs the frame under the playhead and inserts it as a 5s still.
 - **Open items:**
-  1. The owner's open project has images imported the OLD way: delete and re-import them (export now errors clearly on them).
-  2. Finish the smoke test above, starting with playback.
-  3. Freeze-frame PNGs live in `%LocalAppData%\Flyweightrames`, not next to the project file (D17).
-- Dev notes: launch the GUI outside the tool sandbox (`Start-Process bin\Debug
-et8.0-windows\Flyweight.exe`); close the app
-  before rebuilding Debug. Repo `nuget.config` pins nuget.org because the machine-wide config has a private feed (wf-lmx) that 401s.
+  1. ~~Old-way images in the owner's project~~: now upgraded automatically on load (D17).
+  2. Finish the smoke test above, from annotation retiming onwards.
+  3. Freeze-frame PNGs live in `%LocalAppData%\Flyweight\frames`, not next to the project file (D17).
+- Dev notes: launch the GUI outside the tool sandbox (`Start-Process src\Flyweight.App\bin\Debug\net8.0-windows\Flyweight.exe`);
+  close the app before rebuilding Debug. Repo `nuget.config` pins nuget.org because the machine-wide config has a private feed (wf-lmx) that 401s.
 
 ## Known risks / likely first bugs
 - `PlaybackEngine`: VLC `Time` granularity, the pause-on-first-frame trick, `:start-time` on load, and Ended-state handling.

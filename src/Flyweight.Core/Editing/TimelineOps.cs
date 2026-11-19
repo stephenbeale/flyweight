@@ -1,3 +1,4 @@
+using Flyweight.Core.Media;
 using Flyweight.Core.Model;
 
 namespace Flyweight.Core.Editing;
@@ -47,11 +48,42 @@ public static class TimelineOps
         return null;
     }
 
-    public static Clip Append(Project p, SourceMedia media)
+    public static Clip Append(Project p, SourceMedia media) => InsertMedia(p, media, p.Timeline.Count);
+
+    /// <summary>
+    /// Insert the whole of <paramref name="media"/> (or <see cref="DefaultStillLength"/> of a still)
+    /// as a new clip at timeline position <paramref name="index"/> (clamped). Later clips ripple right.
+    /// </summary>
+    public static Clip InsertMedia(Project p, SourceMedia media, int index)
     {
+        if (p.FindMedia(media.Id) is null) p.Media.Add(media);
         var clip = new Clip { SourceId = media.Id, In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration };
-        p.Timeline.Add(clip);
+        p.Timeline.Insert(Math.Clamp(index, 0, p.Timeline.Count), clip);
         return clip;
+    }
+
+    /// <summary>
+    /// Projects saved before stills were detected (D17) hold images as ~0.04 s "videos", which make
+    /// zero-length clips. Turn those into proper stills and give their clips a usable length.
+    /// Returns true if anything changed. Called on load, so old projects just work.
+    /// </summary>
+    public static bool UpgradeLegacyStills(Project p)
+    {
+        bool changed = false;
+        foreach (var m in p.Media.Where(m => !m.IsStill && m.Duration < MinClipLength && MediaProbe.IsImageFile(m.OriginalPath)))
+        {
+            m.IsStill = true;
+            m.Duration = SourceMedia.StillMaxDuration;
+            m.Fps = 30;
+            m.HasAudio = false;
+            foreach (var c in p.Timeline.Where(c => c.SourceId == m.Id && c.Duration < MinClipLength))
+            {
+                c.In = TimeSpan.Zero;
+                c.Out = DefaultStillLength;
+            }
+            changed = true;
+        }
+        return changed;
     }
 
     /// <summary>

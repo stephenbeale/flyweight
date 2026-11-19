@@ -24,8 +24,8 @@ src/Flyweight.Core/        net8.0, NO UI, NO System.Drawing. Unit-testable on an
 src/Flyweight.App/         WinForms, net8.0-windows. Code-only UI (no .Designer.cs files).
   Playback/PlaybackEngine  LibVLC → memory buffer (video callbacks), timeline playback across clips
   Rendering/               AnnotationRenderer (shared by preview + export), OverlayRenderer (export PNGs)
-  Controls/                PreviewCanvas, TimelineControl (owner-drawn), MediaBinControl
-  Forms/                   ExportForm, AnnotationProperties (PropertyGrid view-models)
+  Controls/                PreviewCanvas, TimelineControl (owner-drawn), MediaBinControl, AnnotationStylePanel
+  Forms/                   ExportForm, FreezeFrameForm, NewProjectForm
   MainForm.cs              layout, commands, keyboard shortcuts, autosave/crash recovery
   ffmpeg/                  drop ffmpeg.exe + ffprobe.exe here (git-ignored)
 tests/Flyweight.Core.Tests/  xUnit; FfmpegIntegrationTests runs real ffmpeg (self-skips if absent)

@@ -22,10 +22,11 @@ public sealed class MainForm : Form
     readonly PreviewCanvas _preview = new() { Dock = DockStyle.Fill };
     readonly TimelineControl _timeline = new() { Dock = DockStyle.Fill };
     readonly MediaBinControl _bin = new() { Dock = DockStyle.Fill };
-    readonly PropertyGrid _props = new() { Dock = DockStyle.Fill, ToolbarVisible = false, HelpVisible = true, Visible = false };
+    readonly AnnotationStylePanel _props = new() { Dock = DockStyle.Fill, Visible = false };
     readonly Label _propsEmpty = new() { Dock = DockStyle.Fill, ForeColor = Color.Gray, TextAlign = ContentAlignment.MiddleCenter,
         Text = "Select an arrow, box or text\nto edit its style.\n\nA  arrow    R  box    T  text" };
-    readonly Label _timecode = new() { AutoSize = false, Width = 230, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
+    // AutoSize: a fixed pixel width clipped "/ total" once Windows display scaling enlarged the font.
+    readonly Label _timecode = new() { AutoSize = true, Padding = new Padding(12, 0, 12, 0), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
         Font = new Font("Consolas", 11f), Dock = DockStyle.Left };
     readonly ToolStripStatusLabel _statusText = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     readonly ToolStripButton _undoBtn = new("Undo");
@@ -48,7 +49,7 @@ public sealed class MainForm : Form
             if (iconStream is not null) Icon = new Icon(iconStream);
 
         _engine = new PlaybackEngine(_session, _library);
-        _preview.Bind(_session, _engine);
+        _preview.Bind(_session, _engine, _library);
         _timeline.Bind(_session, _library, () => _engine.Position);
 
         BuildLayout();
@@ -194,16 +195,24 @@ public sealed class MainForm : Form
         };
         _preview.ToolChanged += (_, _) => UpdateToolButtons();
 
-        _props.PropertyValueChanged += (_, _) =>
+        _props.Edit += (edit, phase) =>
         {
-            if (_props.SelectedObject is not AnnotationProperties vm || _preview.SelectedAnnotationId is not { } id) return;
-            _session.Execute(p => { if (p.FindAnnotation(id) is { } a) vm.ApplyTo(a); });
+            if (_preview.SelectedAnnotationId is not { } id) return;
+            void Apply(Project p) { if (p.FindAnnotation(id) is { } a) edit(a); }
+            switch (phase)
+            {
+                case StyleEditPhase.Single: _session.Execute(Apply); break;
+                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(Apply); break;
+                case StyleEditPhase.Commit: _session.Preview(Apply); _session.CommitEdit(); break;
+            }
         };
 
         _bin.AddToTimelineRequested += (_, id) => _session.Execute(p =>
         {
             if (p.FindMedia(id) is { } m) TimelineOps.Append(p, m);
         });
+        _bin.InsertRequested += (mediaId, after) => InsertMedia(mediaId, CurrentClipId(), after);
+        _timeline.ClipMenuRequested += ShowClipMenu;
 
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += async (_, e) =>
@@ -234,6 +243,7 @@ public sealed class MainForm : Form
     {
         _bin.Sync(_session.Project, _library);
         _timeline.Invalidate();
+        _preview.Invalidate(); // a thumbnail may have arrived for the stand-in picture
         var st = _library.GetState(id);
         if (st.Status == ProxyStatus.Ready) _engine.Refresh(); // the clip under the playhead may just have become playable
         if (st.Status == ProxyStatus.Failed && _session.Project.FindMedia(id) is { } m)
@@ -246,7 +256,7 @@ public sealed class MainForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        // Let text boxes (inline text editor, property grid) have their keys.
+        // Let text boxes (inline text editor, properties panel) have their keys.
         if (_preview.IsEditingText || _props.ContainsFocus || ActiveControl is TextBoxBase)
             return base.ProcessCmdKey(ref msg, keyData);
 
@@ -283,6 +293,55 @@ public sealed class MainForm : Form
 
     // ---------------- Commands ----------------
 
+    /// <summary>The selected clip, else the clip under the playhead.</summary>
+    Guid? CurrentClipId() =>
+        _timeline.SelectedClipId is { } id && _session.Project.FindClip(id) is not null ? id
+        : TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id;
+
+    /// <summary>Insert a bin item before/after <paramref name="anchorClipId"/> (or at the end if none), then jump to it.</summary>
+    void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after)
+    {
+        _engine.Pause();
+        Clip? inserted = null;
+        _session.Execute(p =>
+        {
+            if (p.FindMedia(mediaId) is not { } m) return;
+            int anchor = anchorClipId is { } a ? p.Timeline.FindIndex(c => c.Id == a) : -1;
+            int index = anchor < 0 ? p.Timeline.Count : after ? anchor + 1 : anchor;
+            inserted = TimelineOps.InsertMedia(p, m, index);
+        });
+        if (inserted is null) return;
+        _timeline.SelectedClipId = inserted.Id;
+        _engine.Seek(TimelineOps.ClipStart(_session.Project, inserted.Id));
+        _timeline.EnsurePlayheadVisible();
+        _timeline.Invalidate();
+    }
+
+    void ShowClipMenu(Guid clipId, Point screen)
+    {
+        var menu = new ContextMenuStrip();
+        menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        var before = new ToolStripMenuItem("Insert before");
+        var after = new ToolStripMenuItem("Insert after");
+        foreach (var m in _session.Project.Media)
+        {
+            var id = m.Id;
+            before.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertMedia(id, clipId, after: false));
+            after.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertMedia(id, clipId, after: true));
+        }
+        if (_session.Project.Media.Count == 0)
+        {
+            before.Enabled = after.Enabled = false;
+            before.ToolTipText = after.ToolTipText = "Import some media first";
+        }
+        menu.Items.Add(before);
+        menu.Items.Add(after);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Split at playhead (S)", null, (_, _) => Split());
+        menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
+        menu.Show(screen);
+    }
+
     void Split()
     {
         _engine.Pause();
@@ -317,9 +376,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Couldn't grab that frame:
-
-{ex.Message}", "Freeze frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, $"Couldn't grab that frame:\n\n{ex.Message}", "Freeze frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             UpdateStatus();
             return;
         }
@@ -519,14 +576,11 @@ public sealed class MainForm : Form
         var a = _preview.SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
         if (a is null)
         {
-            _props.SelectedObject = null;
             _props.Visible = false;
             _propsEmpty.Visible = true;
             return;
         }
-        // Don't rebuild while the user is typing in the grid; it would reset their cursor.
-        if (_props.ContainsFocus && _props.SelectedObject is AnnotationProperties) return;
-        _props.SelectedObject = AnnotationProperties.For(a);
+        _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
         _props.Visible = true;
         _propsEmpty.Visible = false;
     }

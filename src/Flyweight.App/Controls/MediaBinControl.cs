@@ -12,6 +12,9 @@ public sealed class MediaBinControl : UserControl
 
     public event EventHandler<Guid>? AddToTimelineRequested;
 
+    /// <summary>Right-click "Insert before/after current clip": media id, and true for after.</summary>
+    public event Action<Guid, bool>? InsertRequested;
+
     public MediaBinControl()
     {
         var header = new Label
@@ -31,9 +34,18 @@ public sealed class MediaBinControl : UserControl
         {
             if (_list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id) AddToTimelineRequested?.Invoke(this, id);
         };
+        var menu = new ContextMenuStrip();
+        Guid? MenuMedia() => _list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id ? id : null;
+        menu.Items.Add("Insert before current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, false); });
+        menu.Items.Add("Insert after current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, true); });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Add to end of timeline", null, (_, _) => { if (MenuMedia() is { } id) AddToTimelineRequested?.Invoke(this, id); });
+        menu.Opening += (_, e) => e.Cancel = MenuMedia() is null;
+        _list.ContextMenuStrip = menu;
+
         var hint = new Label
         {
-            Text = "Double-click to add to the timeline", Dock = DockStyle.Bottom, Height = 22,
+            Text = "Double-click to add · right-click to insert", Dock = DockStyle.Bottom, Height = 22,
             ForeColor = Color.Gray, BackColor = Color.FromArgb(28, 28, 32), Padding = new Padding(8, 3, 0, 0),
         };
         Controls.Add(_list);

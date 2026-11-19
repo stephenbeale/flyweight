@@ -89,6 +89,27 @@ Images are probed as stills (`SourceMedia.IsStill`), never as near-zero-length v
 ffmpeg output and a never-finishing export). Defaults: 8s on the timeline (`DefaultStillLength`), 5s for a freeze
 frame, and a 5-minute cap (`StillMaxDuration`) so the looped proxy stays cheap (~8s to build for 5 min). Export loops
 the original image at the fps of the first non-still clip and errors on clips shorter than `MinClipLength`.
-Freeze frames are full-res PNGs extracted from the original into `%LocalAppData%\Flyweightrames`.
+Freeze frames are full-res PNGs extracted from the original into `%LocalAppData%\Flyweight\frames`.
 Known limitation: that folder is not portable with the `.flyweight` file, so a project moved to another machine
 loses its freeze-frame images. Revisit (e.g. store beside the project) if this bites.
+Old projects: `ProjectSession.Load` runs `TimelineOps.UpgradeLegacyStills`, which turns image files saved as
+~0.04 s videos into stills (and their zero-length clips into 8s ones) and marks the project dirty. Still proxies
+use a `-still` cache key so the old 0.04 s proxies aren't reused.
+
+### D18. Custom annotation style panel instead of PropertyGrid
+In the first real run the PropertyGrid fought the owner: colours opened only from a tiny ▾ (not by clicking the
+swatch), and a drop-down opacity slider rendered off-screen. `Controls/AnnotationStylePanel` replaces it with
+click-to-pick colour swatches (ColorDialog), inline sliders with a value read-out, and a fill/background toggle
+that switches on automatically when you pick a fill colour or opacity. The panel never mutates the project. It
+raises `Edit(action, phase)`: `Single` → `Execute` (one undo step); slider drags send `Live` → `BeginEdit` +
+`Preview`, then `Commit` → `CommitEdit`, so a whole drag is one undo step (rule 2).
+
+### D19. Thumbnails before proxies, in their own queue
+Proxies transcode one at a time (`_jobs`), and a 4K proxy takes minutes. Thumbnails (320×180, fit/padded, from the
+ORIGINAL) now run first in their own 2-wide queue, so the bin, timeline and preview get a picture in about a second.
+While a clip's proxy isn't ready the preview shows a stand-in: the photo itself for stills (EXIF-rotated, capped to
+~1080p in memory), or the thumbnail for videos, with an "Optimising for playback…" badge.
+
+### D20. Flyweight.App is in the solution
+It was missing from `Flyweight.sln`, so `dotnet build Flyweight.sln` (and the CI "App build (Windows)" job)
+only built Core. This hid a compile error and made local "builds" silently run a stale exe. Now added.
