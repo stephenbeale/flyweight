@@ -64,6 +64,15 @@ tests/Flyweight.Core.Tests/  xUnit; FfmpegIntegrationTests runs real ffmpeg (sel
   `FfmpegIntegrationTests` (it checks real output pixels).
 - Commit messages: imperative summary line, then bullet details.
 
+## Working style: show progress visually
+
+The owner wants **screenshots in the chat as you go**:
+- After any visible UI change, run the app and share a screenshot (before/after where useful). On Windows, launch
+  the GUI outside the tool sandbox (see `docs/ROADMAP.md` dev notes) and capture the window.
+- Share rendered outputs too: exported frames/PNGs, a frame grabbed from an exported video, icon/design drafts.
+- In an environment that can't run the app (e.g. a Linux cloud session), say so plainly and share whatever visual
+  output you can produce instead (ffmpeg-rendered frames, rendered SVGs), never a mock-up presented as the real app.
+
 ## Owner's dev setup
 
 Windows; repos live in `C:\Users\sjbeale\source\repos\`. Typical start: `cd C:\Users\sjbeale\source\repos\; claude;`
