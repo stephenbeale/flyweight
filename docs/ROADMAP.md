@@ -4,7 +4,7 @@ _Last updated: 2026-11-19_
 
 ## Where things stand
 
-**v0.1 MVP: scaffolded, not yet run on Windows.**
+**v0.1 MVP: first Windows run in progress (launch + video import pass; the rest of the smoke test is pending).**
 
 | Area | State |
 |---|---|
@@ -27,8 +27,8 @@ _Last updated: 2026-11-19_
    1080p video in under 15 min total, with the export matching the preview exactly. No freezes, no crashes.
 
 ### Smoke-test checklist (first Windows run)
-- [ ] App launches; LibVLC initialises (no missing native DLL errors)
-- [ ] Import 2–3 clips (drag-drop and Import…); bin shows "Optimising n%" then thumbnails
+- [x] App launches; LibVLC initialises (no missing native DLL errors)
+- [x] Import 2–3 clips (drag-drop and Import…); bin shows "Optimising n%" then thumbnails
 - [ ] Preview shows frames; Space plays across clip boundaries with audio; ←/→ step frames
 - [ ] Timeline: click/drag to scrub, drag to reorder, drag edges to trim, S splits, Del deletes
 - [ ] Draw arrow / box / text; move and resize; edit text inline; change style in Properties
@@ -37,6 +37,23 @@ _Last updated: 2026-11-19_
 - [ ] Save, close, reopen (proxies come from cache instantly)
 - [ ] Kill the process mid-edit and relaunch: recovery prompt restores work
 - [ ] Export 1080p: progress bar and cancel work; output plays, and annotations match the preview
+
+### First Windows run: status (2026-11-19, branch `fix/first-windows-run`)
+- Launch and video import passed. **Not yet tested:** playback (step 2, highest risk), timeline edits, annotations,
+  undo/redo, save/reopen, crash recovery, export, the New-project size dialog, and the new stills / freeze frame /
+  toolbar fix in the real app.
+- **Bug found + fixed:** images imported as 0-0.04s videos, giving zero-length clips. `trim=duration=0` means
+  "unlimited" in ffmpeg, so export never finished ("15 min for a 28s clip") and some images had no thumbnail.
+  Fix: stills are detected at probe time (`SourceMedia.IsStill`) and handled properly (D17).
+- **Toolbar text** was pale grey on the light strip (inherited form ForeColor); now explicit black. Not yet visually verified.
+- **Freeze frame added** (F key / toolbar "Freeze"): grabs the frame under the playhead and inserts it as a 5s still.
+- **Open items:**
+  1. The owner's open project has images imported the OLD way: delete and re-import them (export now errors clearly on them).
+  2. Finish the smoke test above, starting with playback.
+  3. Freeze-frame PNGs live in `%LocalAppData%\Flyweightrames`, not next to the project file (D17).
+- Dev notes: launch the GUI outside the tool sandbox (`Start-Process bin\Debug
+et8.0-windows\Flyweight.exe`); close the app
+  before rebuilding Debug. Repo `nuget.config` pins nuget.org because the machine-wide config has a private feed (wf-lmx) that 401s.
 
 ## Known risks / likely first bugs
 - `PlaybackEngine`: VLC `Time` granularity, the pause-on-first-frame trick, `:start-time` on load, and Ended-state handling.
