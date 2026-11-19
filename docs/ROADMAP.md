@@ -53,6 +53,9 @@ hurts search. They want something that says lean / light / fast / nimble.
   choosing.
 - Renaming is easiest before sharing with friends; it could ship with the preview zip.
 - The icon is a boxing glove in a film frame (D16). It may need revisiting if the name drops the boxing theme.
+- **Owner's logo idea for Whittle:** a flaming jet engine (Sir Frank Whittle invented the jet engine), so the name
+  reads as both "whittle footage down" and "jet-fast". Possible twist: a film frame in the intake. Check the name
+  isn't tied up by companies/trademarks using the surname before committing.
 
 ## Next steps (in order)
 
