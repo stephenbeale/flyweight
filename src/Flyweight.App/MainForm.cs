@@ -346,8 +346,10 @@ public sealed class MainForm : Form
     void NewProject()
     {
         if (!ConfirmDiscard()) return;
+        using var dlg = new NewProjectForm();
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _engine.Pause();
-        _session.New();
+        _session.New(dlg.OutputResolution);
         _engine.Seek(TimeSpan.Zero);
     }
 

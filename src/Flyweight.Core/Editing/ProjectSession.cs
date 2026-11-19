@@ -1,3 +1,4 @@
+using Flyweight.Core.Media;
 using Flyweight.Core.Model;
 
 namespace Flyweight.Core.Editing;
@@ -72,9 +73,9 @@ public sealed class ProjectSession
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public void New()
+    public void New(ExportResolution outputResolution = ExportResolution.P1080)
     {
-        Load(new Project(), null);
+        Load(new Project { OutputResolution = outputResolution }, null);
     }
 
     public void Load(Project project, string? path)
