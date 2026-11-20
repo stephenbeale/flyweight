@@ -130,3 +130,30 @@ copy both. Export adds `volume=` to the clip's audio chain only when the gain is
 as `anullsrc` silence, so its audio isn't decoded. Preview sets LibVLC's volume (100 = as recorded, up to 200)
 on every playback tick, because the audio output can reset it when new media loads. Old project files load at
 100%. The clip panel's slider is shared with the annotation panel (`Controls/Slider.cs`).
+
+### D23. Audio track: pure audio at fixed timeline times
+- **Model.** `Project.AudioTrack` holds `AudioItem`s with `Start` in TIMELINE time plus source `In`/`Out`, `Volume`
+  and `Muted`. Trimming or reordering video doesn't move them (the owner chose this over "follow the clip").
+  `SourceMedia.IsAudioOnly` marks MP3/WAV/M4A etc. (no video stream; cover art doesn't count). `InsertMedia` refuses
+  audio-only media and `AddAudio` refuses video. Old project files load with an empty track.
+- **Import.** An audio file goes on the audio track at the playhead (at 0 if the playhead is at the end).
+  `TrimAudioIn` keeps the item's end fixed. No proxy is made: playback uses the original file. The bin and timeline
+  "thumbnail" is a `showwavespic` PNG of the whole file, cropped to each item's In/Out.
+- **Export.** One input per audio item, each `adelay`ed to its start, then `amix` with `normalize=0` (the default
+  would halve the clip audio) and `duration=first`, so the video decides the length. Muted items and items starting
+  after the video's end are left out.
+- **Mono.** Mono is copied to both channels at full level (`pan`), as LibVLC plays it: ffmpeg's default upmix is
+  3 dB quieter. For this, `SourceMedia.AudioChannels` is probed (0 = unknown, the old behaviour).
+- **Preview.** `AudioLanePlayer` runs one LibVLC player per item currently playing, started, stopped and drift-corrected
+  from the engine tick. Stops run on the thread pool.
+- **DirectSound output.** LibVLC uses `--aout=directsound`. The default `mmdevice` output sets volume on the whole
+  app's audio session, so the video player and the audio-track players overwrote each other's volume every tick, and
+  muting a clip garbled everything.
+
+### D24. Playback runs on a real-time clock
+The playhead used to follow the video player's time. The video stalls for a few hundred ms at every cut while the
+next proxy loads, so the timeline ran slower than real time. The audio track drifted ahead and was pulled back,
+which audibly repeated music. Now `Play` starts a stopwatch clock and `Tick` sets `Position` from it. The video
+follows: at a cut it loads at the clock's time, and `KeepVideoInStep` seeks it forward once it is more than 250 ms
+off (proxies are all-intra, so this is cheap). Adjacent halves of a split still play without a reload. The preview
+now takes exactly as long as the export.

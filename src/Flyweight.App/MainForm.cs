@@ -14,6 +14,7 @@ public sealed class MainForm : Form
     static readonly string LockPath = Path.Combine(AppDataDir, "session.lock");
     static readonly string[] VideoExtensions = { ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts", ".wmv", ".gif" };
     static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff" };
+    static readonly string[] AudioExtensions = { ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma" };
 
     readonly ProjectSession _session = new();
     readonly MediaLibrary _library = new();
@@ -87,7 +88,7 @@ public sealed class MainForm : Form
             Btn("Open…", "Open project (Ctrl+O)", OpenProject),
             Btn("Save", "Save project (Ctrl+S)", () => SaveProject(false)),
             new ToolStripSeparator(),
-            Btn("Import…", "Import video or images (Ctrl+I)", ImportDialog),
+            Btn("Import…", "Import video, images or audio (Ctrl+I)", ImportDialog),
             new ToolStripSeparator(),
             _undoBtn, _redoBtn,
             new ToolStripSeparator(),
@@ -169,7 +170,7 @@ public sealed class MainForm : Form
         // SplitContainer distances can only be set once the controls have a size.
         Load += (_, _) =>
         {
-            main.SplitterDistance = Math.Max(200, main.Height - 210);
+            main.SplitterDistance = Math.Max(200, main.Height - 250); // ruler + video + audio track + annotation lanes
             top.SplitterDistance = 280;
             centreRight.SplitterDistance = Math.Max(300, centreRight.Width - 290);
         };
@@ -208,7 +209,7 @@ public sealed class MainForm : Form
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
-            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = null;
+            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = _timeline.SelectedAudioId = null;
             _timeline.Invalidate();
             UpdatePropertyGrid();
         };
@@ -231,22 +232,45 @@ public sealed class MainForm : Form
             }
         };
 
-        _clipProps.Edit += (edit, phase) =>
+        // Volume / mute for whichever is selected: an audio-track item or a video clip.
+        void ApplySound(Action<Project, Guid, bool> set, StyleEditPhase phase)
         {
-            if (_timeline.SelectedClipId is not { } id) return;
-            void Apply(Project p) => edit(p, id);
+            Action<Project>? apply =
+                _timeline.SelectedAudioId is { } aid ? p => set(p, aid, true)
+                : _timeline.SelectedClipId is { } cid ? p => set(p, cid, false)
+                : null;
+            if (apply is null) return;
             switch (phase)
             {
-                case StyleEditPhase.Single: _session.Execute(Apply); break;
-                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(Apply); break;
-                case StyleEditPhase.Commit: _session.Preview(Apply); _session.CommitEdit(); break;
+                case StyleEditPhase.Single: _session.Execute(apply); break;
+                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(apply); break;
+                case StyleEditPhase.Commit: _session.Preview(apply); _session.CommitEdit(); break;
             }
-        };
-
-        _bin.AddToTimelineRequested += (_, id) => _session.Execute(p =>
+        }
+        _clipProps.VolumeChanged += (v, phase) => ApplySound((p, id, isAudio) =>
         {
-            if (p.FindMedia(id) is { } m) TimelineOps.Append(p, m);
-        });
+            if (isAudio) TimelineOps.SetAudioVolume(p, id, v); else TimelineOps.SetClipVolume(p, id, v);
+        }, phase);
+        _clipProps.MutedChanged += on => ApplySound((p, id, isAudio) =>
+        {
+            if (isAudio) TimelineOps.SetAudioMuted(p, id, on); else TimelineOps.SetClipMuted(p, id, on);
+        }, StyleEditPhase.Single);
+
+        _timeline.AudioSelected += (_, _) =>
+        {
+            if (_timeline.SelectedAudioId is not null) _preview.Select(null);
+            UpdatePropertyGrid();
+        };
+        _timeline.AudioMenuRequested += ShowAudioMenu;
+
+        _bin.AddToTimelineRequested += (_, id) =>
+        {
+            if (_session.Project.FindMedia(id) is { IsAudioOnly: true } audio) { AddAudioAtPlayhead(audio); return; }
+            _session.Execute(p =>
+            {
+                if (p.FindMedia(id) is { } m) TimelineOps.Append(p, m);
+            });
+        };
         _bin.InsertRequested += (mediaId, after) => InsertMedia(mediaId, CurrentClipId(), after);
         _timeline.ClipMenuRequested += ShowClipMenu;
 
@@ -313,7 +337,8 @@ public sealed class MainForm : Form
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
-            case Keys.M: ToggleMute(CurrentClipId()); return true;
+            // Ctrl+M too: Windows turns it into Enter, which in the media bin re-added the selected file.
+            case Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
             case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
             case Keys.V: case Keys.Escape: _preview.Tool = Tool.Select; return true;
             case Keys.A: _preview.Tool = Tool.Arrow; return true;
@@ -364,6 +389,7 @@ public sealed class MainForm : Form
     /// <summary>Insert a bin item before/after <paramref name="anchorClipId"/> (or at the end if none), then jump to it.</summary>
     void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after)
     {
+        if (_session.Project.FindMedia(mediaId) is { IsAudioOnly: true } audio) { AddAudioAtPlayhead(audio); return; }
         _engine.Pause();
         Clip? inserted = null;
         _session.Execute(p =>
@@ -413,8 +439,47 @@ public sealed class MainForm : Form
         menu.Show(screen);
     }
 
+    /// <summary>Put an audio file on the audio track at the playhead (it stays at that timeline time) and select it.</summary>
+    void AddAudioAtPlayhead(SourceMedia media)
+    {
+        _engine.Pause();
+        var at = _engine.Position >= TimelineOps.TotalDuration(_session.Project) ? TimeSpan.Zero : _engine.Position;
+        AudioItem? item = null;
+        _session.Execute(p => item = TimelineOps.AddAudio(p, media, at));
+        if (item is null) return;
+        _timeline.SelectedClipId = null;
+        _timeline.SelectedAnnotationId = null;
+        _timeline.SelectedAudioId = item.Id;
+        _preview.Select(null);
+        UpdatePropertyGrid();
+        _timeline.Invalidate();
+        _statusText.Text = $"Added {media.DisplayName} to the audio track at {TimelineControl.FormatTime(at, tenths: true)}. Drag it to move it.";
+    }
+
+    void ShowAudioMenu(Guid audioId, Point screen)
+    {
+        if (_session.Project.FindAudio(audioId) is not { } a) return;
+        var menu = new ContextMenuStrip();
+        menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveAudio(p, audioId, _engine.Position)));
+        menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(a.Start); });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("Mute (M)", null, (_, _) => ToggleMute(null)) { Checked = a.Muted });
+        menu.Items.Add("Remove from audio track (Del)", null, (_, _) => DeleteSelection());
+        menu.Show(screen);
+    }
+
+    /// <summary>Mute/unmute the selected audio item, else <paramref name="clipId"/>.</summary>
     void ToggleMute(Guid? clipId)
     {
+        if (_timeline.SelectedAudioId is { } aid && _session.Project.FindAudio(aid) is { } item)
+        {
+            bool m = !item.Muted;
+            _session.Execute(p => TimelineOps.SetAudioMuted(p, aid, m));
+            var n = _session.Project.FindMedia(item.SourceId)?.DisplayName ?? "audio";
+            _statusText.Text = m ? $"Muted {n}" : $"Unmuted {n}";
+            return;
+        }
         if (clipId is not { } id || _session.Project.FindClip(id) is not { } c) return;
         bool muted = !c.Muted;
         _session.Execute(p => TimelineOps.SetClipMuted(p, id, muted));
@@ -475,6 +540,12 @@ public sealed class MainForm : Form
             _session.Execute(p => TimelineOps.DeleteAnnotation(p, aid)); // the whole run if it spans cuts
             _preview.Select(null);
         }
+        else if (_timeline.SelectedAudioId is { } audioId)
+        {
+            _session.Execute(p => TimelineOps.DeleteAudio(p, audioId)); // the file stays in the bin
+            _timeline.SelectedAudioId = null;
+            UpdatePropertyGrid();
+        }
         else if (_timeline.SelectedClipId is { } cid)
         {
             _session.Execute(p => TimelineOps.Delete(p, cid));
@@ -482,7 +553,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            _statusText.Text = "Click a clip or annotation first, then press Delete.";
+            _statusText.Text = "Click a clip, audio item or annotation first, then press Delete.";
         }
     }
 
@@ -491,10 +562,11 @@ public sealed class MainForm : Form
         using var dlg = new OpenFileDialog
         {
             Multiselect = true,
-            Title = "Import video or images",
-            Filter = "Video and images|" + string.Join(";", VideoExtensions.Concat(ImageExtensions).Select(e => "*" + e)) +
+            Title = "Import video, images or audio",
+            Filter = "Video, images and audio|" + string.Join(";", VideoExtensions.Concat(ImageExtensions).Concat(AudioExtensions).Select(e => "*" + e)) +
                      "|Video|" + string.Join(";", VideoExtensions.Select(e => "*" + e)) +
-                     "|Images|" + string.Join(";", ImageExtensions.Select(e => "*" + e)) + "|All files|*.*",
+                     "|Images|" + string.Join(";", ImageExtensions.Select(e => "*" + e)) +
+                     "|Audio (music, narration)|" + string.Join(";", AudioExtensions.Select(e => "*" + e)) + "|All files|*.*",
         };
         if (dlg.ShowDialog(this) == DialogResult.OK) _ = ImportAsync(dlg.FileNames);
     }
@@ -511,8 +583,15 @@ public sealed class MainForm : Form
                 MessageBox.Show(this, $"Couldn't read {Path.GetFileName(path)}:\n\n{ex.Message}", "Import", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 continue;
             }
-            _session.Execute(p => { p.Media.Add(media); TimelineOps.Append(p, media); });
-            if (_session.Project.Timeline.Count == 1) _timeline.ZoomToFit();
+            if (media.IsAudioOnly)
+            {
+                AddAudioAtPlayhead(media); // music / narration goes on the audio track, not the video timeline
+            }
+            else
+            {
+                _session.Execute(p => { p.Media.Add(media); TimelineOps.Append(p, media); });
+                if (_session.Project.Timeline.Count == 1) _timeline.ZoomToFit();
+            }
             StartProxy(media);
         }
         UpdateStatus();
@@ -672,13 +751,15 @@ public sealed class MainForm : Form
     {
         var p = _session.Project;
         var a = _preview.SelectedAnnotationId is { } id ? p.FindAnnotation(id) : null;
-        var clip = a is null && _timeline.SelectedClipId is { } cid ? p.FindClip(cid) : null;
+        var audio = a is null && _timeline.SelectedAudioId is { } aid ? p.FindAudio(aid) : null;
+        var clip = a is null && audio is null && _timeline.SelectedClipId is { } cid ? p.FindClip(cid) : null;
 
         if (a is not null) _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
-        if (clip is not null) _clipProps.ShowClip(clip, p.FindMedia(clip.SourceId));
+        if (audio is not null) _clipProps.ShowAudio(audio, p.FindMedia(audio.SourceId));
+        else if (clip is not null) _clipProps.ShowClip(clip, p.FindMedia(clip.SourceId));
         _props.Visible = a is not null;
-        _clipProps.Visible = clip is not null;
-        _propsEmpty.Visible = a is null && clip is null;
+        _clipProps.Visible = audio is not null || clip is not null;
+        _propsEmpty.Visible = a is null && audio is null && clip is null;
     }
 
     void UpdateToolButtons()
@@ -709,5 +790,5 @@ public sealed class MainForm : Form
     }
 
     static bool IsImportable(string path) =>
-        VideoExtensions.Concat(ImageExtensions).Contains(Path.GetExtension(path).ToLowerInvariant());
+        VideoExtensions.Concat(ImageExtensions).Concat(AudioExtensions).Contains(Path.GetExtension(path).ToLowerInvariant());
 }

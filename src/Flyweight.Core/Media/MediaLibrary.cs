@@ -62,6 +62,7 @@ public sealed class MediaLibrary
     {
         var state = GetState(media.Id);
         if (state.Status is ProxyStatus.Ready or ProxyStatus.Optimising) return;
+        if (media.IsAudioOnly) { await PrepareAudioAsync(media, ct); return; }
 
         // Stills get their own key: images imported before D17 left ~0.04 s "video" proxies under the plain key.
         var dir = Path.Combine(CacheDirectory, CacheKey(media.OriginalPath) + (media.IsStill ? "-still" : ""));
@@ -153,6 +154,45 @@ public sealed class MediaLibrary
         {
             _jobs.Release();
         }
+    }
+
+    /// <summary>Waveform image width: the whole file, drawn once and cropped to each item's In/Out.</summary>
+    public const int WaveformWidth = 2000, WaveformHeight = 160;
+
+    /// <summary>
+    /// Pure audio needs no proxy (decoding it is cheap): the preview plays the original. Its
+    /// "thumbnail" is a waveform PNG of the whole file, used by the bin and the audio track.
+    /// </summary>
+    async Task PrepareAudioAsync(SourceMedia media, CancellationToken ct)
+    {
+        var dir = Path.Combine(CacheDirectory, CacheKey(media.OriginalPath) + "-audio");
+        Directory.CreateDirectory(dir);
+        var wave = Path.Combine(dir, "waveform.png");
+        if (!File.Exists(wave))
+        {
+            Set(media.Id, s => { s.Status = ProxyStatus.Optimising; s.Progress = 0; s.Error = null; });
+            var tmp = Path.Combine(dir, "waveform.partial.png");
+            await _thumbJobs.WaitAsync(ct);
+            try
+            {
+                await FfmpegRunner.RunFfmpegAsync(new[]
+                {
+                    "-i", media.OriginalPath, "-vn",
+                    "-filter_complex", $"aformat=channel_layouts=mono,showwavespic=s={WaveformWidth}x{WaveformHeight}:colors=0x9fe3c4:scale=sqrt",
+                    "-frames:v", "1", "-update", "1", tmp,
+                }, ct: ct);
+                if (File.Exists(tmp)) File.Move(tmp, wave, overwrite: true);
+            }
+            catch (FfmpegException) { /* no waveform is cosmetic; the audio still plays */ }
+            finally { _thumbJobs.Release(); }
+        }
+        Set(media.Id, s =>
+        {
+            s.ProxyPath = media.OriginalPath;
+            s.ThumbnailPath = File.Exists(wave) ? wave : null;
+            s.Progress = 1;
+            s.Status = ProxyStatus.Ready;
+        });
     }
 
     /// <summary>

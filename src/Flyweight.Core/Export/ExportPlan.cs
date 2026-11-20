@@ -10,9 +10,10 @@ namespace Flyweight.Core.Export;
 /// Turns the project into ONE ffmpeg command. Pure: no I/O, so it is unit-testable.
 ///
 ///   inputs:  one "-ss In -t Dur -i original" per clip (fast + accurate input seeking),
-///            then one transparent full-frame PNG per visible annotation
+///            then one per audio-track item, then one transparent full-frame PNG per visible annotation
 ///   graph:   each clip → fps, fit/pad to 16:9, 48k stereo audio (silence if none)
-///            → concat → overlay each PNG with enable='between(t,start,end)'
+///            → concat → amix the audio-track items (adelay'd to their start) over the clip audio
+///            → overlay each PNG with enable='between(t,start,end)'
 ///   output:  H.264 High / yuv420p / AAC 48k / +faststart  (YouTube's recommended upload)
 ///
 /// Annotation PNGs are rendered by the UI using the SAME renderer as the preview, which is
@@ -64,18 +65,41 @@ public sealed class ExportPlan
             if (media.HasAudio && gain > 0)
             {
                 var vol = Math.Abs(gain - 1) < 0.001 ? "" : $"volume={Num(Math.Round(gain, 3))},";
-                graph.Append($"[{input}:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,{vol}apad,atrim=duration={d}[a{i}];\n");
+                graph.Append($"[{input}:a]{AudioIn(media)}{vol}apad,atrim=duration={d}[a{i}];\n");
             }
             else
                 graph.Append($"anullsrc=r=48000:cl=stereo,atrim=duration={d}[a{i}];\n");
             input++;
         }
 
-        // 2. Concat.
-        for (int i = 0; i < p.Timeline.Count; i++) graph.Append($"[v{i}][a{i}]");
-        graph.Append($"concat=n={p.Timeline.Count}:v=1:a=1[vcat][aout]");
+        // 2. Audio track items (music / narration): trimmed, gained, delayed to their timeline start.
+        var total = TimelineOps.TotalDuration(p);
+        var mix = new List<string>();
+        foreach (var item in p.AudioTrack)
+        {
+            // Silent or entirely after the video ends: nothing to hear, so don't even decode it.
+            if (item.EffectiveVolume <= 0 || item.Start >= total || item.Duration < TimelineOps.MinClipLength) continue;
+            var media = p.FindMedia(item.SourceId) ?? throw new InvalidOperationException("An audio item refers to missing media.");
+            args.AddRange(new[] { "-ss", Sec(item.In), "-t", Sec(item.Duration), "-i", media.OriginalPath });
+            var vol = Math.Abs(item.EffectiveVolume - 1) < 0.001 ? "" : $"volume={Num(Math.Round(item.EffectiveVolume, 3))},";
+            long delayMs = (long)Math.Round(item.Start.TotalMilliseconds);
+            var label = $"m{mix.Count}";
+            graph.Append($"[{input}:a]{AudioIn(media)}{vol}adelay={delayMs}:all=1[{label}];\n");
+            mix.Add(label);
+            input++;
+        }
 
-        // 3. Annotation overlays, in list order (later = on top).
+        // 3. Concat, then mix the audio track over the clips' sound. normalize=0 keeps every input
+        // at its own level (amix's default would halve the clip audio as soon as music is added);
+        // duration=first ends the mix with the video.
+        for (int i = 0; i < p.Timeline.Count; i++) graph.Append($"[v{i}][a{i}]");
+        if (mix.Count == 0)
+            graph.Append($"concat=n={p.Timeline.Count}:v=1:a=1[vcat][aout]");
+        else
+            graph.Append($"concat=n={p.Timeline.Count}:v=1:a=1[vcat][acat];\n[acat]{string.Concat(mix.Select(m => $"[{m}]"))}" +
+                         $"amix=inputs={mix.Count + 1}:duration=first:dropout_transition=0:normalize=0[aout]");
+
+        // 4. Annotation overlays, in list order (later = on top).
         string last = "vcat";
         int k = 0;
         foreach (var a in p.Annotations)
@@ -107,10 +131,20 @@ public sealed class ExportPlan
         {
             Arguments = args,
             FilterGraph = filter,
-            Duration = TimelineOps.TotalDuration(p),
+            Duration = total,
             FrameRate = fps,
         };
     }
+
+    /// <summary>
+    /// Start of every audio chain: reset timestamps, 48 kHz, float stereo. Mono is copied to both
+    /// speakers at FULL level, as the preview (LibVLC) plays it: ffmpeg's default mono→stereo
+    /// upmix is 3 dB quieter, so a mono voice-over would export quieter than it previewed.
+    /// </summary>
+    static string AudioIn(SourceMedia media) =>
+        "asetpts=PTS-STARTPTS,aresample=48000," +
+        (media.AudioChannels == 1 ? "pan=stereo|c0=c0|c1=c0," : "") +
+        "aformat=sample_fmts=fltp:channel_layouts=stereo,";
 
     public Task RunAsync(IProgress<double>? progress = null, CancellationToken ct = default) =>
         FfmpegRunner.RunFfmpegAsync(Arguments, Duration, progress, ct);

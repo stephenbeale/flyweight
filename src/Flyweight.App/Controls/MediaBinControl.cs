@@ -73,6 +73,8 @@ public sealed class MediaBinControl : UserControl
             item.SubItems[1].Text = st.Status switch
             {
                 ProxyStatus.Ready when m.IsStill => $"Image  ·  {m.Width}×{m.Height}",
+                ProxyStatus.Ready when m.IsAudioOnly => $"Audio  ·  {TimelineControl.FormatTime(m.Duration)}{(m.AudioChannels == 1 ? "  ·  mono" : "")}",
+                ProxyStatus.Optimising when m.IsAudioOnly => "Reading audio…",
                 ProxyStatus.Ready => $"{TimelineControl.FormatTime(m.Duration)}  ·  {m.Width}×{m.Height}  ·  {m.Fps:0.##} fps",
                 ProxyStatus.Optimising => $"Optimising {st.Progress:P0}",
                 ProxyStatus.Failed => $"Failed: {st.Error}",

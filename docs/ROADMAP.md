@@ -1,16 +1,36 @@
 # Roadmap & status
 
-_Last updated: 2026-11-20 (branch `feature/audio`)_
+_Last updated: 2026-11-20 (end of day; `feature/audio` merged)_
 
 ## Where things stand
 
 **v0.1 MVP: smoke-tested on Windows and merged to `main` (PR #3, `da4cf87`). The owner has exported a real video.**
-Current branch: `feature/audio`. Clip volume/mute is done (D22) and the owner tested it, including an export.
-Next on this branch: an audio lane for music and narration (see below), then clip speed.
+`feature/audio` (clip volume/mute D22, audio track D23, real-time playback clock D24) is merged to `main` via PR.
+**Next session: start a new branch and FIRST finish the audio-track tests below** (session ended 2026-11-20 mid-test),
+then ducking/fades or clip speed.
+
+### Audio track: owner testing status (2026-11-20, build 21:21)
+Passed:
+- Import MP3; waveform; drag; trim; stays put when video is trimmed.
+- Music plays straight through cuts (after the D24 clock fix).
+- M / Ctrl+M mute; volume per clip and per item; 150% boost; normal playback sound (after the D23 DirectSound fix).
+- Waveform-only look with a hover tooltip.
+
+Still to test (test files are in `C:\Users\sjbeale\Music\Flyweight test audio\`):
+1. Overlap: import `test-beeps-mono.wav` inside the music. It should go on a second row, both should play, and the
+   beeps should be as loud as the music (mono at full level). Last time the owner "couldn't open the file" from the
+   hidden temp folder, so it was copied to Music; if it still fails, it's an import bug.
+2. Right-click menu: Move to playhead, Jump to its start, Mute (ticked), Remove.
+3. Del removes the item; the file stays in the bin.
+4. Bin double-click on audio puts it on the audio track at the playhead.
+5. Undo/redo of a drag, trim, volume, mute and delete (one step each).
+6. Save and reopen keeps the items, trims, volumes and mute.
+7. Export: music starts at the same moment and loudness as the preview; muted items are silent; music stops at
+   the video's end.
 
 | Area | State |
 |---|---|
-| Core model, timeline ops, undo/redo, save/load | ✅ Done, unit-tested (76 core tests incl. real-ffmpeg integration tests) |
+| Core model, timeline ops, undo/redo, save/load | ✅ Done, unit-tested (97 core tests incl. real-ffmpeg integration tests) |
 | Probe, proxy generation + cache, thumbnails | ✅ Done, integration-tested with real ffmpeg |
 | Export (concat, trim, fit/pad 16:9, audio, timed overlays) | ✅ Done, integration-tested down to output pixels; real export verified by the owner |
 | WinForms UI (preview, timeline, bin, style panel, export dialog) | ✅ Runs on Windows; smoke-tested |
@@ -64,6 +84,8 @@ hurts search. They want something that says lean / light / fast / nimble.
 1. ~~Output size chosen at project creation~~ ✅ (D15). Old project files load as 1080p.
 2. ~~First run on Windows~~ ✅ Smoke test complete (2026-11-19), checklist below.
 3. **Playback polish.** Smooth playhead, clip-boundary transitions, scrubbing feel (`PlaybackEngine`).
+   Since D24 the playhead runs on a real-time clock and the video catches up after each cut by skipping a few
+   frames. Truly seamless cuts would need the next clip preloaded in a second player.
 4. **Layout/DPI polish.** Splitter sizes, dark theme consistency (ToolStrip, PropertyGrid), high-DPI scaling.
 5. **Success test:** 10 real phone clips (incl. 4K HEVC + a portrait clip), add 5 annotations, export a ~2 min
    1080p video in under 15 min total, with the export matching the preview exactly. No freezes, no crashes.
@@ -125,10 +147,10 @@ hurts search. They want something that says lean / light / fast / nimble.
 - **NEXT after the smoke test (owner's order, 2026-11-19):**
   1. `feature/audio`:
      - ✅ Clip volume/mute (0–200%): Properties panel slider + tickbox, M key, clip right-click menu (D22).
-     - Audio lane: import pure audio (MP3/WAV/M4A), drag to position, trim, per-item volume; mixed over clip audio
-       in preview and export. **Owner asked for this (2026-11-20).** Open decision: when earlier video is trimmed,
-       does an audio item stay at its timeline time (music), follow the clip it starts over (narration), or have
-       a per-item "Lock to video" option?
+     - ✅ Audio track (D23): import MP3/WAV/M4A/AAC/FLAC/OGG/Opus/WMA. Each item is placed at the playhead at a
+       fixed timeline time; drag to move, drag ends to trim; per-item volume/mute. Overlapping items stack into
+       rows. Mixed over the clip audio in preview and export. Final owner tests are still pending (see top).
+       Possible later: a per-item "Lock to video" so narration follows its clip (the owner chose fixed time first).
      - Optional ducking of clip audio under narration; audio fades. Mic recording later.
   - Idea: "Export selection" (export only the selected clips) for quick checks.
   2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).

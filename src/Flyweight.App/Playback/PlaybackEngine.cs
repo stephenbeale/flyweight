@@ -29,6 +29,7 @@ public sealed class PlaybackEngine : IDisposable
     readonly IntPtr _decodeBuffer;
     readonly IntPtr _displayBuffer;
     readonly System.Windows.Forms.Timer _timer;
+    readonly AudioLanePlayer _lane;
 
     // Keep delegates in fields so the GC can't collect them while native code holds them.
     readonly MediaPlayer.LibVLCVideoLockCb _lockCb;
@@ -73,7 +74,10 @@ public sealed class PlaybackEngine : IDisposable
     {
         _session = session;
         _library = library;
-        _vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview");
+        // --aout=directsound: the default Windows output (mmdevice) sets volume/mute on the whole
+        // app's audio session, so the video player and the audio-track players overwrote each
+        // other's volume every tick (muting a clip garbled the music too). DirectSound sets it per player.
+        _vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--aout=directsound");
         _player = new MediaPlayer(_vlc);
 
         _decodeBuffer = Marshal.AllocHGlobal(Pitch * H);
@@ -84,6 +88,8 @@ public sealed class PlaybackEngine : IDisposable
         _displayCb = OnDisplay;
         _player.SetVideoFormat("RV32", W, H, Pitch);
         _player.SetVideoCallbacks(_lockCb, null, _displayCb);
+
+        _lane = new AudioLanePlayer(_vlc, session);
 
         _timer = new System.Windows.Forms.Timer { Interval = 15 };
         _timer.Tick += (_, _) => Tick();
@@ -126,6 +132,7 @@ public sealed class PlaybackEngine : IDisposable
         if (timelineTime < TimeSpan.Zero) timelineTime = TimeSpan.Zero;
         if (timelineTime > total) timelineTime = total;
         Position = timelineTime;
+        if (_playing) StartClock(timelineTime);
         PositionChanged?.Invoke(this, EventArgs.Empty);
 
         if (_sinceLastSeek.Elapsed >= SeekThrottle) ApplySeek(timelineTime);
@@ -146,6 +153,7 @@ public sealed class PlaybackEngine : IDisposable
         if (total <= TimeSpan.Zero) return;
         if (Position >= total - OneFrame()) Position = TimeSpan.Zero;
         _playing = true;
+        StartClock(Position);
         _pauseOnFirstFrame = false;
         _player.Mute = false;
         if (_player.State == VLCState.Paused && _clipId is not null) _player.SetPause(false);
@@ -157,7 +165,9 @@ public sealed class PlaybackEngine : IDisposable
     {
         var was = _playing;
         _playing = false;
+        _clock.Stop();
         if (_player.State == VLCState.Playing) _player.SetPause(true);
+        _lane.StopAll();
         if (was) PlayingChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -266,70 +276,87 @@ public sealed class PlaybackEngine : IDisposable
         if (_pendingSeek is { } pending && _sinceLastSeek.Elapsed >= SeekThrottle)
             ApplySeek(pending);
 
+        _lane.Update(Position, _playing);
         if (!_playing) return;
 
+        // The playhead runs on a REAL-TIME clock, and the video follows it (D23). It used to follow the
+        // video, which stalls for a few hundred ms at every cut while the next proxy loads: the
+        // timeline then ran slower than real time, so the audio track (which can't stall) drifted
+        // ahead and kept being pulled back, audibly repeating bits of music.
         var p = _session.Project;
-        var clip = _clipId is { } id ? p.FindClip(id) : null;
-        if (clip is null)
+        var total = TimelineOps.TotalDuration(p);
+        var t = _clockBase + _clock.Elapsed;
+        if (t >= total)
         {
-            // Clip edited away under us, or waiting for a proxy: re-resolve.
-            if (!WaitingForProxy) ApplySeek(Position, force: true);
+            Pause();
+            Position = total;
+            PositionChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
+        Position = t;
 
-        // LibVLC's Time only updates every few hundred ms; interpolate between updates for a smooth playhead.
-        TimeSpan src;
-        if (_player.State == VLCState.Ended)
+        if (Locate(t) is { } hit)
         {
-            src = clip.Out;
-        }
-        else
-        {
-            long vt = _player.Time;
-            if (vt >= _ignoreVlcTimeBelowMs && vt != _lastVlcTime) ResetClock(vt);
-            var extra = _player.State == VLCState.Playing ? _sinceVlcTime.Elapsed : TimeSpan.Zero;
-            if (extra > TimeSpan.FromMilliseconds(500)) extra = TimeSpan.FromMilliseconds(500);
-            src = TimeSpan.FromMilliseconds(_lastVlcTime) + extra;
-        }
-
-        ApplyVolume(clip);
-        int idx = p.Timeline.IndexOf(clip);
-        var clipStart = TimelineOps.ClipStart(p, idx);
-
-        if (src >= clip.Out)
-        {
-            var nextStart = clipStart + clip.Duration;
-            if (idx + 1 >= p.Timeline.Count)
+            if (hit.Clip.Id != _clipId)
             {
-                Pause();
-                Position = nextStart;
-                PositionChanged?.Invoke(this, EventArgs.Empty);
-                return;
+                var prev = _clipId is { } id ? p.FindClip(id) : null;
+                bool seamless = prev is not null && prev.SourceId == hit.Clip.SourceId &&
+                                Math.Abs((hit.Clip.In - prev.Out).TotalMilliseconds) < 50 &&
+                                _loadedSourceId == hit.Clip.SourceId && _player.State == VLCState.Playing;
+                if (seamless) _clipId = hit.Clip.Id; // adjacent halves of a split: keep playing
+                else ApplySeek(t, force: true);       // a cut: load the next clip where the clock is NOW
             }
-            var next = p.Timeline[idx + 1];
-            if (next.SourceId == clip.SourceId && Math.Abs((next.In - clip.Out).TotalMilliseconds) < 50 && _player.State != VLCState.Ended)
+            else if (!WaitingForProxy)
             {
-                _clipId = next.Id; // adjacent halves of a split: keep playing seamlessly
-                Position = nextStart + (src - next.In);
+                KeepVideoInStep(hit);
             }
-            else
-            {
-                ApplySeek(nextStart, force: true);
-                Position = nextStart;
-            }
-        }
-        else
-        {
-            var into = src - clip.In;
-            Position = clipStart + (into < TimeSpan.Zero ? TimeSpan.Zero : into);
+            ApplyVolume(hit.Clip);
         }
         PositionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ---- Real-time playback clock ----
+
+    readonly Stopwatch _clock = new();
+    TimeSpan _clockBase;
+
+    void StartClock(TimeSpan at)
+    {
+        _clockBase = at;
+        _clock.Restart();
+    }
+
+    static readonly TimeSpan VideoSettle = TimeSpan.FromMilliseconds(500);
+    static readonly TimeSpan VideoDriftLimit = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// If the video has fallen behind (or run ahead of) the clock, e.g. while the clip was still
+    /// loading after a cut, seek it to where the clock is. Proxies are all-keyframe, so this is a
+    /// cheap jump of a few frames. LibVLC's Time only updates every few hundred ms, so estimate the
+    /// video's real position by interpolating since its last update, and let a load/seek settle first.
+    /// </summary>
+    void KeepVideoInStep(TimelineHit hit)
+    {
+        if (_player.State != VLCState.Playing || _sinceLastSeek.Elapsed < VideoSettle) return;
+        long vt = _player.Time;
+        if (vt >= _ignoreVlcTimeBelowMs && vt != _lastVlcTime) ResetClock(vt);
+        if (_lastVlcTime < 0) return;
+        var extra = _sinceVlcTime.Elapsed;
+        if (extra > TimeSpan.FromMilliseconds(500)) extra = TimeSpan.FromMilliseconds(500);
+        var video = TimeSpan.FromMilliseconds(_lastVlcTime) + extra;
+        if ((video - hit.SourceTime).Duration() <= VideoDriftLimit) return;
+
+        long ms = (long)hit.SourceTime.TotalMilliseconds;
+        _player.Time = ms;
+        _sinceLastSeek.Restart();
+        ResetClock(ms);
     }
 
     public void Dispose()
     {
         _timer.Stop();
         _timer.Dispose();
+        _lane.Dispose();
         _player.Stop();
         _player.Dispose();
         _vlc.Dispose();

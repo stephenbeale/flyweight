@@ -56,6 +56,8 @@ public static class TimelineOps
     /// </summary>
     public static Clip InsertMedia(Project p, SourceMedia media, int index)
     {
+        if (media.IsAudioOnly)
+            throw new ArgumentException("Audio files go on the audio track (AddAudio), not the video timeline.", nameof(media));
         if (p.FindMedia(media.Id) is null) p.Media.Add(media);
         var clip = new Clip { SourceId = media.Id, In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration };
         p.Timeline.Insert(Math.Clamp(index, 0, p.Timeline.Count), clip);
@@ -201,6 +203,59 @@ public static class TimelineOps
     {
         if (p.FindClip(clipId) is { } c) c.Muted = muted;
     }
+
+    // ---------------- Audio track (music / narration at fixed timeline times) ----------------
+
+    /// <summary>Place the whole of an audio file on the audio track, starting at timeline time <paramref name="start"/>.</summary>
+    public static AudioItem AddAudio(Project p, SourceMedia media, TimeSpan start)
+    {
+        if (!media.IsAudioOnly) throw new ArgumentException("Only pure audio files go on the audio track.", nameof(media));
+        if (p.FindMedia(media.Id) is null) p.Media.Add(media);
+        var item = new AudioItem { SourceId = media.Id, Start = Max(start, TimeSpan.Zero), In = TimeSpan.Zero, Out = media.Duration };
+        p.AudioTrack.Add(item);
+        return item;
+    }
+
+    /// <summary>Slide an audio item to a new timeline start (never before 0). Its length doesn't change.</summary>
+    public static void MoveAudio(Project p, Guid id, TimeSpan start)
+    {
+        if (p.FindAudio(id) is { } a) a.Start = Max(start, TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// Trim the front of an audio item. Its END stays put on the timeline, like dragging a clip's left
+    /// edge: the start moves with the new in point.
+    /// </summary>
+    public static void TrimAudioIn(Project p, Guid id, TimeSpan newIn)
+    {
+        if (p.FindAudio(id) is not { } a) return;
+        var lo = Max(TimeSpan.Zero, a.In - a.Start); // can't start before timeline 0
+        var inPoint = Clamp(newIn, lo, a.Out - MinClipLength);
+        a.Start += inPoint - a.In;
+        a.In = inPoint;
+    }
+
+    public static void TrimAudioOut(Project p, Guid id, TimeSpan newOut)
+    {
+        if (p.FindAudio(id) is not { } a || p.FindMedia(a.SourceId) is not { } m) return;
+        a.Out = Clamp(newOut, a.In + MinClipLength, m.Duration);
+    }
+
+    public static void SetAudioVolume(Project p, Guid id, double volume)
+    {
+        if (p.FindAudio(id) is { } a) a.Volume = double.IsFinite(volume) ? Math.Clamp(volume, 0, MaxClipVolume) : 1.0;
+    }
+
+    public static void SetAudioMuted(Project p, Guid id, bool muted)
+    {
+        if (p.FindAudio(id) is { } a) a.Muted = muted;
+    }
+
+    public static void DeleteAudio(Project p, Guid id) => p.AudioTrack.RemoveAll(a => a.Id == id);
+
+    /// <summary>Audio items sounding at timeline time <paramref name="t"/>.</summary>
+    public static IEnumerable<AudioItem> AudioAt(Project p, TimeSpan t) =>
+        p.AudioTrack.Where(a => a.Start <= t && t < a.End);
 
     /// <summary>
     /// The timeline range in which an annotation is visible (clamped to its clip), or null if
