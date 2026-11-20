@@ -68,5 +68,16 @@ public sealed class Clip
     /// <summary>Out point (exclusive), in source time.</summary>
     public TimeSpan Out { get; set; }
 
+    /// <summary>
+    /// Gain for the clip's own audio: 1 = as recorded, 0–2 (0–200%). Older project files load as 1.
+    /// Kept separate from <see cref="Muted"/> so unmuting restores the level.
+    /// </summary>
+    public double Volume { get; set; } = 1.0;
+
+    public bool Muted { get; set; }
+
     [JsonIgnore] public TimeSpan Duration => Out - In;
+
+    /// <summary>The gain actually applied (0 when muted).</summary>
+    [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
 }

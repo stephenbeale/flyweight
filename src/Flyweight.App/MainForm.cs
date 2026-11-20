@@ -23,8 +23,9 @@ public sealed class MainForm : Form
     readonly TimelineControl _timeline = new() { Dock = DockStyle.Fill };
     readonly MediaBinControl _bin = new() { Dock = DockStyle.Fill };
     readonly AnnotationStylePanel _props = new() { Dock = DockStyle.Fill, Visible = false };
+    readonly ClipPropertiesPanel _clipProps = new() { Dock = DockStyle.Fill, Visible = false };
     readonly Label _propsEmpty = new() { Dock = DockStyle.Fill, ForeColor = Color.Gray, TextAlign = ContentAlignment.MiddleCenter,
-        Text = "Select an arrow, box or text\nto edit its style.\n\nA  arrow    R  box    T  text" };
+        Text = "Select an arrow, box or text\nto edit its style,\nor a clip for its volume.\n\nA  arrow    R  box    T  text\nM  mute clip" };
     // AutoSize: a fixed pixel width clipped "/ total" once Windows display scaling enlarged the font.
     readonly Label _timecode = new() { AutoSize = true, Padding = new Padding(12, 0, 12, 0), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
         Font = new Font("Consolas", 11f), Dock = DockStyle.Left };
@@ -142,6 +143,7 @@ public sealed class MainForm : Form
 
         var propsPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(28, 28, 32) };
         propsPanel.Controls.Add(_props);
+        propsPanel.Controls.Add(_clipProps);
         propsPanel.Controls.Add(_propsEmpty);
         propsPanel.Controls.Add(new Label { Text = "Properties", Dock = DockStyle.Top, Height = 26, Padding = new Padding(8, 6, 0, 0), ForeColor = Color.Silver, BackColor = Color.FromArgb(38, 38, 44) });
 
@@ -198,7 +200,11 @@ public sealed class MainForm : Form
 
         _timeline.SeekRequested += (_, t) => { _engine.Pause(); _engine.Seek(t); };
         _timeline.AnnotationSelected += (_, _) => _preview.Select(_timeline.SelectedAnnotationId);
-        _timeline.ClipSelected += (_, _) => { if (_timeline.SelectedClipId is not null) _preview.Select(null); };
+        _timeline.ClipSelected += (_, _) =>
+        {
+            if (_timeline.SelectedClipId is not null) _preview.Select(null);
+            UpdatePropertyGrid();
+        };
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
@@ -217,6 +223,18 @@ public sealed class MainForm : Form
                 edit(a);
                 TimelineOps.SyncLinked(p, id); // same look on every piece of a run across cuts
             }
+            switch (phase)
+            {
+                case StyleEditPhase.Single: _session.Execute(Apply); break;
+                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(Apply); break;
+                case StyleEditPhase.Commit: _session.Preview(Apply); _session.CommitEdit(); break;
+            }
+        };
+
+        _clipProps.Edit += (edit, phase) =>
+        {
+            if (_timeline.SelectedClipId is not { } id) return;
+            void Apply(Project p) => edit(p, id);
             switch (phase)
             {
                 case StyleEditPhase.Single: _session.Execute(Apply); break;
@@ -295,6 +313,7 @@ public sealed class MainForm : Form
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
+            case Keys.M: ToggleMute(CurrentClipId()); return true;
             case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
             case Keys.V: case Keys.Escape: _preview.Tool = Tool.Select; return true;
             case Keys.A: _preview.Tool = Tool.Arrow; return true;
@@ -383,7 +402,24 @@ public sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Split at playhead (S)", null, (_, _) => Split());
         menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
+        menu.Items.Add(new ToolStripSeparator());
+        var clip = _session.Project.FindClip(clipId);
+        var mute = new ToolStripMenuItem("Mute clip (M)", null, (_, _) => ToggleMute(clipId))
+        {
+            Checked = clip?.Muted == true,
+            Enabled = clip is not null && _session.Project.FindMedia(clip.SourceId)?.HasAudio == true,
+        };
+        menu.Items.Add(mute);
         menu.Show(screen);
+    }
+
+    void ToggleMute(Guid? clipId)
+    {
+        if (clipId is not { } id || _session.Project.FindClip(id) is not { } c) return;
+        bool muted = !c.Muted;
+        _session.Execute(p => TimelineOps.SetClipMuted(p, id, muted));
+        var name = _session.Project.FindMedia(c.SourceId)?.DisplayName ?? "clip";
+        _statusText.Text = muted ? $"Muted {name}" : $"Unmuted {name}";
     }
 
     void Split()
@@ -634,16 +670,15 @@ public sealed class MainForm : Form
 
     void UpdatePropertyGrid()
     {
-        var a = _preview.SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
-        if (a is null)
-        {
-            _props.Visible = false;
-            _propsEmpty.Visible = true;
-            return;
-        }
-        _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
-        _props.Visible = true;
-        _propsEmpty.Visible = false;
+        var p = _session.Project;
+        var a = _preview.SelectedAnnotationId is { } id ? p.FindAnnotation(id) : null;
+        var clip = a is null && _timeline.SelectedClipId is { } cid ? p.FindClip(cid) : null;
+
+        if (a is not null) _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
+        if (clip is not null) _clipProps.ShowClip(clip, p.FindMedia(clip.SourceId));
+        _props.Visible = a is not null;
+        _clipProps.Visible = clip is not null;
+        _propsEmpty.Visible = a is null && clip is null;
     }
 
     void UpdateToolButtons()

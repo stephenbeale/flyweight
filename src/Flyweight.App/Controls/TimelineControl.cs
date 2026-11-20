@@ -214,6 +214,11 @@ public sealed class TimelineControl : Control
         var label = media?.DisplayName ?? "(missing)";
         if (state.Status is ProxyStatus.Optimising or ProxyStatus.Queued) label += $"  ·  optimising {state.Progress:P0}";
         if (state.Status == ProxyStatus.Failed) label += "  ·  failed";
+        if (media is { HasAudio: true })
+        {
+            if (c.Muted) label += "  ·  muted";
+            else if (Math.Abs(c.Volume - 1) >= 0.005) label += $"  ·  vol {c.Volume:P0}";
+        }
         TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y + 4, r.Width - 12, 18)),
             Color.White, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 

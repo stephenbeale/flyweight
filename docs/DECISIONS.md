@@ -122,3 +122,11 @@ Moving a bar keeps its length fixed: it belongs to the clip under its middle (`M
 ### D20. Flyweight.App is in the solution
 It was missing from `Flyweight.sln`, so `dotnet build Flyweight.sln` (and the CI "App build (Windows)" job)
 only built Core. This hid a compile error and made local "builds" silently run a stale exe. Now added.
+
+### D22. Clip volume and mute live on the clip
+`Clip.Volume` (gain 0–2, i.e. 0–200%, default 1) and `Clip.Muted` are separate, so unmuting restores the level.
+`EffectiveVolume` is 0 when muted. Edits go through `TimelineOps.SetClipVolume/SetClipMuted`, and split halves
+copy both. Export adds `volume=` to the clip's audio chain only when the gain isn't 1. A muted or 0% clip exports
+as `anullsrc` silence, so its audio isn't decoded. Preview sets LibVLC's volume (100 = as recorded, up to 200)
+on every playback tick, because the audio output can reset it when new media loads. Old project files load at
+100%. The clip panel's slider is shared with the annotation panel (`Controls/Slider.cs`).

@@ -59,8 +59,13 @@ public sealed class ExportPlan
             var d = Sec(clip.Duration);
 
             graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{Canvas.FitFilter(w, h)},format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");
-            if (media.HasAudio)
-                graph.Append($"[{input}:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}[a{i}];\n");
+            // A muted clip is treated like one with no audio: silence, and its track isn't decoded at all.
+            var gain = clip.EffectiveVolume;
+            if (media.HasAudio && gain > 0)
+            {
+                var vol = Math.Abs(gain - 1) < 0.001 ? "" : $"volume={Num(Math.Round(gain, 3))},";
+                graph.Append($"[{input}:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,{vol}apad,atrim=duration={d}[a{i}];\n");
+            }
             else
                 graph.Append($"anullsrc=r=48000:cl=stereo,atrim=duration={d}[a{i}];\n");
             input++;

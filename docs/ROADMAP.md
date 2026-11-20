@@ -1,15 +1,16 @@
 # Roadmap & status
 
-_Last updated: 2026-11-19 (end of day; branch `feature/audio`)_
+_Last updated: 2026-11-20 (branch `feature/audio`)_
 
 ## Where things stand
 
 **v0.1 MVP: smoke-tested on Windows and merged to `main` (PR #3, `da4cf87`). The owner has exported a real video.**
-Current branch: `feature/audio` (created from `main`, no feature commits yet). Next: audio, then clip speed (see below).
+Current branch: `feature/audio`. Clip volume/mute is done (D22) and the owner tested it, including an export.
+Next on this branch: an audio lane for music and narration (see below), then clip speed.
 
 | Area | State |
 |---|---|
-| Core model, timeline ops, undo/redo, save/load | ✅ Done, unit-tested (62 core tests incl. real-ffmpeg integration tests) |
+| Core model, timeline ops, undo/redo, save/load | ✅ Done, unit-tested (76 core tests incl. real-ffmpeg integration tests) |
 | Probe, proxy generation + cache, thumbnails | ✅ Done, integration-tested with real ffmpeg |
 | Export (concat, trim, fit/pad 16:9, audio, timed overlays) | ✅ Done, integration-tested down to output pixels; real export verified by the owner |
 | WinForms UI (preview, timeline, bin, style panel, export dialog) | ✅ Runs on Windows; smoke-tested |
@@ -122,8 +123,14 @@ hurts search. They want something that says lean / light / fast / nimble.
 - **Chapter markers** → copy YouTube description timestamps (`0:00 Intro…`)
 - Thumbnail export (current frame + annotations at 1280×720)
 - **NEXT after the smoke test (owner's order, 2026-11-19):**
-  1. `feature/audio`: clip volume/mute (0–200%), one audio track for narration + music (import MP3/WAV/M4A,
-     drag to position), per-item volume, optional ducking of clip audio under narration. Mic recording later.
+  1. `feature/audio`:
+     - ✅ Clip volume/mute (0–200%): Properties panel slider + tickbox, M key, clip right-click menu (D22).
+     - Audio lane: import pure audio (MP3/WAV/M4A), drag to position, trim, per-item volume; mixed over clip audio
+       in preview and export. **Owner asked for this (2026-11-20).** Open decision: when earlier video is trimmed,
+       does an audio item stay at its timeline time (music), follow the clip it starts over (narration), or have
+       a per-item "Lock to video" option?
+     - Optional ducking of clip audio under narration; audio fades. Mic recording later.
+  - Idea: "Export selection" (export only the selected clips) for quick checks.
   2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).
   3. Reverse: parked (ffmpeg `reverse` buffers the whole clip; would be short clips only).
 - Audio fades

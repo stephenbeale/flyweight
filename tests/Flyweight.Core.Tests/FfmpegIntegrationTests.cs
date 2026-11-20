@@ -181,6 +181,50 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.InRange(proxy.Duration.TotalSeconds, SourceMedia.StillMaxDuration.TotalSeconds - 1, SourceMedia.StillMaxDuration.TotalSeconds + 1);
     }
 
+    /// <summary>RMS loudness (0–1) of a video's audio between two times, mixed to mono.</summary>
+    async Task<double> Rms(string video, double from, double to)
+    {
+        var raw = Path.Combine(_dir, $"pcm-{Guid.NewGuid():N}.raw");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-ss", FfmpegRunner.Num(from), "-t", FfmpegRunner.Num(to - from), "-i", video,
+            "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", raw,
+        });
+        var b = await File.ReadAllBytesAsync(raw);
+        double sum = 0;
+        int n = b.Length / 2;
+        for (int i = 0; i < n; i++) { double s = BitConverter.ToInt16(b, i * 2) / 32768.0; sum += s * s; }
+        return n == 0 ? 0 : Math.Sqrt(sum / n);
+    }
+
+    [Fact]
+    public async Task Export_applies_clip_volume_and_mute_to_the_audio()
+    {
+        if (!FfmpegAvailable()) return;
+        var tone = await MakeClip("tone.mp4", 640, 360, 6, "red", audio: true);
+        var m = await MediaProbe.ProbeAsync(tone);
+
+        // Three 2 s clips of the same tone: 100%, muted, 50%.
+        var p = new Project();
+        p.Media.Add(m);
+        TimelineOps.Append(p, m);
+        TimelineOps.SplitAt(p, TimeSpan.FromSeconds(2));
+        TimelineOps.SplitAt(p, TimeSpan.FromSeconds(4));
+        TimelineOps.SetClipMuted(p, p.Timeline[1].Id, true);
+        TimelineOps.SetClipVolume(p, p.Timeline[2].Id, 0.5);
+
+        var output = Path.Combine(_dir, "volume-out.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output).RunAsync();
+
+        // Measure the middle of each clip, away from AAC edge effects at the cuts.
+        var loud = await Rms(output, 0.5, 1.5);
+        var silent = await Rms(output, 2.5, 3.5);
+        var half = await Rms(output, 4.5, 5.5);
+        Assert.True(loud > 0.05, $"100% clip should be audible (rms {loud:0.000})");
+        Assert.True(silent < loud * 0.01, $"muted clip should be silent (rms {silent:0.0000} vs {loud:0.000})");
+        Assert.InRange(half / loud, 0.45, 0.55);
+    }
+
     [Fact]
     public async Task Export_holds_a_still_for_its_clip_length_after_video()
     {

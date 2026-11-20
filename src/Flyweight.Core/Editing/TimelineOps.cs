@@ -98,7 +98,7 @@ public static class TimelineOps
         var cut = hit.SourceTime;
         if (cut - left.In < MinClipLength || left.Out - cut < MinClipLength) return null;
 
-        var right = new Clip { SourceId = left.SourceId, In = cut, Out = left.Out };
+        var right = new Clip { SourceId = left.SourceId, In = cut, Out = left.Out, Volume = left.Volume, Muted = left.Muted };
         left.Out = cut;
         p.Timeline.Insert(hit.Index + 1, right);
 
@@ -185,6 +185,21 @@ public static class TimelineOps
     {
         if (p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is not { } m) return;
         c.Out = Clamp(newOut, c.In + MinClipLength, m.Duration);
+    }
+
+    /// <summary>Loudest a clip can be turned up (200%).</summary>
+    public const double MaxClipVolume = 2.0;
+
+    /// <summary>Set a clip's audio gain (clamped to 0–<see cref="MaxClipVolume"/>). Doesn't change mute.</summary>
+    public static void SetClipVolume(Project p, Guid clipId, double volume)
+    {
+        if (p.FindClip(clipId) is not { } c) return;
+        c.Volume = double.IsFinite(volume) ? Math.Clamp(volume, 0, MaxClipVolume) : 1.0;
+    }
+
+    public static void SetClipMuted(Project p, Guid clipId, bool muted)
+    {
+        if (p.FindClip(clipId) is { } c) c.Muted = muted;
     }
 
     /// <summary>

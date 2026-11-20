@@ -249,6 +249,18 @@ public sealed class PlaybackEngine : IDisposable
         _sinceVlcTime.Restart();
     }
 
+    /// <summary>
+    /// Play the clip at its own volume (LibVLC: 100 = as recorded, up to 200). Checked every tick
+    /// rather than once per load: the audio output can reset the level when new media starts, and
+    /// this also picks up slider changes live and split halves that keep playing seamlessly.
+    /// </summary>
+    void ApplyVolume(Core.Model.Clip clip)
+    {
+        int target = (int)Math.Round(clip.EffectiveVolume * 100);
+        int now = _player.Volume;
+        if (now >= 0 && now != target) _player.Volume = target; // -1 = no audio output yet
+    }
+
     void Tick()
     {
         if (_pendingSeek is { } pending && _sinceLastSeek.Elapsed >= SeekThrottle)
@@ -280,6 +292,7 @@ public sealed class PlaybackEngine : IDisposable
             src = TimeSpan.FromMilliseconds(_lastVlcTime) + extra;
         }
 
+        ApplyVolume(clip);
         int idx = p.Timeline.IndexOf(clip);
         var clipStart = TimelineOps.ClipStart(p, idx);
 
