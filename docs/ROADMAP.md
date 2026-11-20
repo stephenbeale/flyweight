@@ -1,27 +1,91 @@
 # Roadmap & status
 
-_Last updated: 2026-11-19_
+_Last updated: 2026-11-20 (end of day; `feature/audio` merged)_
 
 ## Where things stand
 
-**v0.1 MVP: first Windows run in progress (launch + video import pass; the rest of the smoke test is pending).**
+**v0.1 MVP: smoke-tested on Windows and merged to `main` (PR #3, `da4cf87`). The owner has exported a real video.**
+`feature/audio` (clip volume/mute D22, audio track D23, real-time playback clock D24) is merged to `main` via PR.
+**Next session: start a new branch and FIRST finish the audio-track tests below** (session ended 2026-11-20 mid-test),
+then ducking/fades or clip speed.
+
+### Audio track: owner testing status (2026-11-20, build 21:21)
+Passed:
+- Import MP3; waveform; drag; trim; stays put when video is trimmed.
+- Music plays straight through cuts (after the D24 clock fix).
+- M / Ctrl+M mute; volume per clip and per item; 150% boost; normal playback sound (after the D23 DirectSound fix).
+- Waveform-only look with a hover tooltip.
+
+Still to test (test files are in `C:\Users\sjbeale\Music\Flyweight test audio\`):
+1. Overlap: import `test-beeps-mono.wav` inside the music. It should go on a second row, both should play, and the
+   beeps should be as loud as the music (mono at full level). Last time the owner "couldn't open the file" from the
+   hidden temp folder, so it was copied to Music; if it still fails, it's an import bug.
+2. Right-click menu: Move to playhead, Jump to its start, Mute (ticked), Remove.
+3. Del removes the item; the file stays in the bin.
+4. Bin double-click on audio puts it on the audio track at the playhead.
+5. Undo/redo of a drag, trim, volume, mute and delete (one step each).
+6. Save and reopen keeps the items, trims, volumes and mute.
+7. Export: music starts at the same moment and loudness as the preview; muted items are silent; music stops at
+   the video's end.
 
 | Area | State |
 |---|---|
-| Core model, timeline ops, undo/redo, save/load | ✅ Done, unit-tested |
+| Core model, timeline ops, undo/redo, save/load | ✅ Done, unit-tested (97 core tests incl. real-ffmpeg integration tests) |
 | Probe, proxy generation + cache, thumbnails | ✅ Done, integration-tested with real ffmpeg |
-| Export (concat, trim, fit/pad 16:9, audio, timed overlays) | ✅ Done, integration-tested down to output pixels |
-| WinForms UI (preview, timeline, bin, properties, export dialog) | 🟡 Written and compiles; **never run** |
-| LibVLC playback engine | 🟡 Written and compiles; **never run**: highest risk |
+| Export (concat, trim, fit/pad 16:9, audio, timed overlays) | ✅ Done, integration-tested down to output pixels; real export verified by the owner |
+| WinForms UI (preview, timeline, bin, style panel, export dialog) | ✅ Runs on Windows; smoke-tested |
+| LibVLC playback engine | ✅ Runs on Windows; smoke-tested (polish still possible, see Known risks) |
 | CI (GitHub Actions: Ubuntu tests + ffmpeg, Windows app build) | ✅ Done (`.github/workflows/ci.yml`) |
 | Output size chosen at New project (`Project.OutputResolution`) | ✅ Done; export dialog defaults to it |
+
+## Open questions for next session
+
+**Agreed order (unchanged):** first fix any bugs the owner hits during the real editing session, then
+`feature/audio` (clip volume/mute, narration + music track, ducking), then clip speed. Reverse is parked.
+Royalty-free media search is parked. Details under "v0.2 candidates" below.
+
+### 1. Sharing with friends (undecided)
+Not shareable yet:
+- No release build.
+- ffmpeg isn't bundled (the owner's PC has it via Chocolatey).
+- The exe is unsigned, so friends hit SmartScreen and must choose "Run anyway".
+- Only tested on the owner's PC.
+
+Plan: a "v0.1 preview" zip on a GitHub Release:
+- Self-contained win-x64 publish (.NET + LibVLC included).
+- Bundled ffmpeg/ffprobe, with their licence notices (LGPL/GPL obligations).
+- A short README.
+- A feedback route (GitHub Issues).
+
+Options offered for timing:
+1. After the owner's own real-editing session and fixes (recommended).
+2. First thing next session, before audio.
+3. Later, as v0.2 after audio + speed.
+
+### 2. App name (undecided, deferred to next time)
+The owner thinks "Flyweight" is too common. It is also the name of a well-known software design pattern, which
+hurts search. They want something that says lean / light / fast / nimble.
+- **Rejected so far:** Kestrel and Dart (already taken), Cutman (gendered), Jab and Bantam (fun but not relevant to
+  editing), Featherweight (likely crowded).
+- **Current shortlist:** Whittle (shave long footage down; favourite), Nib (pen point: light + annotations),
+  Featherframe (light + video frame).
+- **Other ideas:** Pare, Kerf, Quill (likely taken: Quill.js), Callout, Markcut.
+- **Next step:** check availability (existing apps, domains, trademarks, Microsoft Store) for the shortlist before
+  choosing.
+- Renaming is easiest before sharing with friends; it could ship with the preview zip.
+- The icon is a boxing glove in a film frame (D16). It may need revisiting if the name drops the boxing theme.
+- **Owner's logo idea for Whittle:** a flaming jet engine (Sir Frank Whittle invented the jet engine), so the name
+  reads as both "whittle footage down" and "jet-fast". Possible twist: a film frame in the intake. Check the name
+  isn't tied up by companies/trademarks using the surname before committing.
 
 ## Next steps (in order)
 
 0. ~~Add GitHub Actions CI~~ ✅ (D14). CI sets `FLYWEIGHT_REQUIRE_FFMPEG=1` so integration tests fail rather than skip.
 1. ~~Output size chosen at project creation~~ ✅ (D15). Old project files load as 1080p.
-2. **First run on Windows.** Add ffmpeg/ffprobe to `src/Flyweight.App/ffmpeg/`, F5, then work through the smoke test below and fix what breaks.
+2. ~~First run on Windows~~ ✅ Smoke test complete (2026-11-19), checklist below.
 3. **Playback polish.** Smooth playhead, clip-boundary transitions, scrubbing feel (`PlaybackEngine`).
+   Since D24 the playhead runs on a real-time clock and the video catches up after each cut by skipping a few
+   frames. Truly seamless cuts would need the next clip preloaded in a second player.
 4. **Layout/DPI polish.** Splitter sizes, dark theme consistency (ToolStrip, PropertyGrid), high-DPI scaling.
 5. **Success test:** 10 real phone clips (incl. 4K HEVC + a portrait clip), add 5 annotations, export a ~2 min
    1080p video in under 15 min total, with the export matching the preview exactly. No freezes, no crashes.
@@ -44,28 +108,29 @@ _Last updated: 2026-11-19_
 - **Smoke test complete (2026-11-19).** Next: `feature/audio`, then clip speed (see v0.2 "NEXT").
 - [x] Export 1080p: output plays, and annotations match the preview (owner, 2026-11-19, build 20:46)
 
-### First Windows run: status (2026-11-19, branch `fix/first-windows-run`)
-- Passed so far: launch, import, playback, timeline edits, drawing/styling annotations, freeze frame, toolbar text,
-  insert before/after (timeline right-click), stills in old projects. **Not yet tested:** annotation retiming,
-  full undo/redo pass, save/reopen, crash recovery, export, the New-project size dialog, bin right-click insert,
-  the timecode "/ total" fix.
-- **Session 2 (evening) fixes/features:** App project added to the solution (D20); custom style panel (D18);
-  thumbnails first in their own queue + preview stand-in while optimising (D19); old image entries auto-upgraded
-  on load (D17); resize cursor on handles; insert before/after from the timeline and bin right-click menus;
-  timecode label auto-sizes so "/ total" isn't clipped at high DPI.
-- **Process note:** the Bash tool collapses `\\` to `\`, which corrupted a C# string and doc paths last session.
-  Write files with the Write/Edit tools.
-- **Bug found + fixed:** images imported as 0-0.04s videos, giving zero-length clips. `trim=duration=0` means
-  "unlimited" in ffmpeg, so export never finished ("15 min for a 28s clip") and some images had no thumbnail.
-  Fix: stills are detected at probe time (`SourceMedia.IsStill`) and handled properly (D17).
-- **Toolbar text** was pale grey on the light strip (inherited form ForeColor); now explicit black. Not yet visually verified.
-- **Freeze frame added** (F key / toolbar "Freeze"): grabs the frame under the playhead and inserts it as a 5s still.
-- **Open items:**
-  1. ~~Old-way images in the owner's project~~: now upgraded automatically on load (D17).
-  2. Finish the smoke test above, from annotation retiming onwards.
-  3. Freeze-frame PNGs live in `%LocalAppData%\Flyweight\frames`, not next to the project file (D17).
-- Dev notes: launch the GUI outside the tool sandbox (`Start-Process src\Flyweight.App\bin\Debug\net8.0-windows\Flyweight.exe`);
-  close the app before rebuilding Debug. Repo `nuget.config` pins nuget.org because the machine-wide config has a private feed (wf-lmx) that 401s.
+### First Windows run: historical note (2026-11-19, PR #3 `fix/first-windows-run`, merged as `da4cf87`)
+- The first Windows run and full smoke test were done on 2026-11-19 and the fixes merged to `main`. CI was green
+  (App build (Windows) + Core tests). The remote `fix/first-windows-run` branch has not been deleted.
+- Biggest finds: `Flyweight.App` was missing from `Flyweight.sln`, so builds and CI never built the app and the exe
+  was stale (fixed, D20). Images imported as 0-length videos (fixed via `SourceMedia.IsStill`, D17).
+- Features/fixes from that day: custom style panel replacing the PropertyGrid (D18); thumbnails first in their own
+  queue + preview stand-in while optimising (D19); old image entries auto-upgraded on load (D17); insert before/after
+  from the timeline and bin right-click menus; linked annotations across cuts shown as one bar with fixed-length
+  moves (D21); freeze frame (F key / toolbar) that can copy on-screen annotations (tickbox, default on); hover summary
+  on annotation bars; prev/next clip buttons and Up/Down; timeline follows the playhead; no re-seek on annotation
+  edits (lag fix); shortcuts suppressed only while typing; stills decoded at 1 fps on export; debug build time in the
+  window title; timecode label auto-sizes.
+- Freeze-frame PNGs live in `%LocalAppData%\Flyweight\frames`, not next to the project file (D17).
+- **Process note:** the Bash tool on this machine collapses `\\` to `\` (so `\n`/`\f` become control characters), which
+  corrupted a C# string and doc paths once. Write/edit files only with the Write/Edit tools, write commit messages to a
+  file and use `git commit -F`, and check docs for stray control characters afterwards.
+- **Dev notes:**
+  - Start menu and desktop shortcuts "Flyweight (dev)" point at `src\Flyweight.App\bin\Debug\net8.0-windows\Flyweight.exe`,
+    i.e. always the latest dev build. **Close the app before rebuilding Debug.**
+  - To launch from a Claude session, start the GUI outside the tool sandbox (`Start-Process` on that exe).
+  - Repo `nuget.config` pins nuget.org because the machine-wide config has a private feed (wf-lmx) that 401s.
+  - Export speed options not applied yet (hwaccel auto for decode; x264 preset fast): only if the owner reports slow exports.
+  - The owner will do real editing with the app next; note any bugs or friction and feed them back.
 
 ## Known risks / likely first bugs
 - `PlaybackEngine`: VLC `Time` granularity, the pause-on-first-frame trick, `:start-time` on load, and Ended-state handling.
@@ -80,8 +145,14 @@ _Last updated: 2026-11-19_
 - **Chapter markers** → copy YouTube description timestamps (`0:00 Intro…`)
 - Thumbnail export (current frame + annotations at 1280×720)
 - **NEXT after the smoke test (owner's order, 2026-11-19):**
-  1. `feature/audio`: clip volume/mute (0–200%), one audio track for narration + music (import MP3/WAV/M4A,
-     drag to position), per-item volume, optional ducking of clip audio under narration. Mic recording later.
+  1. `feature/audio`:
+     - ✅ Clip volume/mute (0–200%): Properties panel slider + tickbox, M key, clip right-click menu (D22).
+     - ✅ Audio track (D23): import MP3/WAV/M4A/AAC/FLAC/OGG/Opus/WMA. Each item is placed at the playhead at a
+       fixed timeline time; drag to move, drag ends to trim; per-item volume/mute. Overlapping items stack into
+       rows. Mixed over the clip audio in preview and export. Final owner tests are still pending (see top).
+       Possible later: a per-item "Lock to video" so narration follows its clip (the owner chose fixed time first).
+     - Optional ducking of clip audio under narration; audio fades. Mic recording later.
+  - Idea: "Export selection" (export only the selected clips) for quick checks.
   2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).
   3. Reverse: parked (ffmpeg `reverse` buffers the whole clip; would be short clips only).
 - Audio fades

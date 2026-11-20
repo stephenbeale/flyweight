@@ -19,16 +19,35 @@ public static class MediaProbe
 
         JsonElement? video = null;
         bool hasAudio = false;
+        int channels = 0;
         foreach (var s in root.GetProperty("streams").EnumerateArray())
         {
             var type = s.GetProperty("codec_type").GetString();
             bool isCoverArt = s.TryGetProperty("disposition", out var d) &&
                               d.TryGetProperty("attached_pic", out var ap) && ap.GetInt32() == 1;
             if (type == "video" && video is null && !isCoverArt) video = s;
-            if (type == "audio") hasAudio = true;
+            if (type == "audio" && !hasAudio)
+            {
+                hasAudio = true;
+                channels = s.TryGetProperty("channels", out var ch) && ch.TryGetInt32(out var n) ? n : 0;
+            }
         }
         var format = root.TryGetProperty("format", out var fmtEl) ? Str(fmtEl, "format_name") ?? "" : "";
-        if (video is not { } v) throw new InvalidDataException($"'{Path.GetFileName(path)}' has no video stream.");
+        if (video is not { } v)
+        {
+            // Pure audio (cover art in an MP3/M4A doesn't count as video).
+            if (!hasAudio) throw new InvalidDataException($"'{Path.GetFileName(path)}' has no video or audio.");
+            double audioSecs = ParseDouble(root.TryGetProperty("format", out var af) ? Str(af, "duration") : null) ?? 0;
+            if (audioSecs <= 0) throw new InvalidDataException($"'{Path.GetFileName(path)}' has no readable length.");
+            return new SourceMedia
+            {
+                OriginalPath = Path.GetFullPath(path),
+                Duration = TimeSpan.FromSeconds(audioSecs),
+                HasAudio = true,
+                AudioChannels = channels,
+                IsAudioOnly = true,
+            };
+        }
 
         int w = v.GetProperty("width").GetInt32();
         int h = v.GetProperty("height").GetInt32();
@@ -64,6 +83,7 @@ public static class MediaProbe
             Width = w,
             Height = h,
             HasAudio = hasAudio,
+            AudioChannels = channels,
         };
     }
 

@@ -181,6 +181,108 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.InRange(proxy.Duration.TotalSeconds, SourceMedia.StillMaxDuration.TotalSeconds - 1, SourceMedia.StillMaxDuration.TotalSeconds + 1);
     }
 
+    /// <summary>RMS loudness (0–1) of a video's audio between two times, mixed to mono.</summary>
+    async Task<double> Rms(string video, double from, double to)
+    {
+        var raw = Path.Combine(_dir, $"pcm-{Guid.NewGuid():N}.raw");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-ss", FfmpegRunner.Num(from), "-t", FfmpegRunner.Num(to - from), "-i", video,
+            "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", raw,
+        });
+        var b = await File.ReadAllBytesAsync(raw);
+        double sum = 0;
+        int n = b.Length / 2;
+        for (int i = 0; i < n; i++) { double s = BitConverter.ToInt16(b, i * 2) / 32768.0; sum += s * s; }
+        return n == 0 ? 0 : Math.Sqrt(sum / n);
+    }
+
+    [Fact]
+    public async Task Export_applies_clip_volume_and_mute_to_the_audio()
+    {
+        if (!FfmpegAvailable()) return;
+        var tone = await MakeClip("tone.mp4", 640, 360, 6, "red", audio: true);
+        var m = await MediaProbe.ProbeAsync(tone);
+
+        // Three 2 s clips of the same tone: 100%, muted, 50%.
+        var p = new Project();
+        p.Media.Add(m);
+        TimelineOps.Append(p, m);
+        TimelineOps.SplitAt(p, TimeSpan.FromSeconds(2));
+        TimelineOps.SplitAt(p, TimeSpan.FromSeconds(4));
+        TimelineOps.SetClipMuted(p, p.Timeline[1].Id, true);
+        TimelineOps.SetClipVolume(p, p.Timeline[2].Id, 0.5);
+
+        var output = Path.Combine(_dir, "volume-out.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output).RunAsync();
+
+        // Measure the middle of each clip, away from AAC edge effects at the cuts.
+        var loud = await Rms(output, 0.5, 1.5);
+        var silent = await Rms(output, 2.5, 3.5);
+        var half = await Rms(output, 4.5, 5.5);
+        Assert.True(loud > 0.05, $"100% clip should be audible (rms {loud:0.000})");
+        Assert.True(silent < loud * 0.01, $"muted clip should be silent (rms {silent:0.0000} vs {loud:0.000})");
+        Assert.InRange(half / loud, 0.45, 0.55);
+    }
+
+    async Task<string> MakeTone(string name, double seconds, int hz = 440)
+    {
+        var path = Path.Combine(_dir, name);
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", $"sine=frequency={hz}:duration={FfmpegRunner.Num(seconds)}", path,
+        });
+        return path;
+    }
+
+    [Theory]
+    [InlineData("song.mp3")]
+    [InlineData("voice.wav")]
+    [InlineData("music.m4a")]
+    public async Task Audio_files_import_as_audio_only_with_a_waveform(string name)
+    {
+        if (!FfmpegAvailable()) return;
+        var path = await MakeTone(name, 3);
+        var lib = new MediaLibrary(Path.Combine(_dir, "cache"));
+        var m = await lib.ProbeAsync(path);
+        Assert.True(m.IsAudioOnly);
+        Assert.True(m.HasAudio);
+        Assert.False(m.IsStill);
+        Assert.InRange(m.Duration.TotalSeconds, 2.9, 3.2);
+
+        await lib.EnsureProxyAsync(m);
+        var st = lib.GetState(m.Id);
+        Assert.Equal(ProxyStatus.Ready, st.Status);
+        Assert.Equal(m.OriginalPath, st.ProxyPath); // played as-is, no proxy transcode
+        Assert.True(File.Exists(st.ThumbnailPath), "waveform image");
+    }
+
+    [Fact]
+    public async Task Export_mixes_the_audio_track_over_clip_audio_at_its_timeline_time()
+    {
+        if (!FfmpegAvailable()) return;
+        var silent = await MakeClip("silent.mp4", 640, 360, 4, "gray", audio: false);
+        var tone = await MakeTone("music.mp3", 10);
+
+        var p = new Project();
+        var mVideo = await MediaProbe.ProbeAsync(silent);
+        var mTone = await MediaProbe.ProbeAsync(tone);
+        p.Media.AddRange(new[] { mVideo, mTone });
+        TimelineOps.Append(p, mVideo);
+        TimelineOps.AddAudio(p, mTone, TimeSpan.FromSeconds(2)); // 10 s of music from 0:02, video ends at 0:04
+
+        var output = Path.Combine(_dir, "mixed.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output).RunAsync();
+
+        var info = await MediaProbe.ProbeAsync(output);
+        Assert.InRange(info.Duration.TotalSeconds, 3.9, 4.15); // music is cut at the video's end
+        var before = await Rms(output, 0.5, 1.5);
+        var during = await Rms(output, 2.5, 3.5);
+        var source = await Rms(tone, 0.5, 1.5); // the music file itself, measured the same way
+        Assert.True(before < 0.001, $"silent before the music starts (rms {before:0.0000})");
+        Assert.InRange(during / source, 0.9, 1.1); // full level, not scaled down by the mix
+    }
+
     [Fact]
     public async Task Export_holds_a_still_for_its_clip_length_after_video()
     {
