@@ -26,9 +26,13 @@ public sealed class Project
     /// <summary>Arrows, boxes and text. Each is anchored to a clip.</summary>
     public List<Annotation> Annotations { get; set; } = new();
 
+    /// <summary>Chapter markers (for YouTube timestamps). Each is anchored to a clip, like annotations.</summary>
+    public List<Marker> Markers { get; set; } = new();
+
     public SourceMedia? FindMedia(Guid id) => Media.FirstOrDefault(m => m.Id == id);
     public Clip? FindClip(Guid id) => Timeline.FirstOrDefault(c => c.Id == id);
     public Annotation? FindAnnotation(Guid id) => Annotations.FirstOrDefault(a => a.Id == id);
+    public Marker? FindMarker(Guid id) => Markers.FirstOrDefault(m => m.Id == id);
 }
 
 /// <summary>An imported file plus the facts ffprobe told us about it.</summary>
@@ -69,4 +73,16 @@ public sealed class Clip
     public TimeSpan Out { get; set; }
 
     [JsonIgnore] public TimeSpan Duration => Out - In;
+}
+
+/// <summary>
+/// A named chapter point. Anchored to a clip in SOURCE time (like annotations), so it stays on the
+/// same moment of footage when clips are trimmed or reordered.
+/// </summary>
+public sealed class Marker
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ClipId { get; set; }
+    public TimeSpan SourceTime { get; set; }
+    public string Title { get; set; } = "";
 }

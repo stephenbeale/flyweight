@@ -105,3 +105,15 @@ freeze frames no longer hide in `%LocalAppData%`, so they travel with the footag
 else that video ("Holiday - edit.mp4", "Holiday frame 1m23s.png", "Holiday freeze 0m12s.png"); exports never
 overwrite ("name (2).png").
 
+### D20. Chapter markers → YouTube timestamps (clipboard and .txt)
+Owner request. **M** (or toolbar "Marker", or right-click the preview) adds a named chapter marker at the playhead.
+Markers are flags on the timeline ruler: click to jump, drag to move, double-click to rename, Del to delete. Like
+annotations (D6) they are anchored to a clip in **source time** (`Marker.ClipId` + `SourceTime`), so they follow
+their footage through reorder/trim/split and disappear with a deleted clip.
+`YouTubeChapters.Build` produces description-ready lines ("0:00 Intro", "1:23 Setup"; h:mm:ss for videos of an
+hour or more), floored to whole seconds. YouTube only shows chapters if the first is at 0:00, there are at least 3,
+and each is at least 10 s, so we **add a 0:00 "Intro" if missing and warn** about the rest rather than silently
+changing the user's chapters. Output: **Ctrl+Shift+C** copies straight to the clipboard; "YouTube chapters…" shows
+the list with the rule check, Copy and Save .txt (default next to the largest video, "<name> chapters.txt"); and a
+video export with markers also writes "<video name> chapters.txt" beside the MP4.
+

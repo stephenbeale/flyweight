@@ -95,6 +95,20 @@ public sealed class ExportForm : Form
 
             _progress.Value = 1000;
             _status.Text = $"Done in {sw.Elapsed:m\\:ss}.";
+            // Chapter markers → a ready-to-paste YouTube chapters file beside the video (D20).
+            if (_project.Markers.Count > 0)
+            {
+                var chapters = YouTubeChapters.Build(_project);
+                if (chapters.Text.Length > 0)
+                {
+                    try
+                    {
+                        File.WriteAllText(YouTubeChapters.TextPathBesideVideo(output), chapters.Text + Environment.NewLine);
+                        _status.Text += " Chapters saved beside it" + (chapters.YouTubeWillShowChapters ? "." : " (check the warnings in YouTube chapters…).");
+                    }
+                    catch { /* the video is what matters; chapters can be re-saved from the toolbar */ }
+                }
+            }
             if (MessageBox.Show(this, $"Exported to\n{output}\n\nShow it in Explorer?", "Export complete",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                 Process.Start("explorer.exe", $"/select,\"{output}\"");

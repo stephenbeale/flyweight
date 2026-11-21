@@ -84,6 +84,8 @@ public static class TimelineOps
                 p.Annotations.Add(copy);
             }
         }
+        foreach (var m in p.Markers.Where(m => m.ClipId == left.Id && m.SourceTime >= cut))
+            m.ClipId = right.Id;
         return right;
     }
 
@@ -118,6 +120,7 @@ public static class TimelineOps
     {
         p.Timeline.RemoveAll(c => c.Id == clipId);
         p.Annotations.RemoveAll(a => a.ClipId == clipId);
+        p.Markers.RemoveAll(m => m.ClipId == clipId);
     }
 
     public static void Move(Project p, Guid clipId, int newIndex)

@@ -40,6 +40,8 @@ _Last updated: 2026-11-19_
 - [ ] Export frame (Ctrl+Shift+E / right-click preview): PNG lands next to the largest video, includes annotations,
       appears highlighted in Media; dragging it to the timeline works (D18)
 - [ ] Export dialog and freeze frames default to the largest video's folder (D18)
+- [ ] Chapters (D20): M adds a named marker flag; drag/double-click/Del work; Ctrl+Shift+C pastes "0:00 Intro…" into
+      Notepad; "YouTube chapters…" shows the rule check; video export writes "<name> chapters.txt" beside the MP4
 
 ### First Windows run: status (2026-11-19, branch `fix/first-windows-run`)
 - Launch and video import passed. **Not yet tested:** playback (step 2, highest risk), timeline edits, annotations,
@@ -67,7 +69,7 @@ _Last updated: 2026-11-19_
 ## v0.2 candidates (owner to prioritise)
 - Annotation fade in/out
 - Blur/redact box; numbered callouts; freehand pen
-- **Chapter markers** → copy YouTube description timestamps (`0:00 Intro…`)
+- ~~**Chapter markers** → YouTube description timestamps~~ ✅ (D20): M to add, Ctrl+Shift+C to copy, .txt beside exports
 - Thumbnail export (current frame + annotations at 1280×720)
 - Audio: background music track, clip volume, fades
 - Blurred-background fill for portrait clips

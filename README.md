@@ -39,17 +39,33 @@ dotnet test     # core tests; the ffmpeg integration tests run if ffmpeg is on P
 full-quality PNG at your project's output size, with annotations, next to your main footage, and adds it to the
 Media bin straight away. Video exports and freeze frames default to that same folder.
 
+## YouTube chapters
+
+Press **M** at the start of each section to drop a named chapter marker. **Ctrl+Shift+C** copies the chapters as
+YouTube timestamps, ready to paste into your video description:
+
+```
+0:00 Intro
+1:23 Setup
+12:05 Results
+```
+
+**YouTube chapters…** checks YouTube's rules (starts at 0:00, at least 3 chapters, each 10 s or longer) and can save
+a `.txt`. Exporting a video with markers also saves `<video name> chapters.txt` beside it.
+
 ## Keyboard
 
 | Key | Action | Key | Action |
 |---|---|---|---|
 | Space | Play / pause | S | Split at playhead |
-| ← / → | Previous / next frame | Del | Delete selected clip or annotation |
+| ← / → | Previous / next frame | Del | Delete selected clip, annotation or marker |
 | Shift+← / → | ∓1 second | V / Esc | Select tool |
 | J / K / L | Back 1s / pause / play | A / R / T | Arrow / box / text tool |
 | Home / End | Start / end | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Ctrl+wheel | Zoom timeline | Ctrl+0 | Zoom to fit |
 | Ctrl+I / O / S / E | Import / open / save / export | Enter (in text) | Finish editing (Shift+Enter = new line) |
+| F | Freeze frame | Ctrl+Shift+E | Export current frame as PNG |
+| M | Add chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
 
 ## How it works
 

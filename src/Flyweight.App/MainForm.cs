@@ -112,6 +112,9 @@ public sealed class MainForm : Form
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
             new ToolStripSeparator(),
+            Btn("Marker", "Add a chapter marker at the playhead (M)", AddMarker),
+            Btn("YouTube chapters…", "Chapter timestamps for your YouTube description: copy or save as .txt (Ctrl+Shift+C copies)", ShowChapters),
+            new ToolStripSeparator(),
             Btn("Export frame", "Save the current frame as a PNG next to your footage, and add it to Media (Ctrl+Shift+E)", () => _ = ExportFrameAsync(chooseLocation: false)),
             Btn("Export for YouTube…", "Export MP4 (Ctrl+E)", Export),
         });
@@ -121,6 +124,7 @@ public sealed class MainForm : Form
         previewMenu.Items.Add("Export this frame as image", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false));
         previewMenu.Items.Add("Export this frame as image…  (choose location)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
         previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
+        previewMenu.Items.Add("Add chapter marker here (M)", null, (_, _) => AddMarker());
         previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
         _preview.ContextMenuStrip = previewMenu;
 
@@ -196,6 +200,8 @@ public sealed class MainForm : Form
         _timeline.SeekRequested += (_, t) => { _engine.Pause(); _engine.Seek(t); };
         _timeline.AnnotationSelected += (_, _) => _preview.Select(_timeline.SelectedAnnotationId);
         _timeline.ClipSelected += (_, _) => { if (_timeline.SelectedClipId is not null) _preview.Select(null); };
+        _timeline.MarkerSelected += (_, _) => { if (_timeline.SelectedMarkerId is not null) _preview.Select(null); };
+        _timeline.MarkerRenameRequested += (_, id) => RenameMarker(id);
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
@@ -274,6 +280,8 @@ public sealed class MainForm : Form
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
+            case Keys.M: AddMarker(); return true;
+            case Keys.Control | Keys.Shift | Keys.C: CopyChapters(); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
             case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
             case Keys.V: case Keys.Escape: _preview.Tool = Tool.Select; return true;
@@ -338,8 +346,55 @@ public sealed class MainForm : Form
         UpdateStatus();
     }
 
+    // ---------------- Chapter markers → YouTube timestamps (D20) ----------------
+
+    void AddMarker()
+    {
+        _engine.Pause();
+        var at = _engine.Position;
+        if (TimelineOps.Locate(_session.Project, at) is null) { _statusText.Text = "Move the playhead onto a clip first, then press M."; return; }
+        using var dlg = new ChapterTitleForm(MarkerOps.NextDefaultTitle(_session.Project), "Add chapter marker");
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        Marker? added = null;
+        _session.Execute(p => added = MarkerOps.Add(p, at, dlg.ChapterTitle));
+        if (added is not null) { _timeline.SelectedMarkerId = added.Id; _timeline.Invalidate(); }
+        _statusText.Text = $"Chapter \"{added?.Title}\" added. Ctrl+Shift+C copies all chapters for YouTube.";
+    }
+
+    void RenameMarker(Guid id)
+    {
+        if (_session.Project.FindMarker(id) is not { } m) return;
+        using var dlg = new ChapterTitleForm(m.Title, "Rename chapter");
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ChapterTitle.Length == 0) return;
+        _session.Execute(p => { if (p.FindMarker(id) is { } mm) mm.Title = dlg.ChapterTitle; });
+    }
+
+    void ShowChapters()
+    {
+        _engine.Pause();
+        using var dlg = new ChaptersForm(_session.Project, _session.FilePath);
+        dlg.ShowDialog(this);
+    }
+
+    /// <summary>One keystroke: chapters straight onto the clipboard, with a heads-up if YouTube would ignore them.</summary>
+    void CopyChapters()
+    {
+        var chapters = YouTubeChapters.Build(_session.Project);
+        if (chapters.Text.Length == 0) { _statusText.Text = chapters.Warnings[0]; return; }
+        Clipboard.SetText(chapters.Text);
+        _statusText.Text = chapters.YouTubeWillShowChapters
+            ? $"Copied {chapters.Chapters.Count} chapters. Paste them into your YouTube description."
+            : $"Copied, but YouTube won't show them yet: {chapters.Warnings[0]}";
+    }
+
     void DeleteSelection()
     {
+        if (_timeline.SelectedMarkerId is { } mid)
+        {
+            _session.Execute(p => p.Markers.RemoveAll(m => m.Id == mid));
+            _timeline.SelectedMarkerId = null;
+            return;
+        }
         if (_preview.SelectedAnnotationId is { } aid)
         {
             _session.Execute(p => p.Annotations.RemoveAll(a => a.Id == aid));
@@ -352,7 +407,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            _statusText.Text = "Click a clip or annotation first, then press Delete.";
+            _statusText.Text = "Click a clip, annotation or chapter marker first, then press Delete.";
         }
     }
 
