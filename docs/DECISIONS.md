@@ -157,3 +157,9 @@ which audibly repeated music. Now `Play` starts a stopwatch clock and `Tick` set
 follows: at a cut it loads at the clock's time, and `KeepVideoInStep` seeks it forward once it is more than 250 ms
 off (proxies are all-intra, so this is cheap). Adjacent halves of a split still play without a reload. The preview
 now takes exactly as long as the export.
+
+### D19. Name stays "Flyweight"
+Owner considered Bantam, Feather and Jet (2026-11-21) and chose to keep Flyweight: the name, tagline ("punches above
+its weight") and glove icon tell one story. Bantam was the only real alternative (also a boxing weight, funnier);
+Feather is crowded, and Jet loses the boxing link. Don't reopen unless the owner raises it.
+
