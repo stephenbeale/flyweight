@@ -32,10 +32,17 @@ public sealed class Project
     /// </summary>
     public List<AudioItem> AudioTrack { get; set; } = new();
 
+    /// <summary>Chapter markers (for YouTube timestamps). Each is anchored to a clip, like annotations.</summary>
+    public List<Marker> Markers { get; set; } = new();
+
+    /// <summary>Title, description and tags for YouTube Studio. Older project files load empty.</summary>
+    public Export.YouTubeDetails YouTube { get; set; } = new();
+
     public SourceMedia? FindMedia(Guid id) => Media.FirstOrDefault(m => m.Id == id);
     public Clip? FindClip(Guid id) => Timeline.FirstOrDefault(c => c.Id == id);
     public AudioItem? FindAudio(Guid id) => AudioTrack.FirstOrDefault(a => a.Id == id);
     public Annotation? FindAnnotation(Guid id) => Annotations.FirstOrDefault(a => a.Id == id);
+    public Marker? FindMarker(Guid id) => Markers.FirstOrDefault(m => m.Id == id);
 }
 
 /// <summary>An imported file plus the facts ffprobe told us about it.</summary>
@@ -138,6 +145,9 @@ public sealed class Clip
 
     double SafeSpeed => double.IsFinite(Speed) && Speed > 0 ? Speed : 1;
 
+    /// <summary>A copy with the same footage and settings (same Id: callers give it a new one).</summary>
+    public Clip Clone() => (Clip)MemberwiseClone();
+
     /// <summary>The gain actually applied (0 when muted).</summary>
     [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
 }
@@ -168,4 +178,16 @@ public sealed class AudioItem
     [JsonIgnore] public TimeSpan Duration => Out - In;
     [JsonIgnore] public TimeSpan End => Start + Duration;
     [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
+}
+
+/// <summary>
+/// A named chapter point. Anchored to a clip in SOURCE time (like annotations), so it stays on the
+/// same moment of footage when clips are trimmed or reordered.
+/// </summary>
+public sealed class Marker
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ClipId { get; set; }
+    public TimeSpan SourceTime { get; set; }
+    public string Title { get; set; } = "";
 }

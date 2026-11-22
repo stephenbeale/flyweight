@@ -33,17 +33,35 @@ YouTube-ready MP4, without the lag and crashes of heavyweight editors.
 dotnet test     # core tests; the ffmpeg integration tests run if ffmpeg is on PATH
 ```
 
+## YouTube chapters and details
+
+Press **C** at the start of each section to drop a named chapter marker (flags on the timeline ruler: drag to move,
+double-click to rename, Del to delete). **Ctrl+Shift+C** copies the chapters as YouTube timestamps:
+
+```
+0:00 Intro
+1:23 Setup
+12:05 Results
+```
+
+**Chapters…** checks YouTube's rules (starts at 0:00, at least 3 chapters, each 10 s or longer) and can save a `.txt`.
+**Export for YouTube…** also has Title / Description / Tags boxes (remembered in the project) and saves
+`<video name> - YouTube.txt` beside the video, with the chapters added under the description, ready to paste into
+YouTube Studio.
+
 ## Keyboard
 
 | Key | Action | Key | Action |
 |---|---|---|---|
 | Space | Play / pause | S | Split at playhead |
-| ← / → | Previous / next frame | Del | Delete selected clip or annotation |
+| ← / → | Previous / next frame | Del | Delete selected clip, annotation or marker |
 | Shift+← / → | ∓1 second | V / Esc | Select tool |
 | J / K / L | Back 1s / pause / play | A / R / T | Arrow / box / text tool |
 | Home / End | Start / end | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Ctrl+wheel | Zoom timeline | Ctrl+0 | Zoom to fit |
 | Ctrl+I / O / S / E | Import / open / save / export | Enter (in text) | Finish editing (Shift+Enter = new line) |
+| F | Freeze frame | Ctrl+Shift+E | Export current frame as PNG |
+| M | Add chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
 
 ## How it works
 

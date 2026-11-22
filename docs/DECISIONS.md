@@ -242,3 +242,18 @@ Trim drags convert the mouse's timeline delta with `SourceSpan`. Audio-track ite
 - **Look.** `Controls/Theme` has the colours, rounded shapes, a dark `ToolRenderer` (also used for all menus via
   `ToolStripManager`) and `RoundButton`. Toolbar buttons only highlight while the pointer is really over them: after a
   click or a dialog WinForms leaves them "Selected" and doesn't repaint.
+
+### D31. Chapter markers and the YouTube details file
+Brought in from the unmerged `feature/youtube-chapters` branch (21 Nov; its separate "export frame" feature was left
+out). **C** (M is now mute), toolbar "Chapter", or right-click the preview adds a named marker at the playhead. Markers
+are flags on the ruler: click to jump, drag to move, double-click to rename, Del to delete. Like annotations they are
+anchored to a clip in **source time** (`Marker.ClipId` + `SourceTime`), so they follow their footage through reorder,
+trim, split and speed changes (`MarkerOps.TimelineTime` uses `Clip.TimelineOffset`), and go with a deleted clip.
+`YouTubeChapters.Build` makes "0:00 Intro / 1:23 Setup" lines (h:mm:ss for an hour or more, floored to whole seconds),
+adds a 0:00 "Intro" if missing, and warns (rather than silently fixing) when YouTube's rules aren't met: at least 3
+chapters, each at least 10 s. Ctrl+Shift+C copies them; "Chapters…" shows the check, Copy and Save .txt.
+**One file per export:** `Project.YouTube` (`YouTubeDetails`: Title, Description without chapters, Tags,
+SaveTextFile) is edited in the export dialog, stored through the session (one undo step, only if changed), and
+written as `<video> - YouTube.txt` (`YouTubeText`): TITLE / DESCRIPTION (with the marker chapters appended) / TAGS,
+plus a "check before uploading" list (title 100, description 5000, tags 500 characters, no < >, chapter warnings).
+Open YouTube Studio also opens this file.

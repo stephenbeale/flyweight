@@ -6,3 +6,4 @@ obj/
 TestResults/
 src/Flyweight.App/ffmpeg/*.exe
 *.flyweight.tmp
+artifacts/

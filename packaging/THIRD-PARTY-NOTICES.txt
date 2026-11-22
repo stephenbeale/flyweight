@@ -1,0 +1,40 @@
+THIRD-PARTY SOFTWARE INCLUDED WITH FLYWEIGHT
+============================================
+
+Flyweight itself is released under the MIT License (LICENSE.txt). This download also contains
+the following separate programs and libraries, each under its own licence.
+
+------------------------------------------------------------------------------------------
+FFmpeg (ffmpeg\ffmpeg.exe, ffmpeg\ffprobe.exe)
+------------------------------------------------------------------------------------------
+Version:  {FFMPEG_VERSION}
+Licence:  GNU General Public License v3 (full text: ffmpeg\LICENSE.txt)
+Source:   {FFMPEG_SOURCE}
+          Build details: ffmpeg\README.txt (build from https://www.gyan.dev/ffmpeg/builds/)
+
+FFmpeg is a separate program. Flyweight runs it as an external process; it is not linked into
+Flyweight. You may replace these two files with any other ffmpeg build.
+
+------------------------------------------------------------------------------------------
+LibVLC (libvlc.dll, libvlccore.dll and the plugins folder)
+------------------------------------------------------------------------------------------
+Package:  VideoLAN.LibVLC.Windows {LIBVLC_VERSION}
+Licence:  GNU Lesser General Public License v2.1 or later
+          https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+Source:   https://code.videolan.org/videolan/vlc (tag {LIBVLC_VERSION})
+
+------------------------------------------------------------------------------------------
+LibVLCSharp (LibVLCSharp.dll)
+------------------------------------------------------------------------------------------
+Package:  LibVLCSharp {LIBVLCSHARP_VERSION}
+Licence:  GNU Lesser General Public License v2.1 or later
+Source:   https://code.videolan.org/videolan/LibVLCSharp
+
+LibVLC and LibVLCSharp are used as unmodified, dynamically loaded libraries and can be
+replaced with other compatible versions.
+
+------------------------------------------------------------------------------------------
+.NET runtime
+------------------------------------------------------------------------------------------
+Licence:  MIT License, (c) .NET Foundation and Contributors
+Source:   https://github.com/dotnet/runtime

@@ -2,6 +2,7 @@ using Flyweight.App.Controls;
 using Flyweight.App.Forms;
 using Flyweight.App.Playback;
 using Flyweight.Core.Editing;
+using Flyweight.Core.Export;
 using Flyweight.Core.Media;
 using Flyweight.Core.Model;
 
@@ -129,8 +130,18 @@ public sealed class MainForm : Form
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
             new ToolStripSeparator(),
+            Btn("Chapter", "Add a chapter marker at the playhead (C): they become the 0:00 timestamps in your YouTube description", AddMarker),
+            Btn("Chapters…", "See, copy or save your YouTube chapter timestamps (Ctrl+Shift+C copies)", ShowChapters),
+            new ToolStripSeparator(),
             Btn("Export for YouTube…", "Export MP4 (Ctrl+E)", Export),
         });
+
+        // Right-click on the preview: freeze this frame, or drop a chapter marker here.
+        var previewMenu = new ContextMenuStrip();
+        previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
+        previewMenu.Items.Add("Add chapter marker here (C)", null, (_, _) => AddMarker());
+        previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
+        _preview.ContextMenuStrip = previewMenu;
 
         // Transport bar under the preview
         var transport = new Panel { Dock = DockStyle.Bottom, Height = 42, BackColor = Theme.Bar, Padding = new Padding(8, 4, 8, 4) };
@@ -226,6 +237,8 @@ public sealed class MainForm : Form
             if (_timeline.SelectedClipId is not null) _preview.Select(null);
             UpdatePropertyGrid();
         };
+        _timeline.MarkerSelected += (_, _) => { if (_timeline.SelectedMarkerId is not null) _preview.Select(null); UpdatePropertyGrid(); };
+        _timeline.MarkerRenameRequested += (_, id) => RenameMarker(id);
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
@@ -406,6 +419,8 @@ public sealed class MainForm : Form
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
+            case Keys.C: AddMarker(); return true; // C = chapter (M is mute)
+            case Keys.Control | Keys.Shift | Keys.C: CopyChapters(); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
             // Ctrl+M too: Windows turns it into Enter, which in the media bin re-added the selected file.
             case Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
@@ -417,6 +432,8 @@ public sealed class MainForm : Form
             case Keys.Control | Keys.Z: _session.Undo(); return true;
             case Keys.Control | Keys.Y: case Keys.Control | Keys.Shift | Keys.Z: _session.Redo(); return true;
             case Keys.Control | Keys.S: SaveProject(false); return true;
+            case Keys.Control | Keys.C: CopyClips(); return true;
+            case Keys.Control | Keys.V: PasteClips(); return true;
             case Keys.Control | Keys.A:
                 _preview.Select(null);
                 _timeline.SelectAllClips(TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id);
@@ -457,6 +474,36 @@ public sealed class MainForm : Form
     }
 
     /// <summary>The selected clip, else the clip under the playhead.</summary>
+    // ---------------- Copy / paste clips ----------------
+
+    TimelineOps.ClipCopy? _clipCopy;
+
+    /// <summary>Ctrl+C: copy the selected clip(s), or the clip under the playhead, with their annotations.</summary>
+    void CopyClips()
+    {
+        var ids = SelectedClips();
+        if (ids.Count == 0 && CurrentClipId() is { } one) ids.Add(one);
+        if (TimelineOps.CopyClips(_session.Project, ids) is not { } copy) { _statusText.Text = "Click a clip first, then press Ctrl+C."; return; }
+        _clipCopy = copy;
+        _statusText.Text = $"Copied {(copy.Clips.Count == 1 ? "1 clip" : $"{copy.Clips.Count} clips")}. Ctrl+V pastes after the current clip.";
+    }
+
+    /// <summary>Ctrl+V: insert the copied clip(s) right after the current clip (one undo step), select them and jump there.</summary>
+    void PasteClips()
+    {
+        if (_clipCopy is not { } copy) { _statusText.Text = "Copy a clip first (Ctrl+C), then paste with Ctrl+V."; return; }
+        _engine.Pause();
+        var p = _session.Project;
+        int index = CurrentClipId() is { } anchor ? p.Timeline.FindIndex(c => c.Id == anchor) + 1 : p.Timeline.Count;
+        List<Core.Model.Clip> pasted = new();
+        _session.Execute(proj => pasted = TimelineOps.PasteClips(proj, copy, index));
+        if (pasted.Count == 0) { _statusText.Text = "Nothing pasted: the copied clip's file was removed from the project."; return; }
+        _timeline.SelectClips(pasted.Select(c => c.Id));
+        _engine.Seek(TimelineOps.ClipStart(_session.Project, pasted[0].Id));
+        UpdatePropertyGrid();
+        _statusText.Text = $"Pasted {(pasted.Count == 1 ? "1 clip" : $"{pasted.Count} clips")} (Ctrl+Z to undo)";
+    }
+
     Guid? CurrentClipId() =>
         _timeline.SelectedClipId is { } id && _session.Project.FindClip(id) is not null ? id
         : TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id;
@@ -502,6 +549,8 @@ public sealed class MainForm : Form
         menu.Items.Add(after);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Split at playhead (S)", null, (_, _) => Split());
+        menu.Items.Add(new ToolStripMenuItem("Copy (Ctrl+C)", null, (_, _) => CopyClips()));
+        menu.Items.Add(new ToolStripMenuItem("Paste after this clip (Ctrl+V)", null, (_, _) => PasteClips()) { Enabled = _clipCopy is not null });
         menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
         menu.Items.Add(new ToolStripSeparator());
         var clip = _session.Project.FindClip(clipId);
@@ -647,11 +696,58 @@ public sealed class MainForm : Form
         _statusText.Text = $"Removed {m.DisplayName} from the project";
     }
 
+    // ---------------- Chapter markers → YouTube timestamps (D31) ----------------
+
+    void AddMarker()
+    {
+        _engine.Pause();
+        var at = _engine.Position;
+        if (TimelineOps.Locate(_session.Project, at) is null) { _statusText.Text = "Move the playhead onto a clip first, then press C."; return; }
+        using var dlg = new ChapterTitleForm(MarkerOps.NextDefaultTitle(_session.Project), "Add chapter marker");
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        Marker? added = null;
+        _session.Execute(p => added = MarkerOps.Add(p, at, dlg.ChapterTitle));
+        if (added is not null) { _timeline.SelectedMarkerId = added.Id; _timeline.Invalidate(); }
+        _statusText.Text = $"Chapter \"{added?.Title}\" added. Ctrl+Shift+C copies all chapters for YouTube.";
+    }
+
+    void RenameMarker(Guid id)
+    {
+        if (_session.Project.FindMarker(id) is not { } m) return;
+        using var dlg = new ChapterTitleForm(m.Title, "Rename chapter");
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ChapterTitle.Length == 0) return;
+        _session.Execute(p => { if (p.FindMarker(id) is { } mm) mm.Title = dlg.ChapterTitle; });
+    }
+
+    void ShowChapters()
+    {
+        _engine.Pause();
+        using var dlg = new ChaptersForm(_session.Project, _session.FilePath);
+        dlg.ShowDialog(this);
+    }
+
+    /// <summary>One keystroke: chapters straight onto the clipboard, with a heads-up if YouTube would ignore them.</summary>
+    void CopyChapters()
+    {
+        var chapters = YouTubeChapters.Build(_session.Project);
+        if (chapters.Text.Length == 0) { _statusText.Text = chapters.Warnings[0]; return; }
+        Clipboard.SetText(chapters.Text);
+        _statusText.Text = chapters.YouTubeWillShowChapters
+            ? $"Copied {chapters.Chapters.Count} chapters. Paste them into your YouTube description."
+            : $"Copied, but YouTube won't show them yet: {chapters.Warnings[0]}";
+    }
+
     void DeleteSelection()
     {
         if (_bin.ListFocused && _bin.SelectedMediaId is not null)
         {
             _bin.RequestRemoveSelected();
+            return;
+        }
+        if (_timeline.SelectedMarkerId is { } mid)
+        {
+            _session.Execute(p => p.Markers.RemoveAll(m => m.Id == mid));
+            _timeline.SelectedMarkerId = null;
             return;
         }
         if (_preview.SelectedAnnotationId is { } aid)
@@ -674,7 +770,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            _statusText.Text = "Click a clip, audio item or annotation first, then press Delete.";
+            _statusText.Text = "Click a clip, audio item, annotation or chapter marker first, then press Delete.";
         }
     }
 
@@ -730,7 +826,13 @@ public sealed class MainForm : Form
         _preview.CommitTextEdit();
         if (_session.Project.Timeline.Count == 0) { MessageBox.Show(this, "Add some clips to the timeline first.", "Export"); return; }
         var suggested = _session.FilePath is { } fp ? Path.ChangeExtension(fp, ".mp4") : null;
-        using var dlg = new ExportForm(_session.Project, suggested);
+        using var dlg = new ExportForm(_session.Project, suggested, details =>
+        {
+            // Remember the YouTube details in the project (one undo step), only if they changed.
+            var old = _session.Project.YouTube;
+            if (old.Title == details.Title && old.Description == details.Description && old.Tags == details.Tags && old.SaveTextFile == details.SaveTextFile) return;
+            _session.Execute(p => p.YouTube = details.Clone());
+        });
         dlg.ShowDialog(this);
     }
 
