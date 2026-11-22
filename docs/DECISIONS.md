@@ -272,3 +272,8 @@ Open YouTube Studio also opens this file.
 - **Two windows.** The session lock holds the owning process id. A second Flyweight sees a live owner and neither
   offers to "recover" the first window's work, autosaves, nor deletes the lock and autosave when it closes. Previously
   it did all three. Opening a project via the command line or file association now takes the lock too.
+- **Stable download link.** Each release also carries `Flyweight-Setup.exe` and `Flyweight-win-x64.zip` (version-free
+  copies made by the packaging script), and is published as a normal release, not a pre-release, because GitHub's
+  `/releases/latest/` skips pre-releases. So this link always gets the newest installer:
+  https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe. "Preview" stays in the
+  title, version and README.
