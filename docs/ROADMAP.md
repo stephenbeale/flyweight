@@ -123,6 +123,8 @@ hurts search. They want something that says lean / light / fast / nimble.
 - [x] Export progress bar moves and Cancel stops cleanly (no half-written file)
 - **Smoke test complete (2026-11-19).** Next: `feature/audio`, then clip speed (see v0.2 "NEXT").
 - [x] Export 1080p: output plays, and annotations match the preview (owner, 2026-11-19, build 20:46)
+- [ ] Chapters (D31): C adds a named marker flag; drag, double-click and Del work; Ctrl+Shift+C pastes "0:00 Intro…";
+      export writes "<name> - YouTube.txt" (title, description + chapters, tags) beside the MP4
 
 ### First Windows run: historical note (2026-11-19, PR #3 `fix/first-windows-run`, merged as `da4cf87`)
 - The first Windows run and full smoke test were done on 2026-11-19 and the fixes merged to `main`. CI was green
@@ -158,7 +160,7 @@ hurts search. They want something that says lean / light / fast / nimble.
 ## v0.2 candidates (owner to prioritise)
 - Annotation fade in/out
 - Blur/redact box; numbered callouts; freehand pen
-- **Chapter markers** → copy YouTube description timestamps (`0:00 Intro…`)
+- ~~**Chapter markers** → YouTube description timestamps~~ ✅ (D20): M to add, Ctrl+Shift+C to copy, .txt beside exports
 - Thumbnail export (current frame + annotations at 1280×720)
 - **NEXT after the smoke test (owner's order, 2026-11-19):**
   1. `feature/audio`:

@@ -33,7 +33,8 @@ public sealed class TimelineControl : Control
     double _pps = 40;       // pixels per second
     float _scrollX;         // pixels
 
-    enum Drag { None, Scrub, ClipBody, TrimIn, TrimOut, AnnoMove, AnnoStart, AnnoEnd, AudioMove, AudioIn, AudioOut }
+    enum Drag { None, Scrub, ClipBody, TrimIn, TrimOut, AnnoMove, AnnoStart, AnnoEnd, AudioMove, AudioIn, AudioOut, Marker }
+    static readonly Color MarkerColor = Color.FromArgb(255, 196, 0);
     Drag _drag;
     int _downX;
     bool _dragMoved;
@@ -77,9 +78,25 @@ public sealed class TimelineControl : Control
         if (all.Count == 0) return;
         SelectedAnnotationId = null;
         SelectedAudioId = null;
+        SelectedMarkerId = null;
         _primaryClip = main is { } m && all.Contains(m) ? m : all[0];
         _selectedClips.Clear();
         _selectedClips.UnionWith(all);
+        ClipSelected?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
+
+    /// <summary>Select exactly these clips (e.g. just pasted); the first becomes the main one.</summary>
+    public void SelectClips(IEnumerable<Guid> ids)
+    {
+        var list = ids.ToList();
+        if (list.Count == 0) return;
+        SelectedAnnotationId = null;
+        SelectedAudioId = null;
+        SelectedMarkerId = null;
+        _primaryClip = list[0];
+        _selectedClips.Clear();
+        _selectedClips.UnionWith(list);
         ClipSelected?.Invoke(this, EventArgs.Empty);
         Invalidate();
     }
@@ -92,6 +109,7 @@ public sealed class TimelineControl : Control
     }
     public Guid? SelectedAnnotationId { get; set; }
     public Guid? SelectedAudioId { get; set; }
+    public Guid? SelectedMarkerId { get; set; }
 
     public event EventHandler<TimeSpan>? SeekRequested;
     public event EventHandler? ClipSelected;
@@ -103,6 +121,11 @@ public sealed class TimelineControl : Control
 
     /// <summary>Right-click on an audio item (already selected): its id and screen position.</summary>
     public event Action<Guid, Point>? AudioMenuRequested;
+
+    public event EventHandler? MarkerSelected;
+
+    /// <summary>Double-click on a marker flag: the form asks for a new title.</summary>
+    public event EventHandler<Guid>? MarkerRenameRequested;
 
     public void Bind(ProjectSession session, MediaLibrary library, Func<TimeSpan> playhead)
     {
@@ -243,11 +266,49 @@ public sealed class TimelineControl : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         foreach (var (a, s, en, lane) in AnnotationBars()) DrawBar(g, a, BarRect(s, en, lane));
 
+        foreach (var (m, t) in MarkerOps.Visible(p)) DrawMarker(g, m, t);
+
         // Playhead
         float px = X(_playhead());
         using (var pen = new Pen(Color.FromArgb(255, 70, 70), 2)) g.DrawLine(pen, px, 0, px, Height);
         using (var b = new SolidBrush(Color.FromArgb(255, 70, 70)))
             g.FillPolygon(b, new[] { new PointF(px - 6, 0), new PointF(px + 6, 0), new PointF(px, 9) });
+    }
+
+    /// <summary>Chapter marker: a flag on the ruler with its title, and a thin line down through the track.</summary>
+    void DrawMarker(Graphics g, Marker m, TimeSpan t)
+    {
+        float x = X(t);
+        if (x < -200 || x > Width + 10) return;
+        bool sel = SelectedMarkerId == m.Id;
+        using (var line = new Pen(Color.FromArgb(sel ? 220 : 120, MarkerColor), sel ? 2 : 1) { DashStyle = DashStyle.Dot })
+            g.DrawLine(line, x, RulerH, x, TrackTop + TrackH);
+        var flag = MarkerFlag(m, t);
+        using (var b = new SolidBrush(sel ? MarkerColor : Color.FromArgb(225, MarkerColor)))
+            g.FillRectangle(b, flag);
+        if (sel)
+            using (var pen = new Pen(Color.White, 1.5f)) g.DrawRectangle(pen, flag.X, flag.Y, flag.Width, flag.Height);
+        TextRenderer.DrawText(g, m.Title, Font, Rectangle.Round(new RectangleF(flag.X + 3, flag.Y, flag.Width - 4, flag.Height)),
+            Color.Black, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+    }
+
+    RectangleF MarkerFlag(Marker m, TimeSpan t)
+    {
+        var width = Math.Min(140, TextRenderer.MeasureText(m.Title, Font).Width + 8);
+        return new RectangleF(X(t), 2, width, RulerH - 6);
+    }
+
+    (Marker Marker, TimeSpan Time)? MarkerAt(Point pt)
+    {
+        if (pt.Y > RulerH) return null;
+        // Topmost (latest drawn) first.
+        foreach (var (m, t) in Enumerable.Reverse(MarkerOps.Visible(_session.Project)))
+        {
+            var r = MarkerFlag(m, t);
+            r.Inflate(3, 2);
+            if (r.Contains(pt)) return (m, t);
+        }
+        return null;
     }
 
     void DrawRuler(Graphics g)
@@ -428,6 +489,17 @@ public sealed class TimelineControl : Control
         _downX = e.X;
         _dragMoved = false;
 
+        // Chapter marker flags on the ruler
+        if (MarkerAt(e.Location) is { } hitMarker)
+        {
+            SelectMarker(hitMarker.Marker.Id);
+            _dragId = hitMarker.Marker.Id;
+            _originA = hitMarker.Time;
+            _drag = Drag.Marker;
+            _session.BeginEdit();
+            return;
+        }
+
         // Annotation bars
         foreach (var (a, s, en, lane) in AnnotationBars())
         {
@@ -481,6 +553,7 @@ public sealed class TimelineControl : Control
         SelectedAudioId = null;
         SelectClip(null);
         SelectAnnotation(null);
+        SelectMarker(null);
         _drag = Drag.Scrub;
         SeekRequested?.Invoke(this, T(e.X));
     }
@@ -533,6 +606,9 @@ public sealed class TimelineControl : Control
             case Drag.AudioOut:
                 _session.Preview(p => TimelineOps.TrimAudioOut(p, id, _originB + dt));
                 break;
+            case Drag.Marker:
+                if (_dragMoved) _session.Preview(p => MarkerOps.MoveTo(p, id, _originA + dt));
+                break;
         }
     }
 
@@ -547,8 +623,9 @@ public sealed class TimelineControl : Control
             if (to != from) _session.Execute(p => TimelineOps.Move(p, id, to));
         }
         else if (_drag is Drag.TrimIn or Drag.TrimOut or Drag.AnnoMove or Drag.AnnoStart or Drag.AnnoEnd
-                 or Drag.AudioMove or Drag.AudioIn or Drag.AudioOut)
+                 or Drag.AudioMove or Drag.AudioIn or Drag.AudioOut or Drag.Marker)
         {
+            if (_drag == Drag.Marker && !_dragMoved) SeekRequested?.Invoke(this, _originA); // click = jump to the chapter
             _session.CommitEdit();
         }
         _drag = Drag.None;
@@ -570,9 +647,16 @@ public sealed class TimelineControl : Control
     readonly ToolTip _tip = new() { InitialDelay = 300, ReshowDelay = 100, AutoPopDelay = 10000 };
     Guid? _tipFor;
 
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        if (_session is not null && MarkerAt(e.Location) is { } hit) MarkerRenameRequested?.Invoke(this, hit.Marker.Id);
+    }
+
     void UpdateCursor(Point pt)
     {
         var p = _session.Project;
+        if (MarkerAt(pt) is not null) { Cursor = Cursors.SizeWE; return; }
         foreach (var (a, s, en, lane) in AnnotationBars())
         {
             var r = BarRect(s, en, lane);
@@ -634,15 +718,23 @@ public sealed class TimelineControl : Control
     void SelectAudio(Guid? id)
     {
         SelectedAudioId = id;
-        if (id is not null) { SelectedClipId = null; SelectedAnnotationId = null; }
+        if (id is not null) { SelectedClipId = null; SelectedAnnotationId = null; SelectedMarkerId = null; }
         AudioSelected?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
+
+    void SelectMarker(Guid? id)
+    {
+        SelectedMarkerId = id;
+        if (id is not null) { SelectedClipId = null; SelectedAnnotationId = null; SelectedAudioId = null; }
+        MarkerSelected?.Invoke(this, EventArgs.Empty);
         Invalidate();
     }
 
     void SelectClip(Guid? id)
     {
         SelectedClipId = id;
-        if (id is not null) { SelectedAnnotationId = null; SelectedAudioId = null; }
+        if (id is not null) { SelectedAnnotationId = null; SelectedAudioId = null; SelectedMarkerId = null; }
         ClipSelected?.Invoke(this, EventArgs.Empty);
         Invalidate();
     }
@@ -653,6 +745,7 @@ public sealed class TimelineControl : Control
         var id = p.Timeline[index].Id;
         SelectedAnnotationId = null;
         SelectedAudioId = null;
+        SelectedMarkerId = null;
         if (range && _primaryClip is { } main && p.Timeline.FindIndex(c => c.Id == main) is var from and >= 0)
         {
             int lo = Math.Min(from, index), hi = Math.Max(from, index);
@@ -676,7 +769,7 @@ public sealed class TimelineControl : Control
     void SelectAnnotation(Guid? id)
     {
         SelectedAnnotationId = id;
-        if (id is not null) { SelectedClipId = null; SelectedAudioId = null; }
+        if (id is not null) { SelectedClipId = null; SelectedAudioId = null; SelectedMarkerId = null; }
         AnnotationSelected?.Invoke(this, EventArgs.Empty);
         Invalidate();
     }

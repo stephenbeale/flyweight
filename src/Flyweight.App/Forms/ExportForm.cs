@@ -19,9 +19,19 @@ public sealed class ExportForm : Form
     readonly Button _cancel = new() { Text = "Close", AutoSize = true };
     CancellationTokenSource? _cts;
 
-    public ExportForm(Project project, string? suggestedPath)
+    // YouTube details (D31): saved with the project and written beside the video as "<name> - YouTube.txt".
+    readonly TextBox _ytTitle = new() { Width = 430 };
+    readonly TextBox _ytDescription = new() { Width = 430, Height = 110, Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true };
+    readonly TextBox _ytTags = new() { Width = 430, PlaceholderText = "comma, separated, tags" };
+    readonly CheckBox _ytSave = new() { Text = "Save these beside the video as a text file, ready to paste into YouTube Studio", AutoSize = true };
+    readonly Label _ytInfo = new() { AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(430, 0) };
+    readonly Action<YouTubeDetails>? _saveDetails;
+
+    /// <param name="saveDetails">Stores edited YouTube details in the project (through the session, so it's undoable and saved).</param>
+    public ExportForm(Project project, string? suggestedPath, Action<YouTubeDetails>? saveDetails = null)
     {
         _project = project;
+        _saveDetails = saveDetails;
         Text = "Export for YouTube";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
@@ -41,13 +51,34 @@ public sealed class ExportForm : Form
         var pathRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         pathRow.Controls.AddRange(new Control[] { _path, _browse });
         layout.Controls.Add(pathRow, 1, 1);
-        layout.Controls.Add(_progress, 0, 2);
+
+        // YouTube details
+        var yt = project.YouTube;
+        _ytTitle.Text = yt.Title.Length > 0 ? yt.Title : Path.GetFileNameWithoutExtension(_path.Text);
+        _ytDescription.Text = yt.Description.Replace("\r\n", "\n").Replace("\n", Environment.NewLine);
+        _ytTags.Text = yt.Tags;
+        _ytSave.Checked = yt.SaveTextFile;
+        var ytHeading = new Label { Text = "YOUTUBE DETAILS", AutoSize = true, ForeColor = Color.DimGray, Font = new Font(Font.FontFamily, 7.5f, FontStyle.Bold), Margin = new Padding(3, 12, 3, 2) };
+        layout.Controls.Add(ytHeading, 0, 2);
+        layout.SetColumnSpan(ytHeading, 2);
+        layout.Controls.Add(new Label { Text = "Title", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        layout.Controls.Add(_ytTitle, 1, 3);
+        layout.Controls.Add(new Label { Text = "Description", AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Top, Margin = new Padding(3, 6, 3, 3) }, 0, 4);
+        layout.Controls.Add(_ytDescription, 1, 4);
+        layout.Controls.Add(new Label { Text = "Tags", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 5);
+        layout.Controls.Add(_ytTags, 1, 5);
+        layout.Controls.Add(_ytInfo, 1, 6);
+        layout.Controls.Add(_ytSave, 1, 7);
+        foreach (var box in new[] { _ytTitle, _ytDescription, _ytTags }) box.TextChanged += (_, _) => UpdateYouTubeInfo();
+        UpdateYouTubeInfo();
+
+        layout.Controls.Add(_progress, 0, 8);
         layout.SetColumnSpan(_progress, 2);
-        layout.Controls.Add(_status, 0, 3);
+        layout.Controls.Add(_status, 0, 9);
         layout.SetColumnSpan(_status, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         buttons.Controls.AddRange(new Control[] { _cancel, _export });
-        layout.Controls.Add(buttons, 0, 4);
+        layout.Controls.Add(buttons, 0, 10);
         layout.SetColumnSpan(buttons, 2);
         Controls.Add(layout);
 
@@ -80,6 +111,8 @@ public sealed class ExportForm : Form
         // or failure never destroys an existing video at that path (it used to overwrite, then delete on cancel).
         var working = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(output))!, Path.GetFileNameWithoutExtension(output) + ".exporting.mp4");
 
+        var details = CurrentDetails();
+        _saveDetails?.Invoke(details); // remembered in the project, even if the export is cancelled
         var settings = new ExportSettings { Resolution = ExportResolutions.All[_resolution.SelectedIndex].Value };
         var (w, h) = settings.Size;
         var temp = Path.Combine(Path.GetTempPath(), "Flyweight-export-" + Guid.NewGuid().ToString("N"));
@@ -108,7 +141,14 @@ public sealed class ExportForm : Form
             _progress.Value = 1000;
             var size = new FileInfo(output).Length / (1024.0 * 1024.0);
             _status.Text = $"Done in {sw.Elapsed:m\\:ss}  ·  {size:0} MB  ·  {plan.UsedEncoder}";
-            ShowDone(output, size, sw.Elapsed, plan.UsedEncoder);
+            // Title, description (+ chapters from the markers) and tags, ready to paste into Studio (D31).
+            string? detailsFile = null;
+            if (details.SaveTextFile)
+            {
+                try { detailsFile = YouTubeText.Save(details, output, _project.Markers.Count > 0 ? YouTubeChapters.Build(_project) : null); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the video is what matters */ }
+            }
+            ShowDone(output, size, sw.Elapsed, plan.UsedEncoder, detailsFile);
         }
         catch (OperationCanceledException)
         {
@@ -174,7 +214,38 @@ public sealed class ExportForm : Form
     /// "Export complete": go straight on to uploading. Open YouTube Studio opens the upload site in the browser and
     /// selects the file in Explorer, ready to drag into Studio's upload box.
     /// </summary>
-    void ShowDone(string output, double sizeMb, TimeSpan took, string encoder)
+    YouTubeDetails CurrentDetails() => new()
+    {
+        Title = _ytTitle.Text.Trim(),
+        Description = _ytDescription.Text.Replace("\r\n", "\n"),
+        Tags = _ytTags.Text.Trim(),
+        SaveTextFile = _ytSave.Checked,
+    };
+
+    /// <summary>Character counts, the chapters that will be added, and anything YouTube would reject.</summary>
+    void UpdateYouTubeInfo()
+    {
+        var d = CurrentDetails();
+        var chapters = _project.Markers.Count > 0 ? YouTubeChapters.Build(_project) : null;
+        var lines = chapters?.Text ?? "";
+        var parts = new List<string>
+        {
+            $"Title {d.Title.Length}/{YouTubeText.MaxTitle}",
+            $"Description {YouTubeText.FullDescription(d, lines).Length}/{YouTubeText.MaxDescription}",
+            $"Tags {YouTubeText.TagsLength(d.Tags)}/{YouTubeText.MaxTags}",
+        };
+        var text = string.Join("  ·  ", parts);
+        text += chapters is { Chapters.Count: > 0 }
+            ? $"\n{chapters.Chapters.Count} chapters from your markers are added below the description" +
+              (chapters.YouTubeWillShowChapters ? "." : $" (YouTube won't show them yet: {chapters.Warnings[0]})")
+            : "\nNo chapters: press C on the timeline to add chapter markers.";
+        var problems = YouTubeText.Problems(d, lines);
+        if (problems.Count > 0) text += "\n⚠ " + string.Join("\n⚠ ", problems);
+        _ytInfo.Text = text;
+        _ytInfo.ForeColor = problems.Count > 0 ? Color.DarkOrange : Color.DimGray;
+    }
+
+    void ShowDone(string output, double sizeMb, TimeSpan took, string encoder, string? detailsFile)
     {
         var studio = new TaskDialogButton("Open YouTube Studio");
         // Show in Explorer leaves this box open, so Open YouTube Studio is still there afterwards.
@@ -189,7 +260,8 @@ public sealed class ExportForm : Form
             Caption = "Export complete",
             Heading = "Your video is ready",
             Text = $"{Path.GetFileName(output)}\n{sizeMb:0} MB · {took:m\\:ss} · {encoder}\n\n" +
-                   "Open YouTube Studio to upload it: the file will be selected in Explorer so you can drag it into Studio.",
+                   "Open YouTube Studio to upload it: the file will be selected in Explorer so you can drag it into Studio" +
+                   (detailsFile is null ? "." : ", and your title, description and tags open in a text file to paste in."),
             Icon = TaskDialogIcon.ShieldSuccessGreenBar,
             Buttons = { studio, explorer, TaskDialogButton.Close },
             DefaultButton = studio,
@@ -200,6 +272,7 @@ public sealed class ExportForm : Form
             if (choice == studio)
             {
                 Process.Start("explorer.exe", $"/select,\"{output}\"");
+                if (detailsFile is not null) Process.Start(new ProcessStartInfo(detailsFile) { UseShellExecute = true }); // title/description to paste
                 Process.Start(new ProcessStartInfo(YouTubeStudioUrl) { UseShellExecute = true }); // default browser
             }
         }

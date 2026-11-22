@@ -120,6 +120,8 @@ public static class TimelineOps
                 p.Annotations.Add(copy);
             }
         }
+        foreach (var m in p.Markers.Where(m => m.ClipId == left.Id && m.SourceTime >= cut))
+            m.ClipId = right.Id;
         return right;
     }
 
@@ -167,6 +169,7 @@ public static class TimelineOps
     {
         p.Timeline.RemoveAll(c => c.Id == clipId);
         p.Annotations.RemoveAll(a => a.ClipId == clipId);
+        p.Markers.RemoveAll(m => m.ClipId == clipId);
     }
 
     /// <summary>
@@ -183,6 +186,56 @@ public static class TimelineOps
     /// <summary>How many timeline clips and audio items use this file (to warn before removing it).</summary>
     public static int UsageCount(Project p, Guid mediaId) =>
         p.Timeline.Count(c => c.SourceId == mediaId) + p.AudioTrack.Count(a => a.SourceId == mediaId);
+
+    // ---------------- Copy / paste clips ----------------
+
+    /// <summary>Copied clips (in timeline order) with their annotations: pure data, independent of the project.</summary>
+    public sealed record ClipCopy(IReadOnlyList<Clip> Clips, IReadOnlyList<Annotation> Annotations);
+
+    /// <summary>Snapshot the given clips and the annotations on them, for pasting later (even after undo/edits).</summary>
+    public static ClipCopy? CopyClips(Project p, IEnumerable<Guid> clipIds)
+    {
+        var ids = clipIds.ToHashSet();
+        var clips = p.Timeline.Where(c => ids.Contains(c.Id)).Select(c => c.Clone()).ToList();
+        if (clips.Count == 0) return null;
+        var annotations = p.Annotations.Where(a => ids.Contains(a.ClipId)).Select(a => a.Clone()).ToList();
+        return new ClipCopy(clips, annotations);
+    }
+
+    /// <summary>
+    /// Insert fresh copies of <paramref name="copy"/> at timeline position <paramref name="index"/> (clamped); later
+    /// clips ripple right. Each copy gets new ids, keeps its settings (trim, volume, speed, zoom…) and its annotations.
+    /// Annotations that ran across cuts stay linked only among the pasted pieces. Clips whose media has since been
+    /// removed from the project are skipped. Returns the new clips.
+    /// </summary>
+    public static List<Clip> PasteClips(Project p, ClipCopy copy, int index)
+    {
+        index = Math.Clamp(index, 0, p.Timeline.Count);
+        var pasted = new List<Clip>();
+        var newIds = new Dictionary<Guid, Guid>();
+        foreach (var src in copy.Clips)
+        {
+            if (p.FindMedia(src.SourceId) is null) continue;
+            var c = src.Clone();
+            c.Id = Guid.NewGuid();
+            newIds[src.Id] = c.Id;
+            p.Timeline.Insert(index + pasted.Count, c);
+            pasted.Add(c);
+        }
+        var links = new Dictionary<Guid, Guid>();
+        foreach (var src in copy.Annotations)
+        {
+            if (!newIds.TryGetValue(src.ClipId, out var clipId)) continue;
+            var a = src.Clone();
+            a.Id = Guid.NewGuid();
+            a.ClipId = clipId;
+            // A run across cuts gets a NEW link id, so the copy doesn't merge with the original run.
+            if (a.LinkId is { } old) a.LinkId = links.TryGetValue(old, out var nl) ? nl : links[old] = Guid.NewGuid();
+            p.Annotations.Add(a);
+        }
+        foreach (var link in links.Values) TidyLink(p, link); // a run cut down to one piece is a plain annotation
+        return pasted;
+    }
 
     public static void Move(Project p, Guid clipId, int newIndex)
     {
