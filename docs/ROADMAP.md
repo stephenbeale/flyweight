@@ -1,24 +1,36 @@
 # Roadmap & status
 
-_Last updated: 2026-11-20 (end of day; `feature/audio` merged)_
+_Last updated: 2026-11-22 (session close; PRs #5-#10 merged)_
 
 ## Where things stand
 
-### 2026-11-22 evening: `feature/clip-speed` (stacked on PR #5)
-Clip speed (D28); export via the graphics chip + bitrate cap + safe overwrite + YouTube Studio step (D29);
-sharper proxies (D29); multi-select / Ctrl+A, typed slider values, recent projects, Save as, dark rounded UI (D30).
-**Owner to test:** speed at 1.5x, multi-select edits, typed values, the export time and size reported, and existing-file
-handling. **Next, owner's idea:** a YouTube text file on export (title, description, tags, chapter timestamps), then
-dark dialogs. Still open: the audio crackle (playback.log).
+### 2026-11-22 session close: PRs #5-#10 merged to `main` (e839f98)
+**Shipped today:** #5 clip zoom + brightness/contrast (D25), proxy fixes (D26), Remove from project, named New project
+(D27); #6 clip speed (D28), Quick Sync export + YouTube bitrate cap + safe overwrite + "Your video is ready" step (D29),
+multi-select / Ctrl+A, typed slider values, recent projects, Save as, dark rounded UI (D30); #7 chapter markers (C),
+YouTube details + `<video> - YouTube.txt` (D31), Ctrl+C / Ctrl+V clips, packaging script; #8 per-user Inno Setup
+installer, single-file folder, only the first window owns the session lock/autosave (D32); #9 stable download link;
+#10 Save frame as image (D33).
+**Releases:** `v0.2.0-preview` (pre-release, zip) and `v0.2.1-preview` (Latest: Setup.exe + zip + version-free
+`Flyweight-Setup.exe` / `Flyweight-win-x64.zip`). Stable link:
+`https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe`.
+**Save frame (PR #10) is NOT in a release yet.**
+**Owner verified in-app:** brightness (preview + export), file-clash export prompt, clip speed, Ctrl+A select-all,
+Save frame matched the preview, the installer ran.
 
-### 2026-11-22: `feature/clip-zoom-brightness` (PR open)
-Clip zoom + brightness/contrast (D25), proxy fixes (D26: progress was 1/100, DJI timecode crash, faster, lower
-priority, play the original while optimising), New project names and saves (D27), Remove from project (D27).
-Owner verified that brightness previews and exports correctly. **Open issues:**
-1. **Audio crackle during playback** (proxy audio itself is clean). The Debug build logs to
-   `%LocalAppData%\Flyweight\playback.log`: get the owner to play a crackly stretch, then read the log.
-2. Zoom not yet tested by the owner. Lag when maximising during playback: fixes in, not yet re-tested.
-3. **Next feature, owner's choice: clip speed** (0.25x-4x), on a new branch.
+**Still open:**
+1. **Audio crackle during playback:** undiagnosed; proxy audio verified clean. Debug builds write
+   `%LocalAppData%\Flyweight\playback.log` (about 40 KB of real playback captured). Next step: read it.
+2. **Not yet verified by the owner in-app:** chapter markers (C), YouTube details / `.txt`, Ctrl+C / Ctrl+V, typed
+   slider values, the lag-when-maximised fix, zoom.
+3. **Release 0.2.2 to ship Save frame:** run `pwsh packaging\package-preview.ps1 -Version 0.2.2-preview`, publish as a
+   normal (non-pre) release with BOTH versioned and version-free assets (`Flyweight-Setup.exe`,
+   `Flyweight-win-x64.zip`) so the stable link updates.
+4. **Ideas queued:** dark themed dialogs (Export, New project, Freeze, Chapters); delete the remote branches
+   `feature/youtube-chapters` and `feature/frame-export` (now in `main`); optional: default video exports / freeze
+   frames next to the footage (left out of D33); freeze-frame PNGs still live in `%LocalAppData%` (portability).
+**Testing tip:** a second instance shares `%LocalAppData%\Flyweight`; test installs into a scratch `/DIR` and avoid
+launching while the owner's instance is open.
 
 **v0.1 MVP: smoke-tested on Windows and merged to `main` (PR #3, `da4cf87`). The owner has exported a real video.**
 `feature/audio` (clip volume/mute D22, audio track D23, real-time playback clock D24) is merged to `main` via PR.
