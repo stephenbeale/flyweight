@@ -277,3 +277,13 @@ Open YouTube Studio also opens this file.
   `/releases/latest/` skips pre-releases. So this link always gets the newest installer:
   https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe. "Preview" stays in the
   title, version and README.
+
+### D33. Save frame as image
+Rebuilt on today's code from the old `feature/frame-export` branch (1d97f85), which predated zoom, brightness and
+speed. **Save frame** (toolbar, Ctrl+Shift+E, right-click the preview; "Save this frame as…" picks the place) writes a
+PNG at the project's output size. `FrameExport.BuildArgs` reads the exact frame from the ORIGINAL file and applies
+the clip's zoom (`ClipLook.ZoomFilter`) and tone (`ClipLook.ToneFilter`), the same filters as the video export.
+`FrameRenderer` then draws the annotations visible at that moment with `AnnotationRenderer`, so the image matches the
+preview and the export. It is saved next to the largest video in the project, as "<project> frame 1m23s.png", never
+overwriting, and added to the media bin (not the timeline) and highlighted. The old branch also moved video exports
+and freeze frames next to the footage by default; that part was NOT brought in.

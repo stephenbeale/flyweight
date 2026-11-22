@@ -1,6 +1,7 @@
 using Flyweight.App.Controls;
 using Flyweight.App.Forms;
 using Flyweight.App.Playback;
+using Flyweight.App.Rendering;
 using Flyweight.Core.Editing;
 using Flyweight.Core.Export;
 using Flyweight.Core.Media;
@@ -133,11 +134,15 @@ public sealed class MainForm : Form
             Btn("Chapter", "Add a chapter marker at the playhead (C): they become the 0:00 timestamps in your YouTube description", AddMarker),
             Btn("Chapters…", "See, copy or save your YouTube chapter timestamps (Ctrl+Shift+C copies)", ShowChapters),
             new ToolStripSeparator(),
+            Btn("Save frame", "Save the frame under the playhead as a PNG (with zoom, brightness and annotations) next to your footage, e.g. for a thumbnail (Ctrl+Shift+E)", () => _ = ExportFrameAsync(chooseLocation: false)),
             Btn("Export for YouTube…", "Export MP4 (Ctrl+E)", Export),
         });
 
         // Right-click on the preview: freeze this frame, or drop a chapter marker here.
         var previewMenu = new ContextMenuStrip();
+        previewMenu.Items.Add("Save this frame as an image (Ctrl+Shift+E)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false));
+        previewMenu.Items.Add("Save this frame as…", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
+        previewMenu.Items.Add(new ToolStripSeparator());
         previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
         previewMenu.Items.Add("Add chapter marker here (C)", null, (_, _) => AddMarker());
         previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
@@ -426,6 +431,7 @@ public sealed class MainForm : Form
             case Keys.S: Split(); return true;
             case Keys.C: AddMarker(); return true; // C = chapter (M is mute)
             case Keys.Control | Keys.Shift | Keys.C: CopyChapters(); return true;
+            case Keys.Control | Keys.Shift | Keys.E: _ = ExportFrameAsync(chooseLocation: false); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
             // Ctrl+M too: Windows turns it into Enter, which in the media bin re-added the selected file.
             case Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
@@ -817,6 +823,57 @@ public sealed class MainForm : Form
             StartProxy(media);
         }
         UpdateStatus();
+    }
+
+    bool _exportingFrame;
+
+    /// <summary>
+    /// Save the frame under the playhead as a PNG at the project's output size: exact frame from the original, the clip's
+    /// zoom and brightness, the annotations on screen (D33). Goes next to the main footage, never overwriting, and is
+    /// added to the media bin (not the timeline) so it can be dragged in as a still.
+    /// </summary>
+    async Task ExportFrameAsync(bool chooseLocation)
+    {
+        if (_exportingFrame) return;
+        _engine.Pause();
+        _preview.CommitTextEdit();
+        var project = _session.Project;
+        if (project.Timeline.Count == 0) { _statusText.Text = "Add a clip to the timeline first, then save a frame."; return; }
+
+        var t = _engine.Position;
+        var path = FrameExport.Unique(Path.Combine(FrameExport.DefaultFolder(project), FrameExport.DefaultFileName(project, _session.FilePath, t)));
+        if (chooseLocation)
+        {
+            using var dlg = new SaveFileDialog
+            {
+                Filter = "PNG image|*.png", InitialDirectory = Path.GetDirectoryName(path), FileName = Path.GetFileName(path),
+                Title = "Save frame as",
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            path = dlg.FileName;
+        }
+
+        _exportingFrame = true;
+        _statusText.Text = "Saving frame…";
+        try
+        {
+            var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.Size;
+            var snapshot = ProjectSerializer.Deserialize(ProjectSerializer.Serialize(project)); // the project may change meanwhile
+            await FrameRenderer.ExportAsync(snapshot, t, w, h, path);
+
+            // Into the bin (not the timeline), selected, so it's easy to find and drag in as a still.
+            var media = await _library.ProbeAsync(path);
+            _session.Execute(p => p.Media.Add(media));
+            StartProxy(media);
+            _bin.Highlight(media.Id);
+            _statusText.Text = $"Saved {Path.GetFileName(path)} in {Path.GetDirectoryName(path)} and added it to Media.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't save the frame:\n\n{ex.Message}", "Save frame", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            _statusText.Text = "Saving the frame failed.";
+        }
+        finally { _exportingFrame = false; }
     }
 
     void StartProxy(SourceMedia media) => _ = Task.Run(async () =>

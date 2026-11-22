@@ -24,6 +24,15 @@ public sealed class MediaBinControl : UserControl
     /// <summary>True when the list has keyboard focus, so Delete means "remove this file", not "delete the clip".</summary>
     public bool ListFocused => _list.Focused;
 
+    /// <summary>Select and scroll to an item, e.g. a frame that was just saved.</summary>
+    public void Highlight(Guid id)
+    {
+        if (_list.Items[id.ToString()] is not { } item) return;
+        _list.SelectedItems.Clear();
+        item.Selected = item.Focused = true;
+        item.EnsureVisible();
+    }
+
     public void RequestRemoveSelected()
     {
         if (SelectedMediaId is { } id) RemoveRequested?.Invoke(id);
