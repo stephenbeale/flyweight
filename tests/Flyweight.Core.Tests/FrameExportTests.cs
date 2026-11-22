@@ -87,7 +87,8 @@ public sealed class FrameExportTests : IDisposable
     public void Names_and_folders_never_overwrite()
     {
         var p = new Project();
-        Assert.Equal("Barbour guide frame 1m23s.png", FrameExport.DefaultFileName(p, @"C:\x\Barbour guide.flyweight", S(83)));
+        // Path.Combine, not a literal "C:\…": CI runs these tests on Linux, where a backslash isn't a folder separator.
+        Assert.Equal("Barbour guide frame 1m23s.png", FrameExport.DefaultFileName(p, Path.Combine(_dir, "Barbour guide.flyweight"), S(83)));
         Assert.Equal("My video frame 1h02m03s.png", FrameExport.DefaultFileName(p, null, S(3723)));
         Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), FrameExport.DefaultFolder(p));
 
