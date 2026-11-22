@@ -37,10 +37,13 @@ $libvlcsharp = [regex]::Match($csproj, 'Include="LibVLCSharp" Version="([^"]+)"'
 
 Write-Host "Publishing Flyweight $Version (self-contained win-x64)…"
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+# Single file: .NET and every managed/native .NET DLL go inside Flyweight.exe (compressed), so it's the only file at
+# the top of the folder. LibVLC stays in libvlc\win-x64 (the csproj keeps it out of the bundle; it loads plugins
+# from disk) and the csproj no longer copies LibVLC's 32-bit build at all.
 dotnet publish (Join-Path $repo "src\Flyweight.App\Flyweight.App.csproj") -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
     -p:Version=$($Version -replace '-.*$', '') -p:InformationalVersion=$Version -p:DebugType=none -o $out
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
-# The LibVLC package ships 32- and 64-bit copies; this is a win-x64 build, so the 32-bit one is dead weight.
 $x86 = Join-Path $out "libvlc\win-x86"
 if (Test-Path $x86) { Remove-Item $x86 -Recurse -Force }
 
@@ -51,16 +54,33 @@ Copy-Item (Join-Path $FfmpegDir "ffmpeg.exe"), (Join-Path $FfmpegDir "ffprobe.ex
 Copy-Item $ffLicense (Join-Path $ffOut "LICENSE.txt")
 if (Test-Path $ffReadme) { Copy-Item $ffReadme (Join-Path $ffOut "README.txt") }
 
-# README, licence, notices.
-(Get-Content (Join-Path $PSScriptRoot "README.txt") -Raw).Replace("{VERSION}", $Version) | Set-Content (Join-Path $out "README.txt") -Encoding utf8
-Copy-Item (Join-Path $repo "LICENSE") (Join-Path $out "LICENSE.txt")
+# README, licence, notices: in About\, so Flyweight.exe is the only file at the top.
+$about = Join-Path $out "About"
+New-Item -ItemType Directory -Force $about | Out-Null
+(Get-Content (Join-Path $PSScriptRoot "README.txt") -Raw).Replace("{VERSION}", $Version) | Set-Content (Join-Path $about "README.txt") -Encoding utf8
+Copy-Item (Join-Path $repo "LICENSE") (Join-Path $about "LICENSE.txt")
 (Get-Content (Join-Path $PSScriptRoot "THIRD-PARTY-NOTICES.txt") -Raw).
     Replace("{FFMPEG_VERSION}", $ffVersion).Replace("{FFMPEG_SOURCE}", $ffSource).
     Replace("{LIBVLC_VERSION}", $libvlc).Replace("{LIBVLCSHARP_VERSION}", $libvlcsharp) |
-    Set-Content (Join-Path $out "THIRD-PARTY-NOTICES.txt") -Encoding utf8
+    Set-Content (Join-Path $about "THIRD-PARTY-NOTICES.txt") -Encoding utf8
+
+$extra = Get-ChildItem $out -File | Where-Object Name -ne "Flyweight.exe"
+if ($extra) { throw "Expected only Flyweight.exe at the top of the folder, also found: $($extra.Name -join ', ')" }
 
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $out -DestinationPath $zip -CompressionLevel Optimal
 $mb = [math]::Round((Get-Item $zip).Length / 1MB)
 Write-Host "Done: $zip ($mb MB)"
+
+# Installer (Inno Setup): per-user, Start menu, .flyweight association, "Launch Flyweight" at the end.
+$iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($iscc) {
+    & $iscc /Q "/DAppVersion=$Version" "/DSourceDir=$out" "/DOutputDir=$(Join-Path $repo 'artifacts')" "/DRepoDir=$repo" (Join-Path $PSScriptRoot "Flyweight.iss")
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+    $setup = Join-Path $repo "artifacts\Flyweight-$Version-Setup.exe"
+    Write-Host "Done: $setup ($([math]::Round((Get-Item $setup).Length / 1MB)) MB)"
+} else {
+    Write-Warning "Inno Setup not found, so no installer was built (winget install JRSoftware.InnoSetup --source winget --scope user)."
+}
 Write-Host "  ffmpeg $ffVersion · LibVLC $libvlc · LibVLCSharp $libvlcsharp"

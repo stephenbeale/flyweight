@@ -13,7 +13,20 @@
     <!-- Lets the project compile on non-Windows build machines/CI; harmless on Windows. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationIcon>flyweight.ico</ApplicationIcon>
+    <!-- 64-bit only: don't copy LibVLC's 32-bit build (~100 MB of dead weight). -->
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
   </PropertyGroup>
+
+  <!--
+    Single-file publish (packaging/package-preview.ps1): .NET and our DLLs go inside Flyweight.exe, but LibVLC must
+    stay as real files in libvlc\win-x64 (it loads its plugins from disk), and ffmpeg stays in ffmpeg\.
+  -->
+  <Target Name="KeepLibVlcOutOfSingleFile" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" ExcludeFromSingleFile="true"
+                             Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('libvlc')) Or $([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('ffmpeg'))" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="LibVLCSharp" Version="3.9.0" />
