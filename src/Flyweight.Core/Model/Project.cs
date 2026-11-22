@@ -92,6 +92,24 @@ public sealed class Clip
 
     public bool Muted { get; set; }
 
+    /// <summary>
+    /// Punch-in zoom of the 16:9 picture: 1 = whole frame, up to <see cref="Media.ClipLook.MaxZoom"/>.
+    /// The same for the whole clip (no animation). Older project files load as 1. See <see cref="Media.ClipLook"/>.
+    /// </summary>
+    public double Zoom { get; set; } = 1.0;
+
+    /// <summary>Where the zoomed view sits left–right: 0 = left edge, 0.5 = centre, 1 = right edge.</summary>
+    public double PanX { get; set; } = 0.5;
+
+    /// <summary>Where the zoomed view sits top–bottom: 0 = top, 0.5 = centre, 1 = bottom.</summary>
+    public double PanY { get; set; } = 0.5;
+
+    /// <summary>-1 … +1, 0 = as shot. Lifts (or darkens) the mid-tones with a gamma curve, so whites don't blow out.</summary>
+    public double Brightness { get; set; }
+
+    /// <summary>-1 … +1, 0 = as shot.</summary>
+    public double Contrast { get; set; }
+
     [JsonIgnore] public TimeSpan Duration => Out - In;
 
     /// <summary>The gain actually applied (0 when muted).</summary>

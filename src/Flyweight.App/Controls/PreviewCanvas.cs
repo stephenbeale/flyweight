@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using Flyweight.App.Playback;
 using Flyweight.App.Rendering;
 using Flyweight.Core.Editing;
@@ -117,17 +118,40 @@ public sealed class PreviewCanvas : Control
         if (_engine.HasFrame)
         {
             g.InterpolationMode = InterpolationMode.Bilinear;
-            lock (_engine.FrameLock) g.DrawImage(_engine.Frame, canvas);
+            var look = TimelineOps.Locate(_session.Project, _engine.Position)?.Clip;
+            lock (_engine.FrameLock)
+            {
+                Bitmap frame = _engine.Frame;
+                if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
+                    Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
+                    frame = Letterboxed(frame, pm.Width, pm.Height);
+                if (look is not null && ClipLook.HasTone(look)) frame = Toned(frame, look);
+                if (look is null || !ClipLook.IsZoomed(look))
+                {
+                    // Fast path, as before zoom existed: GDI+'s ImageAttributes draw is several times
+                    // slower, which showed as lag when the window was maximised during playback.
+                    g.DrawImage(frame, canvas);
+                }
+                else
+                {
+                    var (x, y, w, h) = ClipLook.ViewRect(look);
+                    var src = new RectangleF((float)(x * frame.Width), (float)(y * frame.Height), (float)(w * frame.Width), (float)(h * frame.Height));
+                    g.PixelOffsetMode = PixelOffsetMode.Half; // no half-pixel shift when drawing a zoomed part
+                    using var attrs = new ImageAttributes();
+                    attrs.SetWrapMode(WrapMode.TileFlipXY); // edge pixels repeat instead of fading to transparent
+                    g.DrawImage(frame, Rectangle.Round(canvas), src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel, attrs);
+                    g.PixelOffsetMode = PixelOffsetMode.Default;
+                }
+            }
+            if (_engine.PlayingOriginal && _engine.PlayingMedia is { } om)
+                Badge(g, canvas, $"Optimising {_library.GetState(om.Id).Progress:P0}: playing the original for now");
         }
         else if (_engine.WaitingForProxy && StandIn() is { } img)
         {
             // Proxy not ready: show the photo itself (stills) or the thumbnail (videos) so you can keep working.
             g.InterpolationMode = InterpolationMode.HighQualityBilinear;
             g.DrawImage(img, Fit(img.Size, canvas));
-            var badge = new Rectangle((int)canvas.X + 8, (int)canvas.Bottom - 30, 190, 22);
-            using (var bb = new SolidBrush(Color.FromArgb(170, 0, 0, 0))) g.FillRectangle(bb, badge);
-            TextRenderer.DrawText(g, "Optimising for playback…", Font, badge, Color.Gainsboro,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            Badge(g, canvas, "Optimising for playback…");
         }
         else
         {
@@ -156,6 +180,83 @@ public sealed class PreviewCanvas : Control
             using (var bb = new SolidBrush(Color.FromArgb(215, 20, 20, 24))) g.FillRectangle(bb, r);
             TextRenderer.DrawText(g, notice, Font, r, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
+    }
+
+    void Badge(Graphics g, RectangleF canvas, string text)
+    {
+        var size = TextRenderer.MeasureText(g, text, Font);
+        var badge = new Rectangle((int)canvas.X + 8, (int)canvas.Bottom - 30, size.Width + 16, 22);
+        using (var bb = new SolidBrush(Color.FromArgb(170, 0, 0, 0))) g.FillRectangle(bb, badge);
+        TextRenderer.DrawText(g, text, Font, badge, Color.Gainsboro, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+
+    Bitmap? _boxed;
+
+    /// <summary>
+    /// LibVLC stretches an original to fill 960×540. Squeeze it back to its own shape with black bars,
+    /// like the proxy's fit/pad, so zoom and annotations line up the same. Call while holding FrameLock.
+    /// </summary>
+    Bitmap Letterboxed(Bitmap frame, int mediaW, int mediaH)
+    {
+        if (_boxed is null || _boxed.Size != frame.Size)
+        {
+            _boxed?.Dispose();
+            _boxed = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
+        }
+        using var g = Graphics.FromImage(_boxed);
+        g.Clear(Color.Black);
+        g.InterpolationMode = InterpolationMode.Bilinear;
+        g.DrawImage(frame, Fit(new Size(mediaW, mediaH), new RectangleF(0, 0, frame.Width, frame.Height)));
+        return _boxed;
+    }
+
+    Bitmap? _toned;
+    byte[]? _toneTable;
+    (double B, double C) _toneKey = (double.NaN, double.NaN);
+
+    /// <summary>
+    /// The frame with the clip's brightness/contrast curve applied (ClipLook's table, the same values the
+    /// export's lutrgb produces). A 960×540 pass is ~1–2 ms. Call while holding the engine's FrameLock.
+    /// </summary>
+    unsafe Bitmap Toned(Bitmap frame, Clip look)
+    {
+        if (_toneKey != (look.Brightness, look.Contrast) || _toneTable is null)
+        {
+            _toneTable = ClipLook.ToneTable(look);
+            _toneKey = (look.Brightness, look.Contrast);
+        }
+        if (_toned is null || _toned.Size != frame.Size)
+        {
+            _toned?.Dispose();
+            _toned = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
+        }
+        var rect = new Rectangle(Point.Empty, frame.Size);
+        var src = frame.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+        var dst = _toned.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+        try
+        {
+            fixed (byte* t = _toneTable)
+            {
+                for (int yy = 0; yy < rect.Height; yy++)
+                {
+                    byte* s = (byte*)src.Scan0 + yy * src.Stride;
+                    byte* d = (byte*)dst.Scan0 + yy * dst.Stride;
+                    for (int xx = 0; xx < rect.Width; xx++, s += 4, d += 4)
+                    {
+                        d[0] = t[s[0]];
+                        d[1] = t[s[1]];
+                        d[2] = t[s[2]];
+                        d[3] = 255;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            frame.UnlockBits(src);
+            _toned.UnlockBits(dst);
+        }
+        return _toned;
     }
 
     /// <summary>Picture for the clip under the playhead while its proxy is being made, or null.</summary>

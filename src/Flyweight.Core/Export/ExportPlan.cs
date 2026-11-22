@@ -11,7 +11,8 @@ namespace Flyweight.Core.Export;
 ///
 ///   inputs:  one "-ss In -t Dur -i original" per clip (fast + accurate input seeking),
 ///            then one per audio-track item, then one transparent full-frame PNG per visible annotation
-///   graph:   each clip → fps, fit/pad to 16:9, 48k stereo audio (silence if none)
+///   graph:   each clip → fps, fit/pad to 16:9 (or zoom-crop), brightness/contrast curve,
+///            48k stereo audio (silence if none)
 ///            → concat → amix the audio-track items (adelay'd to their start) over the clip audio
 ///            → overlay each PNG with enable='between(t,start,end)'
 ///   output:  H.264 High / yuv420p / AAC 48k / +faststart  (YouTube's recommended upload)
@@ -59,7 +60,9 @@ public sealed class ExportPlan
                 args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.Duration), "-i", media.OriginalPath });
             var d = Sec(clip.Duration);
 
-            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{Canvas.FitFilter(w, h)},format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");
+            // Zoom crops the original before scaling (sharp), and the tone curve runs at the output size (cheap).
+            var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, w, h) : Canvas.FitFilter(w, h);
+            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{fit},{ClipLook.ToneFilter(clip)}format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");
             // A muted clip is treated like one with no audio: silence, and its track isn't decoded at all.
             var gain = clip.EffectiveVolume;
             if (media.HasAudio && gain > 0)
@@ -124,6 +127,7 @@ public sealed class ExportPlan
             "-pix_fmt", "yuv420p", "-r", fpsStr,
             "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2",
             "-movflags", "+faststart",
+            "-write_tmcd", "0", // no camera timecode track: it crashed ffmpeg's mp4 writer on DJI proxies
             outputPath,
         });
 

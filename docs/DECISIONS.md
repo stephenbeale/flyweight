@@ -163,3 +163,43 @@ Owner considered Bantam, Feather and Jet (2026-11-21) and chose to keep Flyweigh
 its weight") and glove icon tell one story. Bantam was the only real alternative (also a boxing weight, funnier);
 Feather is crowded, and Jet loses the boxing link. Don't reopen unless the owner raises it.
 
+
+### D25. Clip zoom and brightness/contrast: one set of maths for preview and export
+- **Model.** `Clip.Zoom` (1-4), `PanX`/`PanY` (0-1: where the zoomed view sits, 0.5 = centred), `Brightness` and
+  `Contrast` (-1 to +1). It is one static look per clip; animated zoom is not built. Old project files load as shot.
+  Split halves and freeze frames copy the look. Edits go through `TimelineOps.SetClipZoom/Pan/Brightness/Contrast`.
+- **Shared maths (`Core/Media/ClipLook`)**, the same idea as the one annotation renderer (rule 5):
+  - *Zoom* works on the fitted 16:9 canvas. `ViewRect` is the visible part. The preview draws that part of the proxy.
+    The export pads the ORIGINAL to 16:9 at its own resolution, crops the same rectangle and only then scales, so a
+    zoomed 4K clip stays sharp.
+  - *Brightness* is a gamma curve (it lifts dark and mid tones and keeps black and white). *Contrast* is a gain
+    around mid-grey. `Tone()` is applied in RGB: the preview uses a 256-entry table, and the export uses `lutrgb`
+    with the same expression and the same rounded (4 dp) constants. An integration test checks real exported pixels.
+- **Annotations are not zoomed**: they stay where they were drawn on the canvas.
+
+### D26. Proxies: robust, lower priority, and playable before they finish
+- **Progress maths.** `ParseProgress` (out_time_us x 10 / ticks) used to divide by 10, so every progress figure
+  (proxies AND export) showed 1/100 of the truth. Fixed and unit-tested.
+- **Camera timecode.** DJI files carry a timecode track. The mp4 writer recreated it in the proxy and crashed at the
+  end of a 14-minute file ("Assertion next_dts <= 0x7fffffff"). Proxies now map only `0:v:0` (+`0:a:0`) and use
+  `-map_metadata -1 -write_tmcd 0`; export uses `-write_tmcd 0`.
+- **Speed.** `ultrafast` plus `-hwaccel auto` was about 20% faster than `veryfast` on the CPU (1080p60 DJI, around 5x
+  real time). If GPU decoding fails, the proxy retries once on the CPU. Decoding the original is the bottleneck, so
+  bigger wins need a different approach (e.g. skipping proxies for easy files).
+- **Priority.** Proxy transcodes run below normal priority so playback and the UI win. On Windows the priority is
+  inherited at process creation (Chocolatey's ffmpeg shim starts the real ffmpeg straight away), so `FfmpegRunner`
+  briefly lowers its own priority class while starting one, under a lock.
+- **Play the original meanwhile.** While a video's proxy isn't ready, `PlaybackEngine` plays the original file
+  (LibVLC scales it to 960x540). `PreviewCanvas` letterboxes non-16:9 originals back to their shape and shows an
+  "Optimising n%" badge. When the proxy is done it switches over. Stills keep their stand-in picture.
+- **Errors.** Status bar and bin show the first line only; the full ffmpeg log is in the bin item's tooltip.
+
+### D27. Small UX rules from owner testing (2026-11-22)
+- **New** asks for a name, a folder (default `Documents\Flyweight`) and the output size, and saves straight away, so
+  Create always visibly does something.
+- **Remove from project** (bin right-click, or Del while the bin has focus) removes the file with every clip, its
+  annotations and every audio item using it, after a confirm that gives the count. It is one undo step, and the file
+  on disk is untouched.
+- `Flyweight.exe path.flyweight` opens that project.
+- Debug builds write `%LocalAppData%\Flyweight\playback.log` (seeks, loads, volume sets, paint waits) to chase the
+  audio crackle the owner reported. It is still open.

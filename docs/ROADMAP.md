@@ -4,6 +4,15 @@ _Last updated: 2026-11-20 (end of day; `feature/audio` merged)_
 
 ## Where things stand
 
+### 2026-11-22: `feature/clip-zoom-brightness` (PR open)
+Clip zoom + brightness/contrast (D25), proxy fixes (D26: progress was 1/100, DJI timecode crash, faster, lower
+priority, play the original while optimising), New project names and saves (D27), Remove from project (D27).
+Owner verified that brightness previews and exports correctly. **Open issues:**
+1. **Audio crackle during playback** (proxy audio itself is clean). The Debug build logs to
+   `%LocalAppData%\Flyweight\playback.log`: get the owner to play a crackly stretch, then read the log.
+2. Zoom not yet tested by the owner. Lag when maximising during playback: fixes in, not yet re-tested.
+3. **Next feature, owner's choice: clip speed** (0.25x-4x), on a new branch.
+
 **v0.1 MVP: smoke-tested on Windows and merged to `main` (PR #3, `da4cf87`). The owner has exported a real video.**
 `feature/audio` (clip volume/mute D22, audio track D23, real-time playback clock D24) is merged to `main` via PR.
 **Next session: start a new branch and FIRST finish the audio-track tests below** (session ended 2026-11-20 mid-test),

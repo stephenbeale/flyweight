@@ -101,6 +101,7 @@ public static class TimelineOps
         if (cut - left.In < MinClipLength || left.Out - cut < MinClipLength) return null;
 
         var right = new Clip { SourceId = left.SourceId, In = cut, Out = left.Out, Volume = left.Volume, Muted = left.Muted };
+        CopyLook(left, right);
         left.Out = cut;
         p.Timeline.Insert(hit.Index + 1, right);
 
@@ -146,6 +147,7 @@ public static class TimelineOps
         if (p.FindMedia(still.Id) is null) p.Media.Add(still);
         var hold = Clamp(length, MinClipLength, still.Duration);
         var clip = new Clip { SourceId = still.Id, In = TimeSpan.Zero, Out = hold };
+        CopyLook(hit.Clip, clip); // the grabbed frame is unzoomed and as shot: freeze it as it looked
         p.Timeline.Insert(insertAt, clip);
 
         // Copies (not burned in) so they stay editable; they hold for the whole freeze.
@@ -166,6 +168,21 @@ public static class TimelineOps
         p.Timeline.RemoveAll(c => c.Id == clipId);
         p.Annotations.RemoveAll(a => a.ClipId == clipId);
     }
+
+    /// <summary>
+    /// Remove a file from the media bin, with every clip and audio-track item that uses it (and those
+    /// clips' annotations). The file on disk is untouched. One call = one undo step.
+    /// </summary>
+    public static void RemoveMedia(Project p, Guid mediaId)
+    {
+        foreach (var c in p.Timeline.Where(c => c.SourceId == mediaId).ToList()) Delete(p, c.Id);
+        p.AudioTrack.RemoveAll(a => a.SourceId == mediaId);
+        p.Media.RemoveAll(m => m.Id == mediaId);
+    }
+
+    /// <summary>How many timeline clips and audio items use this file (to warn before removing it).</summary>
+    public static int UsageCount(Project p, Guid mediaId) =>
+        p.Timeline.Count(c => c.SourceId == mediaId) + p.AudioTrack.Count(a => a.SourceId == mediaId);
 
     public static void Move(Project p, Guid clipId, int newIndex)
     {
@@ -202,6 +219,49 @@ public static class TimelineOps
     public static void SetClipMuted(Project p, Guid clipId, bool muted)
     {
         if (p.FindClip(clipId) is { } c) c.Muted = muted;
+    }
+
+    // ---------------- Picture: zoom and brightness/contrast (maths in ClipLook) ----------------
+
+    /// <summary>Set a clip's zoom (clamped to 1–<see cref="ClipLook.MaxZoom"/>). Keeps where it is panned to.</summary>
+    public static void SetClipZoom(Project p, Guid clipId, double zoom)
+    {
+        if (p.FindClip(clipId) is { } c) c.Zoom = double.IsFinite(zoom) ? Math.Clamp(zoom, 1, ClipLook.MaxZoom) : 1;
+    }
+
+    /// <summary>Where the zoomed view sits: 0–1 each way, 0.5 = centred. Null leaves that axis alone.</summary>
+    public static void SetClipPan(Project p, Guid clipId, double? panX, double? panY)
+    {
+        if (p.FindClip(clipId) is not { } c) return;
+        if (panX is { } x) c.PanX = double.IsFinite(x) ? Math.Clamp(x, 0, 1) : 0.5;
+        if (panY is { } y) c.PanY = double.IsFinite(y) ? Math.Clamp(y, 0, 1) : 0.5;
+    }
+
+    /// <summary>Brightness -1…+1 (0 = as shot).</summary>
+    public static void SetClipBrightness(Project p, Guid clipId, double brightness)
+    {
+        if (p.FindClip(clipId) is { } c) c.Brightness = double.IsFinite(brightness) ? Math.Clamp(brightness, -1, 1) : 0;
+    }
+
+    /// <summary>Contrast -1…+1 (0 = as shot).</summary>
+    public static void SetClipContrast(Project p, Guid clipId, double contrast)
+    {
+        if (p.FindClip(clipId) is { } c) c.Contrast = double.IsFinite(contrast) ? Math.Clamp(contrast, -1, 1) : 0;
+    }
+
+    /// <summary>Back to the whole frame, as shot.</summary>
+    public static void ResetClipLook(Project p, Guid clipId)
+    {
+        if (p.FindClip(clipId) is { } c) CopyLook(new Clip(), c);
+    }
+
+    static void CopyLook(Clip from, Clip to)
+    {
+        to.Zoom = from.Zoom;
+        to.PanX = from.PanX;
+        to.PanY = from.PanY;
+        to.Brightness = from.Brightness;
+        to.Contrast = from.Contrast;
     }
 
     // ---------------- Audio track (music / narration at fixed timeline times) ----------------

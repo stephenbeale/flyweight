@@ -15,6 +15,20 @@ public sealed class MediaBinControl : UserControl
     /// <summary>Right-click "Insert before/after current clip": media id, and true for after.</summary>
     public event Action<Guid, bool>? InsertRequested;
 
+    /// <summary>"Remove from project" (right-click, or Delete with the bin focused): media id.</summary>
+    public event Action<Guid>? RemoveRequested;
+
+    /// <summary>The selected file, if any.</summary>
+    public Guid? SelectedMediaId => _list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id ? id : null;
+
+    /// <summary>True when the list has keyboard focus, so Delete means "remove this file", not "delete the clip".</summary>
+    public bool ListFocused => _list.Focused;
+
+    public void RequestRemoveSelected()
+    {
+        if (SelectedMediaId is { } id) RemoveRequested?.Invoke(id);
+    }
+
     public MediaBinControl()
     {
         var header = new Label
@@ -24,7 +38,7 @@ public sealed class MediaBinControl : UserControl
         };
         _list = new ListView
         {
-            Dock = DockStyle.Fill, View = View.Tile, LargeImageList = _images, TileSize = new Size(260, 80),
+            Dock = DockStyle.Fill, View = View.Tile, LargeImageList = _images, TileSize = new Size(260, 80), ShowItemToolTips = true,
             BackColor = Color.FromArgb(28, 28, 32), ForeColor = Color.Gainsboro, BorderStyle = BorderStyle.None,
             MultiSelect = false,
         };
@@ -40,12 +54,14 @@ public sealed class MediaBinControl : UserControl
         menu.Items.Add("Insert after current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, true); });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Add to end of timeline", null, (_, _) => { if (MenuMedia() is { } id) AddToTimelineRequested?.Invoke(this, id); });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Remove from project (Del)", null, (_, _) => { if (MenuMedia() is { } id) RemoveRequested?.Invoke(id); });
         menu.Opening += (_, e) => e.Cancel = MenuMedia() is null;
         _list.ContextMenuStrip = menu;
 
         var hint = new Label
         {
-            Text = "Double-click to add · right-click to insert", Dock = DockStyle.Bottom, Height = 22,
+            Text = "Double-click to add · right-click for more", Dock = DockStyle.Bottom, Height = 22,
             ForeColor = Color.Gray, BackColor = Color.FromArgb(28, 28, 32), Padding = new Padding(8, 3, 0, 0),
         };
         Controls.Add(_list);
@@ -77,9 +93,10 @@ public sealed class MediaBinControl : UserControl
                 ProxyStatus.Optimising when m.IsAudioOnly => "Reading audio…",
                 ProxyStatus.Ready => $"{TimelineControl.FormatTime(m.Duration)}  ·  {m.Width}×{m.Height}  ·  {m.Fps:0.##} fps",
                 ProxyStatus.Optimising => $"Optimising {st.Progress:P0}",
-                ProxyStatus.Failed => $"Failed: {st.Error}",
+                ProxyStatus.Failed => $"Failed: {(st.Error ?? "").Split('\n', 2)[0].Trim()}",
                 _ => "Queued",
             };
+            item.ToolTipText = st.Status == ProxyStatus.Failed ? $"{m.OriginalPath}\n\n{st.Error}" : m.OriginalPath;
             if (st.ThumbnailPath is { } tp && !_thumbLoaded.Contains(m.Id) && File.Exists(tp))
             {
                 using var fs = File.OpenRead(tp);

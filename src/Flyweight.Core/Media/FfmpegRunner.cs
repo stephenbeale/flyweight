@@ -39,27 +39,34 @@ public static class FfmpegRunner
     /// <summary>
     /// Run ffmpeg. If <paramref name="expectedDuration"/> is given, progress (0..1) is reported
     /// by parsing ffmpeg's -progress output. Cancelling kills the process.
+    /// <paramref name="background"/>: run at below-normal CPU priority (proxy transcodes), so playback
+    /// and the UI always win when they compete for the cores.
     /// </summary>
     public static async Task RunFfmpegAsync(IEnumerable<string> args, TimeSpan? expectedDuration = null,
-        IProgress<double>? progress = null, CancellationToken ct = default)
+        IProgress<double>? progress = null, CancellationToken ct = default, bool background = false)
     {
         var all = new List<string> { "-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats" };
         all.AddRange(args);
 
         await RunAsync(FfmpegLocator.Ffmpeg, all, line =>
         {
-            if (progress is null || expectedDuration is not { } total || total <= TimeSpan.Zero) return;
-            // ffmpeg prints out_time_us (and, confusingly, out_time_ms which is also microseconds).
-            if (line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
-                long.TryParse(line.AsSpan(12), NumberStyles.Integer, CultureInfo.InvariantCulture, out var us) && us >= 0)
-            {
-                progress.Report(Math.Clamp(us / 10.0 / total.Ticks, 0, 1));
-            }
-            else if (line == "progress=end")
-            {
-                progress.Report(1);
-            }
-        }, ct);
+            if (progress is null || expectedDuration is not { } total) return;
+            if (ParseProgress(line, total) is { } fraction) progress.Report(fraction);
+        }, ct, background);
+    }
+
+    /// <summary>
+    /// One line of ffmpeg's -progress output → fraction done (0–1), or null if the line isn't progress.
+    /// ffmpeg prints out_time_us (and, confusingly, out_time_ms which is also microseconds).
+    /// </summary>
+    public static double? ParseProgress(string line, TimeSpan total)
+    {
+        if (line == "progress=end") return 1;
+        if (total <= TimeSpan.Zero || !line.StartsWith("out_time_us=", StringComparison.Ordinal) ||
+            !long.TryParse(line.AsSpan(12), NumberStyles.Integer, CultureInfo.InvariantCulture, out var us) || us < 0)
+            return null;
+        // 1 µs = 10 ticks. (This used to divide by 10, so every progress bar showed 1/100 of the truth.)
+        return Math.Clamp(us * 10.0 / total.Ticks, 0, 1);
     }
 
     /// <summary>Run ffprobe and return its stdout.</summary>
@@ -70,7 +77,37 @@ public static class FfmpegRunner
         return sb.ToString();
     }
 
-    static async Task RunAsync(string exe, IEnumerable<string> args, Action<string> onStdoutLine, CancellationToken ct)
+    static readonly object StartLock = new();
+
+    /// <summary>
+    /// Start the process, optionally at below-normal priority. On Windows the priority is INHERITED at
+    /// creation: we briefly drop our own priority class while starting it. Setting it on the process
+    /// afterwards isn't enough, because a launcher such as Chocolatey's ffmpeg.exe shim starts the real
+    /// ffmpeg immediately at normal priority.
+    /// </summary>
+    static void Start(Process proc, bool background)
+    {
+        lock (StartLock) // every start goes through here, so nothing else inherits the lowered class by accident
+        {
+            if (!background) { proc.Start(); return; }
+            if (!OperatingSystem.IsWindows())
+            {
+                proc.Start();
+                try { proc.PriorityClass = ProcessPriorityClass.BelowNormal; } catch { /* best effort */ }
+                return;
+            }
+            var me = Process.GetCurrentProcess();
+            var old = me.PriorityClass;
+            try
+            {
+                me.PriorityClass = ProcessPriorityClass.BelowNormal;
+                proc.Start();
+            }
+            finally { me.PriorityClass = old; }
+        }
+    }
+
+    static async Task RunAsync(string exe, IEnumerable<string> args, Action<string> onStdoutLine, CancellationToken ct, bool background = false)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -90,7 +127,7 @@ public static class FfmpegRunner
             lock (stderr) { stderr.Enqueue(e.Data); if (stderr.Count > 30) stderr.Dequeue(); }
         };
 
-        try { proc.Start(); }
+        try { Start(proc, background); }
         catch (Exception ex)
         {
             throw new FfmpegException($"Could not start '{exe}'. Put ffmpeg.exe and ffprobe.exe in the app's 'ffmpeg' folder or on PATH.", ex.Message);
