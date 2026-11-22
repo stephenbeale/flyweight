@@ -23,7 +23,7 @@ public sealed class TimelineControl : Control
     int AudioRowH => Math.Max(30, (int)(Font.Height * 1.8));
     static readonly Color ClipColor = Color.FromArgb(52, 99, 160);
     static readonly Color AudioColor = Color.FromArgb(36, 104, 80);
-    static readonly Color Accent = Color.FromArgb(0, 170, 255);
+    static readonly Color Accent = Theme.Accent;
 
     ProjectSession _session = null!;
     MediaLibrary _library = null!;
@@ -49,7 +49,47 @@ public sealed class TimelineControl : Control
         ForeColor = Color.Gainsboro;
     }
 
-    public Guid? SelectedClipId { get; set; }
+    Guid? _primaryClip;
+    readonly HashSet<Guid> _selectedClips = new();
+
+    /// <summary>
+    /// The MAIN selected clip (the one the Properties panel shows). Setting it selects just that clip; use
+    /// Ctrl/Shift+click or <see cref="SelectAllClips"/> for more.
+    /// </summary>
+    public Guid? SelectedClipId
+    {
+        get => _primaryClip;
+        set
+        {
+            _primaryClip = value;
+            _selectedClips.Clear();
+            if (value is { } v) _selectedClips.Add(v);
+        }
+    }
+
+    /// <summary>Every selected clip (includes <see cref="SelectedClipId"/>). Edits in the Properties panel apply to all.</summary>
+    public IReadOnlyCollection<Guid> SelectedClipIds => _selectedClips;
+
+    /// <summary>Ctrl+A: select every clip on the timeline (the one under the playhead stays the main one).</summary>
+    public void SelectAllClips(Guid? main)
+    {
+        var all = _session.Project.Timeline.Select(c => c.Id).ToList();
+        if (all.Count == 0) return;
+        SelectedAnnotationId = null;
+        SelectedAudioId = null;
+        _primaryClip = main is { } m && all.Contains(m) ? m : all[0];
+        _selectedClips.Clear();
+        _selectedClips.UnionWith(all);
+        ClipSelected?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
+
+    /// <summary>Forget selected clips that no longer exist (after delete / undo).</summary>
+    public void PruneSelection(Project p)
+    {
+        _selectedClips.RemoveWhere(id => p.FindClip(id) is null);
+        if (_primaryClip is { } pc && p.FindClip(pc) is null) _primaryClip = _selectedClips.Count > 0 ? _selectedClips.First() : null;
+    }
     public Guid? SelectedAnnotationId { get; set; }
     public Guid? SelectedAudioId { get; set; }
 
@@ -235,24 +275,30 @@ public sealed class TimelineControl : Control
         var c = p.Timeline[i];
         var r = ClipRect(i);
         if (r.Right < 0 || r.Left > Width) return;
+        r = Gap(r); // a hair of space between clips so the rounded ends read as separate clips
         var media = p.FindMedia(c.SourceId);
         var state = _library.GetState(c.SourceId);
+        using var shape = Theme.Rounded(r);
 
-        using (var b = new SolidBrush(ClipColor)) g.FillRectangle(b, r);
+        Theme.FillRounded(g, ClipColor, r);
 
-        // Tile the poster thumbnail along the clip.
+        // Tile the poster thumbnail along the clip, inside its rounded outline.
         if (Thumb(c.SourceId, state.ThumbnailPath) is { } img)
         {
             var region = g.Clip;
-            g.SetClip(r);
+            g.SetClip(shape, CombineMode.Intersect);
             float tw = TrackH * img.Width / (float)img.Height;
             for (float x = r.X; x < r.Right; x += tw) g.DrawImage(img, x, r.Y, tw, TrackH);
-            g.Clip = region;
             using var shade = new SolidBrush(Color.FromArgb(90, ClipColor));
             g.FillRectangle(shade, r);
+            // Darker strip behind the label so it stays readable on bright thumbnails.
+            using var strip = new LinearGradientBrush(new RectangleF(r.X, r.Y, r.Width, 26), Color.FromArgb(150, 10, 14, 22), Color.FromArgb(0, 10, 14, 22), LinearGradientMode.Vertical);
+            g.FillRectangle(strip, r.X, r.Y, r.Width, 26);
+            g.Clip = region;
         }
 
         var label = media?.DisplayName ?? "(missing)";
+        if (Math.Abs(c.Speed - 1) > 0.0005) label = $"{c.Speed:0.##}×  ·  {label}";
         if (state.Status is ProxyStatus.Optimising or ProxyStatus.Queued) label += $"  ·  optimising {state.Progress:P0}";
         if (state.Status == ProxyStatus.Failed) label += "  ·  failed";
         if (media is { HasAudio: true })
@@ -263,13 +309,20 @@ public sealed class TimelineControl : Control
         TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y + 4, r.Width - 12, 18)),
             Color.White, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
-        bool sel = SelectedClipId == c.Id;
-        using var pen = new Pen(sel ? Accent : Color.FromArgb(20, 20, 24), sel ? 2.5f : 1.5f);
-        g.DrawRectangle(pen, r.X, r.Y, r.Width, r.Height);
-        // Trim grips
-        using var grip = new SolidBrush(Color.FromArgb(sel ? 200 : 90, 255, 255, 255));
-        g.FillRectangle(grip, r.X + 1, r.Y + TrackH / 2 - 10, 3, 20);
-        g.FillRectangle(grip, r.Right - 4, r.Y + TrackH / 2 - 10, 3, 20);
+        bool sel = _selectedClips.Contains(c.Id);
+        if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
+        else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
+        Grips(g, r, TrackH, 20, sel);
+    }
+
+    static RectangleF Gap(RectangleF r) => r.Width > 6 ? new RectangleF(r.X + 1, r.Y, r.Width - 2, r.Height) : r;
+
+    /// <summary>Rounded trim handles at both ends.</summary>
+    static void Grips(Graphics g, RectangleF r, float h, float len, bool sel)
+    {
+        var c = Color.FromArgb(sel ? 220 : 110, 255, 255, 255);
+        Theme.FillRounded(g, c, new RectangleF(r.X + 3, r.Y + h / 2 - len / 2, 3, len), 1.5f);
+        Theme.FillRounded(g, c, new RectangleF(r.Right - 6, r.Y + h / 2 - len / 2, 3, len), 1.5f);
     }
 
     void DrawAudioTrack(Graphics g, Project p)
@@ -290,7 +343,9 @@ public sealed class TimelineControl : Control
         if (r.Right < 0 || r.Left > Width) return;
         var media = p.FindMedia(a.SourceId);
         bool silent = a.EffectiveVolume <= 0;
-        using (var b = new SolidBrush(silent ? Color.FromArgb(60, 70, 66) : AudioColor)) g.FillRectangle(b, r);
+        r = Gap(r);
+        using var shape = Theme.Rounded(r);
+        Theme.FillRounded(g, silent ? Color.FromArgb(60, 70, 66) : AudioColor, r);
 
         // Waveform of the whole file, cropped to this item's in/out.
         if (media is { Duration.Ticks: > 0 } && Thumb(a.SourceId, _library.GetState(a.SourceId).ThumbnailPath) is { } wave)
@@ -298,7 +353,7 @@ public sealed class TimelineControl : Control
             float x0 = (float)(a.In.TotalSeconds / media.Duration.TotalSeconds * wave.Width);
             float w = (float)(a.Duration.TotalSeconds / media.Duration.TotalSeconds * wave.Width);
             var region = g.Clip;
-            g.SetClip(r);
+            g.SetClip(shape, CombineMode.Intersect);
             using var attrs = new System.Drawing.Imaging.ImageAttributes();
             if (silent) attrs.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.35f });
             g.DrawImage(wave, Rectangle.Round(new RectangleF(r.X, r.Y + 2, r.Width, r.Height - 4)), x0, 0, Math.Max(1, w), wave.Height, GraphicsUnit.Pixel, attrs);
@@ -308,11 +363,9 @@ public sealed class TimelineControl : Control
         // No text on audio items: just the waveform (greyed when muted). The name, times and volume
         // are in the hover tooltip and the Properties panel.
         bool sel = SelectedAudioId == a.Id;
-        using var pen = new Pen(sel ? Accent : Color.FromArgb(20, 20, 24), sel ? 2.5f : 1.5f);
-        g.DrawRectangle(pen, r.X, r.Y, r.Width, r.Height);
-        using var grip = new SolidBrush(Color.FromArgb(sel ? 200 : 90, 255, 255, 255));
-        g.FillRectangle(grip, r.X + 1, r.Y + AudioRowH / 2 - 7, 3, 14);
-        g.FillRectangle(grip, r.Right - 4, r.Y + AudioRowH / 2 - 7, 3, 14);
+        if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
+        else Theme.DrawRounded(g, Color.FromArgb(60, 255, 255, 255), 1f, r);
+        Grips(g, r, AudioRowH, 14, sel);
     }
 
     void DrawBar(Graphics g, Annotation a, RectangleF r)
@@ -323,26 +376,12 @@ public sealed class TimelineControl : Control
             AnnotationKind.Box => Color.FromArgb(200, 160, 30),
             _ => Color.FromArgb(120, 120, 135),
         };
-        using var path = Rounded(r, 4);
-        using (var b = new SolidBrush(col)) g.FillPath(b, path);
+        Theme.FillRounded(g, col, r, 5);
         if (SelectedAnnotationId is { } sel && (sel == a.Id || (a.LinkId is { } l && _session.Project.FindAnnotation(sel)?.LinkId == l)))
-            using (var pen = new Pen(Accent, 2)) g.DrawPath(pen, path);
+            Theme.DrawRounded(g, Accent, 2, r, 5);
         var text = a.Kind == AnnotationKind.Text ? $"T  {a.Text.Split('\n')[0]}" : a.Kind == AnnotationKind.Arrow ? "→  Arrow" : "▭  Box";
         TextRenderer.DrawText(g, text, Font, Rectangle.Round(new RectangleF(r.X + 4, r.Y, r.Width - 6, r.Height)),
             Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-    }
-
-    static GraphicsPath Rounded(RectangleF r, float rad)
-    {
-        var p = new GraphicsPath();
-        float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
-        if (d < 1) { p.AddRectangle(r); return p; }
-        p.AddArc(r.X, r.Y, d, d, 180, 90);
-        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        p.CloseFigure();
-        return p;
     }
 
     Image? Thumb(Guid sourceId, string? path)
@@ -422,6 +461,12 @@ public sealed class TimelineControl : Control
             var r = ClipRect(i);
             if (!r.Contains(e.Location)) continue;
             var c = p.Timeline[i];
+            if ((ModifierKeys & (Keys.Control | Keys.Shift)) != 0)
+            {
+                // Ctrl+click adds/removes a clip; Shift+click selects the run from the main clip. No drag.
+                ExtendSelection(i, range: (ModifierKeys & Keys.Shift) != 0);
+                return;
+            }
             SelectClip(c.Id);
             _dragId = c.Id;
             _originA = c.In;
@@ -462,10 +507,11 @@ public sealed class TimelineControl : Control
                 if (_dragMoved) { _dropIndex = DropIndex(e.X); Invalidate(); }
                 break;
             case Drag.TrimIn:
-                _session.Preview(p => TimelineOps.TrimIn(p, id, _originA + dt));
+                // The mouse moves in timeline time; In/Out are footage time (they differ when the clip is sped up).
+                _session.Preview(p => TimelineOps.TrimIn(p, id, _originA + (p.FindClip(id)?.SourceSpan(dt) ?? dt)));
                 break;
             case Drag.TrimOut:
-                _session.Preview(p => TimelineOps.TrimOut(p, id, _originB + dt));
+                _session.Preview(p => TimelineOps.TrimOut(p, id, _originB + (p.FindClip(id)?.SourceSpan(dt) ?? dt)));
                 break;
             case Drag.AnnoMove:
                 var len = _originB - _originA;
@@ -597,6 +643,32 @@ public sealed class TimelineControl : Control
     {
         SelectedClipId = id;
         if (id is not null) { SelectedAnnotationId = null; SelectedAudioId = null; }
+        ClipSelected?.Invoke(this, EventArgs.Empty);
+        Invalidate();
+    }
+
+    void ExtendSelection(int index, bool range)
+    {
+        var p = _session.Project;
+        var id = p.Timeline[index].Id;
+        SelectedAnnotationId = null;
+        SelectedAudioId = null;
+        if (range && _primaryClip is { } main && p.Timeline.FindIndex(c => c.Id == main) is var from and >= 0)
+        {
+            int lo = Math.Min(from, index), hi = Math.Max(from, index);
+            for (int k = lo; k <= hi; k++) _selectedClips.Add(p.Timeline[k].Id);
+        }
+        else if (_selectedClips.Contains(id) && _selectedClips.Count > 1)
+        {
+            _selectedClips.Remove(id);
+            if (_primaryClip == id) _primaryClip = _selectedClips.First();
+        }
+        else
+        {
+            _selectedClips.Add(id);
+            _primaryClip ??= id;
+        }
+        if (_primaryClip is null || !_selectedClips.Contains(_primaryClip.Value)) _primaryClip = id;
         ClipSelected?.Invoke(this, EventArgs.Empty);
         Invalidate();
     }

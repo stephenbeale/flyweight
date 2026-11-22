@@ -65,7 +65,8 @@ public sealed class MediaLibrary
         if (media.IsAudioOnly) { await PrepareAudioAsync(media, ct); return; }
 
         // Stills get their own key: images imported before D17 left ~0.04 s "video" proxies under the plain key.
-        var dir = Path.Combine(CacheDirectory, CacheKey(media.OriginalPath) + (media.IsStill ? "-still" : ""));
+        // "-p2": proxies made with the 2026-11-22 ultrafast settings were blocky; this key rebuilds them.
+        var dir = Path.Combine(CacheDirectory, CacheKey(media.OriginalPath) + (media.IsStill ? "-still" : "-p2"));
         Directory.CreateDirectory(dir);
         var proxy = Path.Combine(dir, "proxy.mp4");
         var thumb = Path.Combine(dir, "thumb.jpg");
@@ -146,8 +147,10 @@ public sealed class MediaLibrary
     /// The proxy transcode. Only the first video and audio streams are kept, with no metadata and no
     /// timecode track: drone/camera files (DJI) carry a timecode track that made ffmpeg's mp4 writer
     /// crash at the end of a 14-minute proxy ("Assertion next_dts <= 0x7fffffff failed").
-    /// Videos: ultrafast all-intra x264 and GPU decoding where available. Decoding the original is
-    /// the slow part; these settings were ~20% faster than veryfast + CPU on 1080p60 DJI footage.
+    /// Videos: superfast all-intra x264 at CRF 21, with GPU decoding where available. Decoding the original is
+    /// the slow part, so the x264 preset barely changes the time (ultrafast, superfast and veryfast all took ~2.0 s
+    /// per 10 s of 1080p60 DJI footage), but ultrafast turns off deblocking and adaptive quantisation, so dark
+    /// areas went blocky, very visibly once brightened (D26).
     /// </summary>
     internal static List<string> ProxyArgs(SourceMedia media, string output, bool hwDecode)
     {
@@ -171,7 +174,7 @@ public sealed class MediaLibrary
             {
                 "-i", media.OriginalPath,
                 "-map", "0:v:0", "-vf", $"{fit},fps={fps},format=yuv420p",
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-g", "1", "-bf", "0",
+                "-c:v", "libx264", "-preset", "superfast", "-crf", "21", "-g", "1", "-bf", "0",
             });
         }
         if (media.HasAudio && !media.IsStill)

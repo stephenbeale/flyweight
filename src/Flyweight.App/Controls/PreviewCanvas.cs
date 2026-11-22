@@ -177,7 +177,8 @@ public sealed class PreviewCanvas : Control
         {
             var size = TextRenderer.MeasureText(g, notice, Font);
             var r = new Rectangle((int)(canvas.X + (canvas.Width - size.Width) / 2) - 14, (int)canvas.Y + 14, size.Width + 28, size.Height + 14);
-            using (var bb = new SolidBrush(Color.FromArgb(215, 20, 20, 24))) g.FillRectangle(bb, r);
+            Theme.FillRounded(g, Color.FromArgb(225, 20, 20, 24), r, 8);
+            Theme.DrawRounded(g, Color.FromArgb(120, Theme.Accent), 1, r, 8);
             TextRenderer.DrawText(g, notice, Font, r, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
     }
@@ -185,8 +186,8 @@ public sealed class PreviewCanvas : Control
     void Badge(Graphics g, RectangleF canvas, string text)
     {
         var size = TextRenderer.MeasureText(g, text, Font);
-        var badge = new Rectangle((int)canvas.X + 8, (int)canvas.Bottom - 30, size.Width + 16, 22);
-        using (var bb = new SolidBrush(Color.FromArgb(170, 0, 0, 0))) g.FillRectangle(bb, badge);
+        var badge = new Rectangle((int)canvas.X + 10, (int)canvas.Bottom - 34, size.Width + 22, 24);
+        Theme.FillRounded(g, Color.FromArgb(185, 0, 0, 0), badge, 12); // pill
         TextRenderer.DrawText(g, text, Font, badge, Color.Gainsboro, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 

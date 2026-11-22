@@ -21,7 +21,7 @@ public sealed class ClipPropertiesPanel : UserControl
         Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(8, 6, 8, 6), BackColor = Bg,
     };
     readonly Label _heading;
-    readonly Label _name = new() { ForeColor = Fg, AutoSize = false, Height = 22, Dock = DockStyle.Fill, AutoEllipsis = true };
+    readonly Label _name = new() { ForeColor = Fg, AutoSize = true, MaximumSize = new Size(250, 0), Margin = new Padding(0, 2, 0, 4) }; // wraps "Changes apply to all…"
     readonly Slider _volume = new(0, (int)(TimelineOps.MaxClipVolume * 100), "%");
     readonly CheckBox _muted = new() { Text = "Muted  (M)", ForeColor = Fg, AutoSize = true };
     readonly Label _note = new() { ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0) };
@@ -30,17 +30,17 @@ public sealed class ClipPropertiesPanel : UserControl
     readonly Slider _panY = new(0, 100, "");
     readonly Slider _brightness = new(-100, 100, "");
     readonly Slider _contrast = new(-100, 100, "");
-    readonly Button _resetLook = new()
-    {
-        Text = "Reset picture", AutoSize = true, FlatStyle = FlatStyle.Flat, ForeColor = Fg, BackColor = Color.FromArgb(45, 45, 52),
-    };
+    readonly Theme.RoundButton _resetLook = new() { Text = "Reset picture", Width = 130, Height = 32 };
     readonly Label _lookNote = new()
     {
         ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0),
         Text = "Zoom crops the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
     };
     readonly List<Control> _pictureControls = new();
+    readonly ComboBox _speed = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(40, 40, 47), ForeColor = Color.Gainsboro };
+    readonly List<Control> _speedControls = new();
     bool _loading;
+    int _multi = 1;
 
     /// <summary>Volume as a gain (1 = 100%), and how it should reach the undo stack.</summary>
     public event Action<double, StyleEditPhase>? VolumeChanged;
@@ -49,6 +49,9 @@ public sealed class ClipPropertiesPanel : UserControl
     /// <summary>A picture setting changed: the new value in model units (zoom 1–4, pan 0–1, brightness/contrast -1–1).</summary>
     public event Action<LookSetting, double, StyleEditPhase>? LookChanged;
     public event Action? LookReset;
+
+    /// <summary>The clip's playback speed (0.25–4) was picked.</summary>
+    public event Action<double>? SpeedChanged;
 
     public ClipPropertiesPanel()
     {
@@ -60,6 +63,13 @@ public sealed class ClipPropertiesPanel : UserControl
 
         _heading = Section("Clip");
         Span(_name);
+        foreach (var sp in TimelineOps.SpeedPresets) _speed.Items.Add($"{sp:0.##}×");
+        _speedControls.Add(Row("Speed", _speed));
+        _speedControls.Add(_speed);
+        _speed.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_loading && _speed.SelectedIndex >= 0) SpeedChanged?.Invoke(TimelineOps.SpeedPresets[_speed.SelectedIndex]);
+        };
         Section("Audio");
         Row("Volume", _volume);
         Row("", _muted);
@@ -89,12 +99,18 @@ public sealed class ClipPropertiesPanel : UserControl
         Controls.Add(_table);
     }
 
-    public void ShowClip(Clip c, SourceMedia? media)
+    /// <param name="selectedCount">How many clips are selected: with more than one, edits here apply to all of them.</param>
+    public void ShowClip(Clip c, SourceMedia? media, int selectedCount = 1)
     {
         _loading = true;
         try
         {
             SetPictureVisible(true);
+            foreach (var sc in _speedControls) sc.Visible = true;
+            int si = Array.FindIndex(TimelineOps.SpeedPresets, v => Math.Abs(v - c.Speed) < 0.001);
+            if (si < 0) { _speed.Items.Add($"{c.Speed:0.##}×"); si = _speed.Items.Count - 1; } // a hand-edited file
+            _speed.SelectedIndex = si;
+            _speed.Enabled = media is not { IsStill: true }; // stills: drag the edge to change how long they show
             _zoom.SetValue((int)Math.Round(c.Zoom * 100));
             _panX.SetValue((int)Math.Round(c.PanX * 100));
             _panY.SetValue((int)Math.Round(c.PanY * 100));
@@ -107,14 +123,17 @@ public sealed class ClipPropertiesPanel : UserControl
         finally { _loading = false; }
 
         bool hasAudio = media is { HasAudio: true };
-        Show("Clip", media, c.Volume, c.Muted, hasAudio,
+        _multi = selectedCount;
+        Show(selectedCount > 1 ? $"{selectedCount} clips selected" : "Clip", media, c.Volume, c.Muted, hasAudio || selectedCount > 1,
             hasAudio ? "100% is as recorded. Above 100% boosts quiet audio (it can distort)."
             : media is { IsStill: true } ? "Still images have no sound." : "This clip has no audio track.");
     }
 
     public void ShowAudio(AudioItem a, SourceMedia? media)
     {
+        _multi = 1;
         SetPictureVisible(false);
+        foreach (var sc in _speedControls) sc.Visible = false;
         Show("Audio track item", media, a.Volume, a.Muted, hasAudio: true,
             $"Starts at {TimelineControl.FormatTime(a.Start, tenths: true)}, plays {a.Duration.TotalSeconds:0.0}s. " +
             "It plays over the clips' own sound: turn clips down or mute them (M) to hear only this.");
@@ -131,7 +150,8 @@ public sealed class ClipPropertiesPanel : UserControl
         try
         {
             _heading.Text = heading.ToUpperInvariant();
-            _name.Text = media?.DisplayName ?? "(missing)";
+            _name.Text = _multi > 1 ? $"Changes apply to all {_multi}. Showing {media?.DisplayName ?? "(missing)"}." : media?.DisplayName ?? "(missing)";
+            _name.ForeColor = _multi > 1 ? Theme.Accent : Fg;
             _volume.SetValue((int)Math.Round(volume * 100));
             _muted.Checked = muted;
             _volume.Enabled = hasAudio && !muted;
@@ -160,7 +180,7 @@ public sealed class ClipPropertiesPanel : UserControl
         _table.SetColumnSpan(c, 2);
     }
 
-    void Row(string label, Control editor)
+    Label Row(string label, Control editor)
     {
         _table.RowCount++;
         _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -169,6 +189,7 @@ public sealed class ClipPropertiesPanel : UserControl
         if (_pictureControls.Count > 0) { _pictureControls.Add(l); _pictureControls.Add(editor); } // rows after the Picture heading
         _table.Controls.Add(l, 0, _table.RowCount - 1);
         _table.Controls.Add(editor, 1, _table.RowCount - 1);
+        return l;
     }
 }
 

@@ -12,6 +12,8 @@ public sealed class MainForm : Form
     static readonly string AppDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Flyweight");
     static readonly string AutosavePath = Path.Combine(AppDataDir, "autosave" + ProjectSerializer.FileExtension);
     static readonly string LockPath = Path.Combine(AppDataDir, "session.lock");
+    static readonly string RecentPath = Path.Combine(AppDataDir, "recent.json");
+    string? _lastRecent;
     static readonly string[] VideoExtensions = { ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts", ".wmv", ".gif" };
     static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff" };
     static readonly string[] AudioExtensions = { ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma" };
@@ -34,7 +36,7 @@ public sealed class MainForm : Form
     readonly ToolStripButton _undoBtn = new("Undo");
     readonly ToolStripButton _redoBtn = new("Redo");
     readonly Dictionary<Tool, ToolStripButton> _toolButtons = new();
-    readonly Button _playBtn = new() { Text = "▶", Width = 44, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
+    readonly Theme.RoundButton _playBtn = new() { Text = "▶", Width = 52, Dock = DockStyle.Left, Primary = true };
     readonly System.Windows.Forms.Timer _autosave = new() { Interval = 10_000 };
 
     public MainForm()
@@ -50,6 +52,7 @@ public sealed class MainForm : Form
         using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("Flyweight.App.flyweight.ico"))
             if (iconStream is not null) Icon = new Icon(iconStream);
 
+        ToolStripManager.Renderer = new Theme.ToolRenderer(); // right-click menus match the dark toolbar
         _engine = new PlaybackEngine(_session, _library);
         _preview.Bind(_session, _engine, _library);
         _timeline.Bind(_session, _library, () => _engine.Position);
@@ -63,30 +66,43 @@ public sealed class MainForm : Form
 
     void BuildLayout()
     {
-        // System-rendered (light) toolbar: set its colours explicitly, otherwise items inherit the
-        // form's dark-theme Gainsboro text and come out pale grey on the light strip.
+        // Dark toolbar matching the rest of the app (Theme.ToolRenderer: rounded hover, accent for the current tool).
         var tools = new ToolStrip
         {
-            GripStyle = ToolStripGripStyle.Hidden, RenderMode = ToolStripRenderMode.System, Padding = new Padding(6, 2, 6, 2),
-            BackColor = SystemColors.Control, ForeColor = Color.Black,
+            GripStyle = ToolStripGripStyle.Hidden, Renderer = new Theme.ToolRenderer(), Padding = new Padding(8, 4, 8, 4),
+            BackColor = Theme.Bar, ForeColor = Theme.Text,
         };
+        // After a click WinForms keeps the button "Selected" and doesn't repaint it when the mouse moves off, so the
+        // hover highlight stuck on Split/Freeze/Delete. The renderer only highlights the button under the pointer;
+        // repaint whenever the pointer moves to another button or leaves the bar.
+        ToolStripItem? hovered = null;
+        tools.MouseMove += (_, e) =>
+        {
+            var item = tools.GetItemAt(e.Location);
+            if (item != hovered) { hovered = item; tools.Invalidate(); }
+        };
+        tools.MouseLeave += (_, _) => { hovered = null; tools.Invalidate(); };
         ToolStripButton Btn(string text, string tip, Action click)
         {
-            var b = new ToolStripButton(text) { ToolTipText = tip, DisplayStyle = ToolStripItemDisplayStyle.Text, ForeColor = Color.Black };
-            b.Click += (_, _) => click();
+            var b = new ToolStripButton(text) { ToolTipText = tip, DisplayStyle = ToolStripItemDisplayStyle.Text, ForeColor = Theme.Text, Padding = new Padding(4, 2, 4, 2) };
+            b.Click += (_, _) =>
+            {
+                click();
+                b.Owner?.Invalidate(); // after a dialog closes, repaint so the old hover highlight goes
+            };
             return b;
         }
         _undoBtn.Click += (_, _) => _session.Undo();
         _redoBtn.Click += (_, _) => _session.Redo();
         _undoBtn.ToolTipText = "Undo (Ctrl+Z)";
         _redoBtn.ToolTipText = "Redo (Ctrl+Y)";
-        _undoBtn.ForeColor = _redoBtn.ForeColor = Color.Black; // still greys out when disabled
+        _undoBtn.ForeColor = _redoBtn.ForeColor = Theme.Text; // the renderer greys them out when disabled
 
         tools.Items.AddRange(new ToolStripItem[]
         {
             Btn("New", "New project", NewProject),
-            Btn("Open…", "Open project (Ctrl+O)", OpenProject),
-            Btn("Save", "Save project (Ctrl+S)", () => SaveProject(false)),
+            OpenButton(),
+            SaveButton(),
             new ToolStripSeparator(),
             Btn("Import…", "Import video, images or audio (Ctrl+I)", ImportDialog),
             new ToolStripSeparator(),
@@ -117,16 +133,14 @@ public sealed class MainForm : Form
         });
 
         // Transport bar under the preview
-        var transport = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Color.FromArgb(32, 32, 38), Padding = new Padding(8, 4, 8, 4) };
+        var transport = new Panel { Dock = DockStyle.Bottom, Height = 42, BackColor = Theme.Bar, Padding = new Padding(8, 4, 8, 4) };
         Button TBtn(string text, string tip, Action click, int width = 46)
         {
-            var b = new Button { Text = text, Width = width, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Color.White };
-            b.FlatAppearance.BorderSize = 0;
+            var b = new Theme.RoundButton { Text = text, Width = width, Dock = DockStyle.Left, ForeColor = Color.White };
             new ToolTip().SetToolTip(b, tip);
             b.Click += (_, _) => { click(); _preview.Focus(); };
             return b;
         }
-        _playBtn.FlatAppearance.BorderSize = 0;
         _playBtn.Click += (_, _) => { _engine.TogglePlay(); _preview.Focus(); };
         transport.Controls.Add(_timecode);
         // Docked Left, so the LAST added is leftmost: ⏮  |◀◀  ◀|  ▶  |▶  ▶▶|  ⏭  timecode
@@ -160,7 +174,7 @@ public sealed class MainForm : Form
         main.Panel1.Controls.Add(top);
         main.Panel2.Controls.Add(_timeline);
 
-        var status = new StatusStrip { SizingGrip = true };
+        var status = new StatusStrip { SizingGrip = true, Renderer = new Theme.ToolRenderer(), BackColor = Theme.Bar, ForeColor = Theme.Text };
         status.Items.Add(_statusText);
 
         Controls.Add(main);
@@ -182,6 +196,12 @@ public sealed class MainForm : Form
     {
         _session.Changed += (_, _) =>
         {
+            // Whatever gave the project its file (open, save, save as, new), it goes to the top of the recent list.
+            if (_session.FilePath is { } fp && fp != _lastRecent && !string.Equals(fp, AutosavePath, StringComparison.OrdinalIgnoreCase))
+            {
+                _lastRecent = fp;
+                RecentProjects.Save(RecentPath, RecentProjects.Add(RecentProjects.Load(RecentPath), fp));
+            }
             // Only re-seek the player when the CLIPS changed. Annotation/style edits are drawn on top, and
             // re-seeking on every mouse move of an annotation drag queued dozens of VLC seeks (laggy play after).
             var sig = TimelineSignature(_session.Project);
@@ -235,9 +255,10 @@ public sealed class MainForm : Form
         // Volume / mute for whichever is selected: an audio-track item or a video clip.
         void ApplySound(Action<Project, Guid, bool> set, StyleEditPhase phase)
         {
+            var clips = SelectedClips();
             Action<Project>? apply =
                 _timeline.SelectedAudioId is { } aid ? p => set(p, aid, true)
-                : _timeline.SelectedClipId is { } cid ? p => set(p, cid, false)
+                : clips.Count > 0 ? p => { foreach (var cid in clips) set(p, cid, false); } // every selected clip, one undo step
                 : null;
             if (apply is null) return;
             switch (phase)
@@ -260,14 +281,16 @@ public sealed class MainForm : Form
         _clipProps.LookChanged += (which, v, phase) =>
         {
             if (_timeline.SelectedClipId is not { } cid) return;
-            Action<Project> apply = which switch
+            var clips = SelectedClips();
+            Action<Project, Guid> one = which switch
             {
-                LookSetting.Zoom => p => TimelineOps.SetClipZoom(p, cid, v),
-                LookSetting.PanX => p => TimelineOps.SetClipPan(p, cid, v, null),
-                LookSetting.PanY => p => TimelineOps.SetClipPan(p, cid, null, v),
-                LookSetting.Brightness => p => TimelineOps.SetClipBrightness(p, cid, v),
-                _ => p => TimelineOps.SetClipContrast(p, cid, v),
+                LookSetting.Zoom => (p, id) => TimelineOps.SetClipZoom(p, id, v),
+                LookSetting.PanX => (p, id) => TimelineOps.SetClipPan(p, id, v, null),
+                LookSetting.PanY => (p, id) => TimelineOps.SetClipPan(p, id, null, v),
+                LookSetting.Brightness => (p, id) => TimelineOps.SetClipBrightness(p, id, v),
+                _ => (p, id) => TimelineOps.SetClipContrast(p, id, v),
             };
+            Action<Project> apply = p => { foreach (var id in clips) one(p, id); };
             switch (phase)
             {
                 case StyleEditPhase.Single: _session.Execute(apply); break;
@@ -276,10 +299,19 @@ public sealed class MainForm : Form
             }
             ShowClipUnderPlayhead(cid);
         };
+        _clipProps.SpeedChanged += speed =>
+        {
+            if (_timeline.SelectedClipId is not { } cid) return;
+            var clips = SelectedClips();
+            _session.Execute(p => { foreach (var id in clips) TimelineOps.SetClipSpeed(p, id, speed); });
+            ShowClipUnderPlayhead(cid);
+            _statusText.Text = $"Speed {speed:0.##}×" + (clips.Count > 1 ? $" for {clips.Count} clips" : "");
+        };
         _clipProps.LookReset += () =>
         {
             if (_timeline.SelectedClipId is not { } cid) return;
-            _session.Execute(p => TimelineOps.ResetClipLook(p, cid));
+            var clips = SelectedClips();
+            _session.Execute(p => { foreach (var id in clips) TimelineOps.ResetClipLook(p, id); });
             ShowClipUnderPlayhead(cid);
         };
 
@@ -385,6 +417,11 @@ public sealed class MainForm : Form
             case Keys.Control | Keys.Z: _session.Undo(); return true;
             case Keys.Control | Keys.Y: case Keys.Control | Keys.Shift | Keys.Z: _session.Redo(); return true;
             case Keys.Control | Keys.S: SaveProject(false); return true;
+            case Keys.Control | Keys.A:
+                _preview.Select(null);
+                _timeline.SelectAllClips(TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id);
+                _statusText.Text = $"Selected all {_session.Project.Timeline.Count} clips: Properties, M and Delete apply to all";
+                return true;
             case Keys.Control | Keys.Shift | Keys.S: SaveProject(true); return true;
             case Keys.Control | Keys.O: OpenProject(); return true;
             case Keys.Control | Keys.I: ImportDialog(); return true;
@@ -508,6 +545,13 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Mute/unmute the selected audio item, else <paramref name="clipId"/>.</summary>
+    /// <summary>The selected clips that still exist, in timeline order.</summary>
+    List<Guid> SelectedClips()
+    {
+        var ids = _timeline.SelectedClipIds;
+        return _session.Project.Timeline.Where(c => ids.Contains(c.Id)).Select(c => c.Id).ToList();
+    }
+
     void ToggleMute(Guid? clipId)
     {
         if (_timeline.SelectedAudioId is { } aid && _session.Project.FindAudio(aid) is { } item)
@@ -519,6 +563,15 @@ public sealed class MainForm : Form
             return;
         }
         if (clipId is not { } id || _session.Project.FindClip(id) is not { } c) return;
+        var sel = SelectedClips();
+        if (sel.Count > 1 && sel.Contains(id))
+        {
+            // Several clips: mute them all, unless they're all muted already (then unmute them all).
+            bool muteAll = sel.Any(x => _session.Project.FindClip(x) is { Muted: false });
+            _session.Execute(p => { foreach (var x in sel) TimelineOps.SetClipMuted(p, x, muteAll); });
+            _statusText.Text = $"{(muteAll ? "Muted" : "Unmuted")} {sel.Count} clips";
+            return;
+        }
         bool muted = !c.Muted;
         _session.Execute(p => TimelineOps.SetClipMuted(p, id, muted));
         var name = _session.Project.FindMedia(c.SourceId)?.DisplayName ?? "clip";
@@ -587,7 +640,7 @@ public sealed class MainForm : Form
         }
         _engine.Pause();
         _session.Execute(proj => TimelineOps.RemoveMedia(proj, mediaId));
-        if (_timeline.SelectedClipId is { } cid && _session.Project.FindClip(cid) is null) _timeline.SelectedClipId = null;
+        _timeline.PruneSelection(_session.Project);
         if (_timeline.SelectedAudioId is { } aid && _session.Project.FindAudio(aid) is null) _timeline.SelectedAudioId = null;
         UpdatePropertyGrid();
         _engine.Refresh();
@@ -612,10 +665,12 @@ public sealed class MainForm : Form
             _timeline.SelectedAudioId = null;
             UpdatePropertyGrid();
         }
-        else if (_timeline.SelectedClipId is { } cid)
+        else if (_timeline.SelectedClipId is not null)
         {
-            _session.Execute(p => TimelineOps.Delete(p, cid));
+            var clips = SelectedClips(); // every selected clip (Ctrl+A, Ctrl/Shift+click), one undo step
+            _session.Execute(p => { foreach (var id in clips) TimelineOps.Delete(p, id); });
             _timeline.SelectedClipId = null;
+            if (clips.Count > 1) _statusText.Text = $"Deleted {clips.Count} clips (Ctrl+Z to undo)";
         }
         else
         {
@@ -701,6 +756,58 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>"Save" with a ▾ for "Save as…" (a copy under a new name or folder; Ctrl+Shift+S).</summary>
+    ToolStripSplitButton SaveButton()
+    {
+        var b = new ToolStripSplitButton("Save") { ToolTipText = "Save project (Ctrl+S) · ▾ Save as… (Ctrl+Shift+S)", ForeColor = Theme.Text, DisplayStyle = ToolStripItemDisplayStyle.Text };
+        b.ButtonClick += (_, _) => { SaveProject(false); b.Owner?.Invalidate(); };
+        b.DropDownItems.Add(new ToolStripMenuItem("Save as…", null, (_, _) => SaveProject(true)) { ShortcutKeyDisplayString = "Ctrl+Shift+S" });
+        b.DropDownClosed += (_, _) => b.Owner?.Invalidate();
+        return b;
+    }
+
+    /// <summary>"Open…" with a ▾ listing the last few projects (newest first).</summary>
+    ToolStripSplitButton OpenButton()
+    {
+        var b = new ToolStripSplitButton("Open…") { ToolTipText = "Open project (Ctrl+O) · ▾ for recent projects", ForeColor = Theme.Text, DisplayStyle = ToolStripItemDisplayStyle.Text };
+        b.ButtonClick += (_, _) => { OpenProject(); b.Owner?.Invalidate(); };
+        b.DropDownClosed += (_, _) => b.Owner?.Invalidate();
+        b.DropDownItems.Add("(none yet)"); // so the ▾ opens; rebuilt each time below
+        b.DropDownOpening += (_, _) =>
+        {
+            b.DropDownItems.Clear();
+            var recent = RecentProjects.Load(RecentPath);
+            if (recent.Count == 0) { b.DropDownItems.Add(new ToolStripMenuItem("No recent projects") { Enabled = false }); return; }
+            for (int i = 0; i < recent.Count; i++)
+            {
+                var path = recent[i];
+                bool here = File.Exists(path);
+                var item = new ToolStripMenuItem($"&{i + 1}  {Path.GetFileNameWithoutExtension(path)}{(here ? "" : "  (missing)")}")
+                {
+                    ToolTipText = path, Enabled = here,
+                    ShortcutKeyDisplayString = Path.GetFileName(Path.GetDirectoryName(path)),
+                };
+                item.Click += (_, _) => OpenRecent(path);
+                b.DropDownItems.Add(item);
+            }
+            b.DropDownItems.Add(new ToolStripSeparator());
+            b.DropDownItems.Add("Clear recent list", null, (_, _) => { RecentProjects.Save(RecentPath, Array.Empty<string>()); _lastRecent = null; });
+        };
+        return b;
+    }
+
+    void OpenRecent(string path)
+    {
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, $"That project isn't there any more:\n\n{path}", "Open", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RecentProjects.Save(RecentPath, RecentProjects.Remove(RecentProjects.Load(RecentPath), path));
+            return;
+        }
+        if (!ConfirmDiscard()) return;
+        LoadProject(path);
+    }
+
     void OpenProject()
     {
         if (!ConfirmDiscard()) return;
@@ -734,7 +841,15 @@ public sealed class MainForm : Form
         var path = _session.FilePath;
         if (saveAs || path is null)
         {
-            using var dlg = new SaveFileDialog { Filter = $"Flyweight project|*{ProjectSerializer.FileExtension}", FileName = "My video" + ProjectSerializer.FileExtension };
+            // Start where the project already lives, under its current name (Save as = save a copy elsewhere / renamed).
+            var current = _session.FilePath;
+            using var dlg = new SaveFileDialog
+            {
+                Filter = $"Flyweight project|*{ProjectSerializer.FileExtension}",
+                FileName = (current is null ? "My video" : Path.GetFileNameWithoutExtension(current)) + ProjectSerializer.FileExtension,
+                InitialDirectory = current is not null ? Path.GetDirectoryName(current) : NewProjectForm.DefaultFolder(null),
+                Title = saveAs ? "Save project as" : "Save project",
+            };
             if (dlg.ShowDialog(this) != DialogResult.OK) return false;
             path = dlg.FileName;
         }
@@ -802,7 +917,7 @@ public sealed class MainForm : Form
 #endif
 
     static string TimelineSignature(Project p) =>
-        string.Join('|', p.Timeline.Select(c => $"{c.Id}:{c.SourceId}:{c.In.Ticks}:{c.Out.Ticks}"));
+        string.Join('|', p.Timeline.Select(c => $"{c.Id}:{c.SourceId}:{c.In.Ticks}:{c.Out.Ticks}:{c.Speed}"));
 
     void UpdateUi()
     {
@@ -813,7 +928,7 @@ public sealed class MainForm : Form
 
         // Drop selections that no longer exist (e.g. after undo).
         if (_preview.SelectedAnnotationId is { } aid && _session.Project.FindAnnotation(aid) is null) _preview.Select(null);
-        if (_timeline.SelectedClipId is { } cid && _session.Project.FindClip(cid) is null) _timeline.SelectedClipId = null;
+        _timeline.PruneSelection(_session.Project);
 
         var mediaSig = string.Join('|', _session.Project.Media.Select(m => m.Id));
         if (mediaSig != _mediaSig) { _mediaSig = mediaSig; _bin.Sync(_session.Project, _library); } // status updates come via OnMediaStateChanged
@@ -844,7 +959,7 @@ public sealed class MainForm : Form
 
         if (a is not null) _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
         if (audio is not null) _clipProps.ShowAudio(audio, p.FindMedia(audio.SourceId));
-        else if (clip is not null) _clipProps.ShowClip(clip, p.FindMedia(clip.SourceId));
+        else if (clip is not null) _clipProps.ShowClip(clip, p.FindMedia(clip.SourceId), SelectedClips().Count);
         _props.Visible = a is not null;
         _clipProps.Visible = audio is not null || clip is not null;
         _propsEmpty.Visible = a is null && audio is null && clip is null;

@@ -11,7 +11,7 @@ namespace Flyweight.Core.Export;
 ///
 ///   inputs:  one "-ss In -t Dur -i original" per clip (fast + accurate input seeking),
 ///            then one per audio-track item, then one transparent full-frame PNG per visible annotation
-///   graph:   each clip → fps, fit/pad to 16:9 (or zoom-crop), brightness/contrast curve,
+///   graph:   each clip → speed (setpts / atempo), fps, fit/pad to 16:9 (or zoom-crop), brightness/contrast curve,
 ///            48k stereo audio (silence if none)
 ///            → concat → amix the audio-track items (adelay'd to their start) over the clip audio
 ///            → overlay each PNG with enable='between(t,start,end)'
@@ -26,6 +26,15 @@ public sealed class ExportPlan
     public required string FilterGraph { get; init; }
     public required TimeSpan Duration { get; init; }
     public required double FrameRate { get; init; }
+
+    /// <summary>
+    /// The same export on the CPU (x264), used if the graphics chip's encoder can't start (no Intel GPU, old
+    /// driver). Null when <see cref="Arguments"/> already use x264.
+    /// </summary>
+    public IReadOnlyList<string>? FallbackArguments { get; init; }
+
+    /// <summary>Which encoder actually produced the file, once <see cref="RunAsync"/> has finished.</summary>
+    public string UsedEncoder { get; private set; } = "";
 
     /// <param name="overlayPngs">Annotation id → path of a transparent PNG at the export size.</param>
     public static ExportPlan Build(Project p, ExportSettings settings, IReadOnlyDictionary<Guid, string> overlayPngs, string outputPath)
@@ -49,7 +58,7 @@ public sealed class ExportPlan
             var media = p.FindMedia(clip.SourceId) ?? throw new InvalidOperationException($"Clip {i + 1} refers to missing media.");
             // A zero/negative length would become trim=duration=0, which ffmpeg reads as "no
             // limit": with tpad's endless clone that is an export that never finishes.
-            if (clip.Duration < TimelineOps.MinClipLength)
+            if (clip.SourceLength < TimelineOps.MinClipLength)
                 throw new InvalidOperationException($"Clip {i + 1} ({media.DisplayName}) is too short to export. Delete it and re-import the file.");
 
             if (media.IsStill)
@@ -57,18 +66,21 @@ public sealed class ExportPlan
                 // frames. Decoding a 12 MP image 30×/s was the slow part of exporting stills.
                 args.AddRange(new[] { "-loop", "1", "-framerate", "1", "-t", Sec(clip.Duration), "-i", media.OriginalPath });
             else
-                args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.Duration), "-i", media.OriginalPath });
-            var d = Sec(clip.Duration);
+                args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.SourceLength), "-i", media.OriginalPath });
+            var d = Sec(clip.Duration); // length on the TIMELINE (after speed)
+            double speed = media.IsStill ? 1 : clip.Speed;
+            bool sped = Math.Abs(speed - 1) > 0.0005;
 
             // Zoom crops the original before scaling (sharp), and the tone curve runs at the output size (cheap).
             var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, w, h) : Canvas.FitFilter(w, h);
-            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{fit},{ClipLook.ToneFilter(clip)}format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");
+            var pts = sped ? $"setpts=(PTS-STARTPTS)/{Num(speed)}" : "setpts=PTS-STARTPTS";
+            graph.Append($"[{input}:v]{pts},fps={fpsStr},{fit},{ClipLook.ToneFilter(clip)}format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");
             // A muted clip is treated like one with no audio: silence, and its track isn't decoded at all.
             var gain = clip.EffectiveVolume;
             if (media.HasAudio && gain > 0)
             {
                 var vol = Math.Abs(gain - 1) < 0.001 ? "" : $"volume={Num(Math.Round(gain, 3))},";
-                graph.Append($"[{input}:a]{AudioIn(media)}{vol}apad,atrim=duration={d}[a{i}];\n");
+                graph.Append($"[{input}:a]{AudioIn(media)}{(sped ? Tempo(speed) : "")}{vol}apad,atrim=duration={d}[a{i}];\n");
             }
             else
                 graph.Append($"anullsrc=r=48000:cl=stereo,atrim=duration={d}[a{i}];\n");
@@ -119,26 +131,66 @@ public sealed class ExportPlan
         graph.Append($";\n[{last}]format=yuv420p[vout]");
 
         var filter = graph.ToString();
-        args.AddRange(new[]
+        args.AddRange(new[] { "-filter_complex", filter, "-map", "[vout]", "-map", "[aout]" });
+        int kbps = YouTubeBitrateKbps(h, fps);
+        List<string> Finish(IEnumerable<string> video)
         {
-            "-filter_complex", filter,
-            "-map", "[vout]", "-map", "[aout]",
-            "-c:v", "libx264", "-profile:v", "high", "-preset", settings.Preset, "-crf", settings.Crf.ToString(),
-            "-pix_fmt", "yuv420p", "-r", fpsStr,
-            "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2",
-            "-movflags", "+faststart",
-            "-write_tmcd", "0", // no camera timecode track: it crashed ffmpeg's mp4 writer on DJI proxies
-            outputPath,
-        });
-
+            var a = new List<string>(args);
+            a.AddRange(video);
+            a.AddRange(new[]
+            {
+                "-r", fpsStr,
+                "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2",
+                "-movflags", "+faststart",
+                "-write_tmcd", "0", // no camera timecode track: it crashed ffmpeg's mp4 writer on DJI proxies
+                outputPath,
+            });
+            return a;
+        }
+        var x264 = Finish(X264Args(settings, kbps));
         return new ExportPlan
         {
-            Arguments = args,
+            Arguments = settings.UseHardwareEncoder ? Finish(QsvArgs(kbps)) : x264,
+            FallbackArguments = settings.UseHardwareEncoder ? x264 : null,
             FilterGraph = filter,
             Duration = total,
             FrameRate = fps,
         };
     }
+
+    /// <summary>
+    /// Video bitrate to aim for: YouTube's recommended upload rate for SDR, plus a third for headroom.
+    /// YouTube re-encodes every upload, so more than this only makes the file bigger: uncapped CRF 18 made a
+    /// 5½-minute brightened DJI clip 1.27 GB (32 Mbit/s); at 16 Mbit/s it's about 650 MB (D29).
+    /// </summary>
+    public static int YouTubeBitrateKbps(int height, double fps)
+    {
+        bool high = fps > 31;
+        int recommended = height switch
+        {
+            >= 2160 => high ? 60_000 : 40_000,
+            >= 1440 => high ? 24_000 : 16_000,
+            _ => high ? 12_000 : 8_000,
+        };
+        return recommended * 4 / 3;
+    }
+
+    /// <summary>CPU encode: CRF 18 "veryfast" (it scored as well as "medium" on real footage at 2.6× the speed), capped.</summary>
+    static string[] X264Args(ExportSettings s, int kbps) => new[]
+    {
+        "-c:v", "libx264", "-profile:v", "high", "-preset", s.Preset, "-crf", s.Crf.ToString(),
+        "-maxrate", $"{kbps}k", "-bufsize", $"{kbps * 2}k", "-pix_fmt", "yuv420p",
+    };
+
+    /// <summary>
+    /// Intel Quick Sync (the graphics chip's H.264 encoder): about 6.6× faster than x264 "medium" on an i5-10400T.
+    /// Its constant-quality modes ignored the bitrate cap, so it runs at a target bitrate with a ceiling.
+    /// </summary>
+    static string[] QsvArgs(int kbps) => new[]
+    {
+        "-c:v", "h264_qsv", "-profile:v", "high",
+        "-b:v", $"{kbps}k", "-maxrate", $"{kbps * 5 / 4}k", "-bufsize", $"{kbps * 5 / 2}k", "-pix_fmt", "nv12",
+    };
 
     /// <summary>
     /// Start of every audio chain: reset timestamps, 48 kHz, float stereo. Mono is copied to both
@@ -150,6 +202,32 @@ public sealed class ExportPlan
         (media.AudioChannels == 1 ? "pan=stereo|c0=c0|c1=c0," : "") +
         "aformat=sample_fmts=fltp:channel_layouts=stereo,";
 
-    public Task RunAsync(IProgress<double>? progress = null, CancellationToken ct = default) =>
-        FfmpegRunner.RunFfmpegAsync(Arguments, Duration, progress, ct);
+    /// <summary>
+    /// Speed the audio up/down keeping its pitch. One atempo stage handles 0.5–2, so 0.25 and 4 take two stages.
+    /// Ends with a comma, like <see cref="AudioIn"/>.
+    /// </summary>
+    internal static string Tempo(double speed)
+    {
+        var stages = new List<string>();
+        while (speed > 2.0005) { stages.Add("atempo=2"); speed /= 2; }
+        while (speed < 0.4995) { stages.Add("atempo=0.5"); speed /= 0.5; }
+        if (Math.Abs(speed - 1) > 0.0005) stages.Add($"atempo={Num(Math.Round(speed, 4))}");
+        return string.Concat(stages.Select(s => s + ","));
+    }
+
+    /// <summary>Run the export; if the graphics chip's encoder fails, run it again on the CPU.</summary>
+    public async Task RunAsync(IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        try
+        {
+            await FfmpegRunner.RunFfmpegAsync(Arguments, Duration, progress, ct);
+            UsedEncoder = FallbackArguments is null ? "x264 (CPU)" : "Intel Quick Sync (graphics chip)";
+        }
+        catch (FfmpegException) when (FallbackArguments is not null && !ct.IsCancellationRequested)
+        {
+            progress?.Report(0);
+            await FfmpegRunner.RunFfmpegAsync(FallbackArguments, Duration, progress, ct);
+            UsedEncoder = "x264 (CPU)";
+        }
+    }
 }

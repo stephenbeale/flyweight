@@ -40,7 +40,14 @@ public sealed record ExportSettings
     /// <summary>x264 quality. 18 is visually lossless-ish; YouTube re-encodes anyway.</summary>
     public int Crf { get; init; } = 18;
 
-    public string Preset { get; init; } = "medium";
+    /// <summary>x264 preset for CPU exports (and the fallback). "veryfast" matched "medium" on real footage at 2.6× the speed.</summary>
+    public string Preset { get; init; } = "veryfast";
+
+    /// <summary>
+    /// Use the graphics chip's encoder (Intel Quick Sync) when it works, falling back to x264. Still H.264 High
+    /// yuv420p for YouTube: this is not a codec choice, just a faster way to make the same file (rule 9).
+    /// </summary>
+    public bool UseHardwareEncoder { get; init; } = true;
 
     public (int Width, int Height) Size => Resolution switch
     {

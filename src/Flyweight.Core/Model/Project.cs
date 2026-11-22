@@ -110,7 +110,33 @@ public sealed class Clip
     /// <summary>-1 … +1, 0 = as shot.</summary>
     public double Contrast { get; set; }
 
-    [JsonIgnore] public TimeSpan Duration => Out - In;
+    /// <summary>
+    /// Playback speed: 1 = as shot, 0.25–4. Older project files load as 1. Stills are always 1.
+    /// In/Out stay in SOURCE time; the clip's length on the timeline is <see cref="Duration"/>.
+    /// </summary>
+    public double Speed { get; set; } = 1.0;
+
+    /// <summary>How much of the source file the clip uses (Out − In).</summary>
+    [JsonIgnore] public TimeSpan SourceLength => Out - In;
+
+    /// <summary>
+    /// Length ON THE TIMELINE: <see cref="SourceLength"/> ÷ <see cref="Speed"/>. Everything that lays clips out in
+    /// timeline time uses this; convert between the two only with <see cref="SourceAt"/> / <see cref="TimelineOffset"/>.
+    /// </summary>
+    [JsonIgnore] public TimeSpan Duration => Speed == 1 ? Out - In : TimeSpan.FromTicks((long)Math.Round((Out - In).Ticks / SafeSpeed));
+
+    /// <summary>Source time at <paramref name="offset"/> into the clip on the timeline.</summary>
+    public TimeSpan SourceAt(TimeSpan offset) => Speed == 1 ? In + offset : In + TimeSpan.FromTicks((long)Math.Round(offset.Ticks * SafeSpeed));
+
+    /// <summary>How far into the clip, on the timeline, source time <paramref name="source"/> plays.</summary>
+    public TimeSpan TimelineOffset(TimeSpan source) =>
+        Speed == 1 ? source - In : TimeSpan.FromTicks((long)Math.Round((source - In).Ticks / SafeSpeed));
+
+    /// <summary>Source time covered by <paramref name="timelineLength"/> of this clip on the timeline.</summary>
+    public TimeSpan SourceSpan(TimeSpan timelineLength) =>
+        Speed == 1 ? timelineLength : TimeSpan.FromTicks((long)Math.Round(timelineLength.Ticks * SafeSpeed));
+
+    double SafeSpeed => double.IsFinite(Speed) && Speed > 0 ? Speed : 1;
 
     /// <summary>The gain actually applied (0 when muted).</summary>
     [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
