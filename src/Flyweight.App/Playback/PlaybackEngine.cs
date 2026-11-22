@@ -36,6 +36,7 @@ public sealed class PlaybackEngine : IDisposable
     readonly MediaPlayer.LibVLCVideoDisplayCb _displayCb;
 
     Guid? _loadedSourceId;
+    string? _loadedPath;
     Guid? _clipId;
     volatile bool _playing;
     volatile bool _pauseOnFirstFrame;
@@ -55,6 +56,16 @@ public sealed class PlaybackEngine : IDisposable
 
     /// <summary>True when the clip under the playhead has no proxy yet (still optimising).</summary>
     public bool WaitingForProxy { get; private set; }
+
+    /// <summary>
+    /// The proxy isn't ready yet, so the clip under the playhead is playing from its ORIGINAL file
+    /// (scaled to 960×540 by LibVLC, so a non-16:9 original arrives stretched: see <see cref="PlayingMedia"/>).
+    /// Seeking is slower than with a proxy, but you can watch and edit while it's optimising.
+    /// </summary>
+    public bool PlayingOriginal { get; private set; }
+
+    /// <summary>The media under the playhead (null if none).</summary>
+    public Core.Model.SourceMedia? PlayingMedia { get; private set; }
 
     /// <summary>Playhead position in TIMELINE time.</summary>
     public TimeSpan Position { get; private set; }
@@ -106,8 +117,13 @@ public sealed class PlaybackEngine : IDisposable
 
     unsafe void OnDisplay(IntPtr opaque, IntPtr picture)
     {
+        long t0 = Stopwatch.GetTimestamp();
         lock (FrameLock)
+        {
+            var waited = Stopwatch.GetElapsedTime(t0);
+            if (waited.TotalMilliseconds > 15) PlaybackLog.Write($"video thread waited {waited.TotalMilliseconds:0} ms for the screen paint");
             Buffer.MemoryCopy((void*)_decodeBuffer, (void*)_displayBuffer, Pitch * H, Pitch * H);
+        }
         HasFrame = true;
 
         if (_pauseOnFirstFrame)
@@ -149,6 +165,7 @@ public sealed class PlaybackEngine : IDisposable
 
     public void Play()
     {
+        PlaybackLog.Write($"play from {Position.TotalSeconds:0.000} s");
         var total = TimelineOps.TotalDuration(_session.Project);
         if (total <= TimeSpan.Zero) return;
         if (Position >= total - OneFrame()) Position = TimeSpan.Zero;
@@ -163,6 +180,7 @@ public sealed class PlaybackEngine : IDisposable
 
     public void Pause()
     {
+        if (_playing) PlaybackLog.Write($"pause at {Position.TotalSeconds:0.000} s");
         var was = _playing;
         _playing = false;
         _clock.Stop();
@@ -209,27 +227,38 @@ public sealed class PlaybackEngine : IDisposable
 
         _clipId = hit.Clip.Id;
         var state = _library.GetState(hit.Clip.SourceId);
+        var media = _session.Project.FindMedia(hit.Clip.SourceId);
+        PlayingMedia = media;
+        // No proxy yet: play the original video rather than sit on a frozen picture. Stills keep
+        // their stand-in (the photo itself), which their quick proxy replaces in a moment.
+        var path = state.ProxyPath;
+        PlayingOriginal = path is null && media is { IsStill: false, IsAudioOnly: false } && state.Status != ProxyStatus.Failed &&
+                          File.Exists(media.OriginalPath);
+        if (PlayingOriginal) path = media!.OriginalPath;
         WaitingForProxy = state.ProxyPath is null;
-        if (WaitingForProxy)
+        if (path is null)
         {
             StopPlayer();
             return;
         }
 
         long ms = (long)hit.SourceTime.TotalMilliseconds;
-        bool canSeekInPlace = _loadedSourceId == hit.Clip.SourceId &&
+        bool canSeekInPlace = _loadedPath == path &&
                               _player.State is VLCState.Playing or VLCState.Paused;
 
         if (canSeekInPlace)
         {
+            PlaybackLog.Write($"seek in place to {ms} ms (playing={_playing})");
             _player.Time = ms;
             if (_playing && _player.State == VLCState.Paused) _player.SetPause(false);
             else if (!_playing && _player.State == VLCState.Playing) _player.SetPause(true);
         }
         else
         {
-            Load(state.ProxyPath!, hit.SourceTime);
+            PlaybackLog.Write($"load {(PlayingOriginal ? "ORIGINAL" : "proxy")} {Path.GetFileName(path)} at {hit.SourceTime.TotalMilliseconds:0} ms");
+            Load(path, hit.SourceTime);
             _loadedSourceId = hit.Clip.SourceId;
+            _loadedPath = path;
         }
         ResetClock(ms);
     }
@@ -247,6 +276,7 @@ public sealed class PlaybackEngine : IDisposable
     void StopPlayer()
     {
         _loadedSourceId = null;
+        _loadedPath = null;
         _clipId = null;
         HasFrame = false;
         if (_player.State is not (VLCState.Stopped or VLCState.NothingSpecial)) _player.Stop();
@@ -268,7 +298,11 @@ public sealed class PlaybackEngine : IDisposable
     {
         int target = (int)Math.Round(clip.EffectiveVolume * 100);
         int now = _player.Volume;
-        if (now >= 0 && now != target) _player.Volume = target; // -1 = no audio output yet
+        if (now >= 0 && now != target)
+        {
+            PlaybackLog.Write($"video volume {now} -> {target}");
+            _player.Volume = target; // -1 = no audio output yet
+        }
     }
 
     void Tick()
@@ -306,7 +340,7 @@ public sealed class PlaybackEngine : IDisposable
                 if (seamless) _clipId = hit.Clip.Id; // adjacent halves of a split: keep playing
                 else ApplySeek(t, force: true);       // a cut: load the next clip where the clock is NOW
             }
-            else if (!WaitingForProxy)
+            else if (!WaitingForProxy || PlayingOriginal)
             {
                 KeepVideoInStep(hit);
             }
@@ -347,6 +381,7 @@ public sealed class PlaybackEngine : IDisposable
         if ((video - hit.SourceTime).Duration() <= VideoDriftLimit) return;
 
         long ms = (long)hit.SourceTime.TotalMilliseconds;
+        PlaybackLog.Write($"drift resync: video ~{video.TotalMilliseconds:0} ms, clock {ms} ms");
         _player.Time = ms;
         _sinceLastSeek.Restart();
         ResetClock(ms);

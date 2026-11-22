@@ -256,6 +256,33 @@ public sealed class MainForm : Form
             if (isAudio) TimelineOps.SetAudioMuted(p, id, on); else TimelineOps.SetClipMuted(p, id, on);
         }, StyleEditPhase.Single);
 
+        // Zoom / brightness / contrast for the selected video clip.
+        _clipProps.LookChanged += (which, v, phase) =>
+        {
+            if (_timeline.SelectedClipId is not { } cid) return;
+            Action<Project> apply = which switch
+            {
+                LookSetting.Zoom => p => TimelineOps.SetClipZoom(p, cid, v),
+                LookSetting.PanX => p => TimelineOps.SetClipPan(p, cid, v, null),
+                LookSetting.PanY => p => TimelineOps.SetClipPan(p, cid, null, v),
+                LookSetting.Brightness => p => TimelineOps.SetClipBrightness(p, cid, v),
+                _ => p => TimelineOps.SetClipContrast(p, cid, v),
+            };
+            switch (phase)
+            {
+                case StyleEditPhase.Single: _session.Execute(apply); break;
+                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(apply); break;
+                case StyleEditPhase.Commit: _session.Preview(apply); _session.CommitEdit(); break;
+            }
+            ShowClipUnderPlayhead(cid);
+        };
+        _clipProps.LookReset += () =>
+        {
+            if (_timeline.SelectedClipId is not { } cid) return;
+            _session.Execute(p => TimelineOps.ResetClipLook(p, cid));
+            ShowClipUnderPlayhead(cid);
+        };
+
         _timeline.AudioSelected += (_, _) =>
         {
             if (_timeline.SelectedAudioId is not null) _preview.Select(null);
@@ -272,6 +299,7 @@ public sealed class MainForm : Form
             });
         };
         _bin.InsertRequested += (mediaId, after) => InsertMedia(mediaId, CurrentClipId(), after);
+        _bin.RemoveRequested += RemoveMedia;
         _timeline.ClipMenuRequested += ShowClipMenu;
 
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
@@ -288,7 +316,13 @@ public sealed class MainForm : Form
         _autosave.Tick += (_, _) => Autosave();
         _autosave.Start();
 
-        Shown += (_, _) => OfferCrashRecovery();
+        Shown += (_, _) =>
+        {
+            // "Flyweight.exe My video.flyweight" (Open with…, or a shortcut) opens that project.
+            var arg = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(f => f.EndsWith(ProjectSerializer.FileExtension, StringComparison.OrdinalIgnoreCase));
+            if (arg is not null && File.Exists(arg)) LoadProject(arg);
+            else OfferCrashRecovery();
+        };
         FormClosing += (_, e) =>
         {
             _preview.CommitTextEdit();
@@ -307,10 +341,14 @@ public sealed class MainForm : Form
         var st = _library.GetState(id);
         if (st.Status == ProxyStatus.Ready) _engine.Refresh(); // the clip under the playhead may just have become playable
         if (st.Status == ProxyStatus.Failed && _session.Project.FindMedia(id) is { } m)
-            _statusText.Text = $"Couldn't optimise {m.DisplayName}: {st.Error}";
+            // First line only: the full ffmpeg log is in the bin item's tooltip. (A multi-line status
+            // used to swallow the whole window.)
+            _statusText.Text = $"Couldn't optimise {m.DisplayName}: {FirstLine(st.Error)}  (hover it in the media bin for details)";
         else
             UpdateStatus();
     }
+
+    static string FirstLine(string? text) => (text ?? "").Split('\n', 2)[0].Trim();
 
     // ---------------- Keyboard ----------------
 
@@ -533,8 +571,36 @@ public sealed class MainForm : Form
         UpdateStatus();
     }
 
+    /// <summary>Remove a file from the bin; if the timeline uses it, confirm first (it takes those clips too). Undoable.</summary>
+    void RemoveMedia(Guid mediaId)
+    {
+        var p = _session.Project;
+        if (p.FindMedia(mediaId) is not { } m) return;
+        int uses = TimelineOps.UsageCount(p, mediaId);
+        if (uses > 0)
+        {
+            var r = MessageBox.Show(this,
+                $"{m.DisplayName} is used {uses} time{(uses == 1 ? "" : "s")} on the timeline.\n\n" +
+                "Remove it from the project, along with those clips? (The file on disk isn't deleted, and you can Undo.)",
+                "Remove from project", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+            if (r != DialogResult.OK) return;
+        }
+        _engine.Pause();
+        _session.Execute(proj => TimelineOps.RemoveMedia(proj, mediaId));
+        if (_timeline.SelectedClipId is { } cid && _session.Project.FindClip(cid) is null) _timeline.SelectedClipId = null;
+        if (_timeline.SelectedAudioId is { } aid && _session.Project.FindAudio(aid) is null) _timeline.SelectedAudioId = null;
+        UpdatePropertyGrid();
+        _engine.Refresh();
+        _statusText.Text = $"Removed {m.DisplayName} from the project";
+    }
+
     void DeleteSelection()
     {
+        if (_bin.ListFocused && _bin.SelectedMediaId is not null)
+        {
+            _bin.RequestRemoveSelected();
+            return;
+        }
         if (_preview.SelectedAnnotationId is { } aid)
         {
             _session.Execute(p => TimelineOps.DeleteAnnotation(p, aid)); // the whole run if it spans cuts
@@ -616,11 +682,23 @@ public sealed class MainForm : Form
     void NewProject()
     {
         if (!ConfirmDiscard()) return;
-        using var dlg = new NewProjectForm();
+        using var dlg = new NewProjectForm(NewProjectForm.DefaultFolder(_session.FilePath));
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _engine.Pause();
         _session.New(dlg.OutputResolution);
         _engine.Seek(TimeSpan.Zero);
+        // Save it straight away, so it has its name from the start (and Ctrl+S just saves).
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(dlg.ProjectPath)!);
+            _session.Save(dlg.ProjectPath);
+            _statusText.Text = $"Created {Path.GetFileName(dlg.ProjectPath)}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"The new project couldn't be saved there:\n\n{ex.Message}\n\nIt's open as Untitled; use Save to choose another place.",
+                "New project", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     void OpenProject()
@@ -745,6 +823,16 @@ public sealed class MainForm : Form
         UpdateToolButtons();
         UpdateTimecode();
         UpdateStatus();
+    }
+
+    /// <summary>Picture edits only show if the preview is on that clip: if it isn't, jump to the clip's start.</summary>
+    void ShowClipUnderPlayhead(Guid clipId)
+    {
+        var p = _session.Project;
+        if (TimelineOps.Locate(p, _engine.Position) is { } hit && hit.Clip.Id == clipId) return;
+        if (p.FindClip(clipId) is null) return;
+        _engine.Pause();
+        _engine.Seek(TimelineOps.ClipStart(p, clipId));
     }
 
     void UpdatePropertyGrid()

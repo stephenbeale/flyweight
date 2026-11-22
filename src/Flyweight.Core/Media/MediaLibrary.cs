@@ -94,31 +94,17 @@ public sealed class MediaLibrary
         {
             Set(media.Id, s => s.Status = ProxyStatus.Optimising);
             var tmp = Path.Combine(dir, "proxy.partial.mp4");
-            var fps = FfmpegRunner.Num(media.Fps > 0 ? media.Fps : 30);
-
-            // Stills: loop the image, decoding it only once a second (decoding a 12 MP photo
-            // 30×/s is what makes this slow). A static picture compresses to almost nothing, and
-            // a keyframe every second is plenty for seeking because the other frames are trivial.
-            var args = media.IsStill
-                ? new List<string>
-                {
-                    "-loop", "1", "-framerate", "1", "-t", Sec(media.Duration), "-i", media.OriginalPath,
-                    "-vf", $"{Canvas.FitFilter(Canvas.ProxyWidth, Canvas.ProxyHeight)},fps={fps},format=yuv420p",
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-g", fps, "-bf", "0",
-                }
-                : new List<string>
-                {
-                    "-i", media.OriginalPath,
-                    "-vf", $"{Canvas.FitFilter(Canvas.ProxyWidth, Canvas.ProxyHeight)},fps={fps},format=yuv420p",
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", "1", "-bf", "0",
-                };
-            args.AddRange(media.HasAudio
-                ? new[] { "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2" }
-                : new[] { "-an" });
-            args.Add(tmp);
-
             var progress = new Progress<double>(p => Set(media.Id, s => s.Progress = p));
-            await FfmpegRunner.RunFfmpegAsync(args, media.Duration, progress, ct);
+            try
+            {
+                await FfmpegRunner.RunFfmpegAsync(ProxyArgs(media, tmp, hwDecode: true), media.Duration, progress, ct, background: true);
+            }
+            catch (FfmpegException) when (!media.IsStill)
+            {
+                // GPU decoding can fail on odd files or drivers: try once more on the CPU before giving up.
+                Set(media.Id, s => s.Progress = 0);
+                await FfmpegRunner.RunFfmpegAsync(ProxyArgs(media, tmp, hwDecode: false), media.Duration, progress, ct, background: true);
+            }
             File.Move(tmp, proxy, overwrite: true);
 
             if (!File.Exists(thumb)) // original couldn't be thumbnailed: fall back to the proxy's first frame
@@ -154,6 +140,44 @@ public sealed class MediaLibrary
         {
             _jobs.Release();
         }
+    }
+
+    /// <summary>
+    /// The proxy transcode. Only the first video and audio streams are kept, with no metadata and no
+    /// timecode track: drone/camera files (DJI) carry a timecode track that made ffmpeg's mp4 writer
+    /// crash at the end of a 14-minute proxy ("Assertion next_dts <= 0x7fffffff failed").
+    /// Videos: ultrafast all-intra x264 and GPU decoding where available. Decoding the original is
+    /// the slow part; these settings were ~20% faster than veryfast + CPU on 1080p60 DJI footage.
+    /// </summary>
+    internal static List<string> ProxyArgs(SourceMedia media, string output, bool hwDecode)
+    {
+        var fps = Num(media.Fps > 0 ? media.Fps : 30);
+        var fit = Canvas.FitFilter(Canvas.ProxyWidth, Canvas.ProxyHeight);
+        var args = new List<string>();
+        if (media.IsStill)
+            // Stills: loop the image, decoding it only once a second (decoding a 12 MP photo 30×/s is
+            // what makes this slow). A static picture compresses to almost nothing, and a keyframe
+            // every second is plenty for seeking because the other frames are trivial.
+            args.AddRange(new[]
+            {
+                "-loop", "1", "-framerate", "1", "-t", Sec(media.Duration), "-i", media.OriginalPath,
+                "-map", "0:v:0", "-vf", $"{fit},fps={fps},format=yuv420p",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-g", fps, "-bf", "0",
+            });
+        else
+        {
+            if (hwDecode) args.AddRange(new[] { "-hwaccel", "auto" }); // falls back to CPU by itself if there's no GPU decoder
+            args.AddRange(new[]
+            {
+                "-i", media.OriginalPath,
+                "-map", "0:v:0", "-vf", $"{fit},fps={fps},format=yuv420p",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-g", "1", "-bf", "0",
+            });
+        }
+        if (media.HasAudio && !media.IsStill)
+            args.AddRange(new[] { "-map", "0:a:0", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2" });
+        args.AddRange(new[] { "-map_metadata", "-1", "-write_tmcd", "0", output });
+        return args;
     }
 
     /// <summary>Waveform image width: the whole file, drawn once and cropped to each item's In/Out.</summary>

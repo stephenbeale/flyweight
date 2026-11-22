@@ -337,6 +337,52 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.True(c.R > 200 && c.G < 60 && c.B > 200, $"expected magenta, got {c}");
     }
 
+    [Fact]
+    public async Task Export_zooms_and_brightens_clips_like_the_preview()
+    {
+        if (!FfmpegAvailable()) return;
+        // 1: left half red, right half blue. 2: portrait green (pillarboxed). 3: dark grey.
+        var halves = Path.Combine(_dir, "halves.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", "color=c=red:s=640x720:r=30:d=1", "-f", "lavfi", "-i", "color=c=blue:s=640x720:r=30:d=1",
+            "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]", "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", halves,
+        });
+        var portrait = await MakeClip("portrait.mp4", 360, 640, 1, "green", audio: false);
+        var grey = await MakeClip("grey.mp4", 1280, 720, 1, "0x404040", audio: false);
+
+        var p = new Project();
+        var mH = await MediaProbe.ProbeAsync(halves);
+        var mP = await MediaProbe.ProbeAsync(portrait);
+        var mG = await MediaProbe.ProbeAsync(grey);
+        p.Media.AddRange(new[] { mH, mP, mG });
+        var c1 = TimelineOps.Append(p, mH);
+        var c2 = TimelineOps.Append(p, mP);
+        var c3 = TimelineOps.Append(p, mG);
+        TimelineOps.SetClipZoom(p, c1.Id, 2);
+        TimelineOps.SetClipPan(p, c1.Id, 1, 0.5);      // right half only → all blue
+        TimelineOps.SetClipZoom(p, c2.Id, 2);           // centred: the pillarboxed clip fills more of the frame
+        TimelineOps.SetClipBrightness(p, c3.Id, 0.5);
+
+        var output = Path.Combine(_dir, "look-out.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output).RunAsync();
+        Assert.Equal((1920, 1080), ((await MediaProbe.ProbeAsync(output)).Width, (await MediaProbe.ProbeAsync(output)).Height));
+
+        static bool IsBlue((int R, int G, int B) c) => c.B > 200 && c.R < 60 && c.G < 60;
+        static bool IsGreen((int R, int G, int B) c) => c.G > 90 && c.R < 60 && c.B < 60; // lavfi "green" is 0,128,0
+        static bool IsBlack((int R, int G, int B) c) => c.R < 40 && c.G < 40 && c.B < 40;
+
+        Assert.True(IsBlue(await Pixel(output, 0.5, 100, 540)), "zoomed into the right half: left edge is blue");
+        Assert.True(IsBlue(await Pixel(output, 0.5, 1800, 540)), "and the right edge too");
+        // Portrait fills canvas x 0.342–0.658; zoomed 2× about the centre that becomes 0.184–0.816 of the output.
+        Assert.True(IsGreen(await Pixel(output, 1.5, 420, 540)), "zoomed portrait reaches x=420");
+        Assert.True(IsBlack(await Pixel(output, 1.5, 250, 540)), "bars still outside it");
+        var g = await Pixel(output, 2.5, 960, 540);
+        int expected = ClipLook.Tone(0x40, ClipLook.Gamma(0.5), ClipLook.ContrastGain(0));
+        Assert.True(expected > 100, "the curve should lift 64 a lot");
+        Assert.InRange(g.G, expected - 5, expected + 5);
+    }
+
     sealed class SyncProgress(Action<double> a) : IProgress<double>
     {
         public void Report(double value) => a(value);

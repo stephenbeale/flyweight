@@ -63,13 +63,18 @@ sealed class AudioLanePlayer : IDisposable
             var player = v.Player;
             int target = (int)Math.Round(item.EffectiveVolume * 100);
             int now = player.Volume;
-            if (now >= 0 && now != target) player.Volume = target;
+            if (now >= 0 && now != target)
+            {
+                PlaybackLog.Write($"lane volume {now} -> {target}");
+                player.Volume = target;
+            }
 
             if (v.SinceSeek.Elapsed > SettleTime && player.State == VLCState.Playing)
             {
                 var at = TimeSpan.FromMilliseconds(player.Time);
                 if ((at - expected).Duration() > DriftLimit)
                 {
+                    PlaybackLog.Write($"lane drift resync: {at.TotalMilliseconds:0} -> {expected.TotalMilliseconds:0} ms");
                     player.Time = (long)expected.TotalMilliseconds;
                     v.SinceSeek.Restart();
                 }
