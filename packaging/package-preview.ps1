@@ -71,6 +71,7 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $out -DestinationPath $zip -CompressionLevel Optimal
 $mb = [math]::Round((Get-Item $zip).Length / 1MB)
 Write-Host "Done: $zip ($mb MB)"
+Copy-Item $zip (Join-Path $repo "artifacts\Flyweight-win-x64.zip") -Force # stable name for .../releases/latest/download/
 
 # Installer (Inno Setup): per-user, Start menu, .flyweight association, "Launch Flyweight" at the end.
 $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
@@ -80,6 +81,10 @@ if ($iscc) {
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
     $setup = Join-Path $repo "artifacts\Flyweight-$Version-Setup.exe"
     Write-Host "Done: $setup ($([math]::Round((Get-Item $setup).Length / 1MB)) MB)"
+    # Same file under a version-free name, uploaded with every release so this link never changes:
+    #   https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe
+    # (GitHub's /latest/ skips pre-releases, so publish these as normal releases.)
+    Copy-Item $setup (Join-Path $repo "artifacts\Flyweight-Setup.exe") -Force
 } else {
     Write-Warning "Inno Setup not found, so no installer was built (winget install JRSoftware.InnoSetup --source winget --scope user)."
 }
