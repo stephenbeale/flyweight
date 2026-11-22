@@ -177,7 +177,13 @@ public sealed class ExportForm : Form
     void ShowDone(string output, double sizeMb, TimeSpan took, string encoder)
     {
         var studio = new TaskDialogButton("Open YouTube Studio");
-        var explorer = new TaskDialogButton("Show in Explorer");
+        // Show in Explorer leaves this box open, so Open YouTube Studio is still there afterwards.
+        var explorer = new TaskDialogButton("Show in Explorer") { AllowCloseDialog = false };
+        explorer.Click += (_, _) =>
+        {
+            try { Process.Start("explorer.exe", $"/select,\"{output}\""); }
+            catch (Exception ex) { MessageBox.Show(this, $"Couldn't open Explorer:\n\n{ex.Message}", "Export complete", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+        };
         var page = new TaskDialogPage
         {
             Caption = "Export complete",
@@ -195,10 +201,6 @@ public sealed class ExportForm : Form
             {
                 Process.Start("explorer.exe", $"/select,\"{output}\"");
                 Process.Start(new ProcessStartInfo(YouTubeStudioUrl) { UseShellExecute = true }); // default browser
-            }
-            else if (choice == explorer)
-            {
-                Process.Start("explorer.exe", $"/select,\"{output}\"");
             }
         }
         catch (Exception ex)
