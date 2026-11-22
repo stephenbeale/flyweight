@@ -257,3 +257,18 @@ SaveTextFile) is edited in the export dialog, stored through the session (one un
 written as `<video> - YouTube.txt` (`YouTubeText`): TITLE / DESCRIPTION (with the marker chapters appended) / TAGS,
 plus a "check before uploading" list (title 100, description 5000, tags 500 characters, no < >, chapter warnings).
 Open YouTube Studio also opens this file.
+
+### D32. Download = installer; tidy single-file folder; one window owns the session
+- **Folder.** `packaging/package-preview.ps1` publishes single-file (`PublishSingleFile`, native .NET libraries
+  included, compressed), so `Flyweight.exe` is the only file at the top. `libvlc\win-x64` stays as real files: a
+  csproj target sets `ExcludeFromSingleFile`, because LibVLC loads its plugins from disk. `ffmpeg\` is beside it, and
+  README / LICENSE / THIRD-PARTY-NOTICES are in `About\`. `VlcWindowsX86Enabled=false` drops the unused 32-bit LibVLC
+  (~100 MB). The script fails if any other file lands at the top.
+- **Installer.** `packaging/Flyweight.iss` (Inno Setup 6, installed per-user with winget) builds
+  `Flyweight-<ver>-Setup.exe`. It is a per-user install (no admin, `%LOCALAPPDATA%\Programs\Flyweight`), with a Start
+  menu entry, an optional desktop shortcut, an optional `.flyweight` association under HKCU, a ticked "Launch
+  Flyweight" at the end (the owner's "offer to run"), and an Add/Remove Programs entry. Uninstall removes the proxy
+  cache but never projects, videos or freeze frames. The zip is still built as an alternative.
+- **Two windows.** The session lock holds the owning process id. A second Flyweight sees a live owner and neither
+  offers to "recover" the first window's work, autosaves, nor deletes the lock and autosave when it closes. Previously
+  it did all three. Opening a project via the command line or file association now takes the lock too.

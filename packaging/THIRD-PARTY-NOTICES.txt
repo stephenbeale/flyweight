@@ -1,7 +1,7 @@
 THIRD-PARTY SOFTWARE INCLUDED WITH FLYWEIGHT
 ============================================
 
-Flyweight itself is released under the MIT License (LICENSE.txt). This download also contains
+Flyweight itself is released under the MIT License (About\LICENSE.txt). This download also contains
 the following separate programs and libraries, each under its own licence.
 
 ------------------------------------------------------------------------------------------

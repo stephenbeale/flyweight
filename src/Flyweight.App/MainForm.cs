@@ -365,16 +365,21 @@ public sealed class MainForm : Form
         {
             // "Flyweight.exe My video.flyweight" (Open with…, or a shortcut) opens that project.
             var arg = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(f => f.EndsWith(ProjectSerializer.FileExtension, StringComparison.OrdinalIgnoreCase));
+            bool crashed = ClaimSession();
             if (arg is not null && File.Exists(arg)) LoadProject(arg);
-            else OfferCrashRecovery();
+            else if (crashed) OfferCrashRecovery();
+            if (!_ownsSession) _statusText.Text = "Another Flyweight window is open, so this one doesn't autosave. Save with Ctrl+S.";
         };
         FormClosing += (_, e) =>
         {
             _preview.CommitTextEdit();
             if (!ConfirmDiscard()) { e.Cancel = true; return; }
             _engine.Dispose();
-            TryDelete(LockPath);
-            TryDelete(AutosavePath);
+            if (_ownsSession) // a second window must never delete the first one's lock or autosave
+            {
+                TryDelete(LockPath);
+                TryDelete(AutosavePath);
+            }
         };
     }
 
@@ -979,7 +984,7 @@ public sealed class MainForm : Form
 
     void Autosave()
     {
-        if (!_session.IsDirty) return;
+        if (!_ownsSession || !_session.IsDirty) return; // only the first Flyweight window autosaves
         try
         {
             _session.Autosave(AutosavePath);
@@ -988,12 +993,43 @@ public sealed class MainForm : Form
         catch { /* never let autosave interrupt editing */ }
     }
 
-    void OfferCrashRecovery()
+    /// <summary>
+    /// True for the first Flyweight window: it owns the session lock and the autosave. A second window (e.g. opened
+    /// while the first is running) leaves both alone, so it neither offers to "recover" the first window's work nor
+    /// deletes its autosave when it closes.
+    /// </summary>
+    bool _ownsSession;
+
+    /// <summary>Take the session lock. Returns true if the last session crashed (its lock was left by a process that's gone).</summary>
+    bool ClaimSession()
     {
         Directory.CreateDirectory(AppDataDir);
-        bool uncleanExit = File.Exists(LockPath);
+        if (File.Exists(LockPath) && int.TryParse(ReadLock(), out var pid) && pid != Environment.ProcessId && IsFlyweight(pid))
+        {
+            _ownsSession = false; // that window is alive: it owns the session
+            return false;
+        }
+        bool crashed = File.Exists(LockPath);
         File.WriteAllText(LockPath, Environment.ProcessId.ToString());
-        if (!uncleanExit || !File.Exists(AutosavePath)) return;
+        _ownsSession = true;
+        return crashed;
+
+        static string ReadLock() { try { return File.ReadAllText(LockPath).Trim(); } catch (IOException) { return ""; } }
+        static bool IsFlyweight(int id)
+        {
+            try
+            {
+                using var proc = System.Diagnostics.Process.GetProcessById(id);
+                return !proc.HasExited && proc.ProcessName.Equals("Flyweight", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (ArgumentException) { return false; } // no such process
+            catch (InvalidOperationException) { return false; }
+        }
+    }
+
+    void OfferCrashRecovery()
+    {
+        if (!File.Exists(AutosavePath)) return;
 
         var r = MessageBox.Show(this,
             $"Flyweight didn't close properly last time.\n\nRecover the autosaved project from {File.GetLastWriteTime(AutosavePath):g}?",

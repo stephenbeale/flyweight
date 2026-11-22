@@ -37,5 +37,5 @@ crashy: https://github.com/stephenbeale/flyweight/issues
 
 LICENCES
 --------
-Flyweight is MIT-licensed (LICENSE.txt). It includes ffmpeg (GPL v3) and LibVLC (LGPL 2.1);
-see THIRD-PARTY-NOTICES.txt for their licences and where to get their source code.
+Flyweight is MIT-licensed (About\LICENSE.txt). It includes ffmpeg (GPL v3) and LibVLC (LGPL 2.1);
+see About\THIRD-PARTY-NOTICES.txt for their licences and where to get their source code.
