@@ -203,3 +203,42 @@ Feather is crowded, and Jet loses the boxing link. Don't reopen unless the owner
 - `Flyweight.exe path.flyweight` opens that project.
 - Debug builds write `%LocalAppData%\Flyweight\playback.log` (seeks, loads, volume sets, paint waits) to chase the
   audio crackle the owner reported. It is still open.
+
+### D28. Clip speed: `Duration` means length on the timeline
+`Clip.Speed` (0.25-4, default 1; stills are always 1). `In`/`Out` stay in SOURCE time, so annotations keep their
+footage. `Clip.Duration` is now `SourceLength / Speed`, which keeps every timeline-layout caller correct. All
+timeline/source conversion goes through `Clip.SourceAt`, `TimelineOffset` and `SourceSpan`; there is no hand-written
+`In + (t - start)` any more. New annotations last 3 s on the TIMELINE at any speed. Export reads `SourceLength`, then
+`setpts=(PTS-STARTPTS)/S` and an `atempo` chain (0.5-2 per stage, so 0.25 and 4 take two), which keeps pitch. Preview
+uses `MediaPlayer.SetRate` (LibVLC keeps pitch), and `KeepVideoInStep` advances the video estimate by `extra x Speed`.
+Trim drags convert the mouse's timeline delta with `SourceSpan`. Audio-track items stay at fixed timeline times (D23).
+
+### D29. Export: graphics-chip encoder, YouTube bitrate cap, safe overwrite
+- **Encoder.** Measured on 20 s of the owner's 1080p60 DJI footage (i5-10400T + UHD 630): x264 medium 48 s,
+  veryfast 18.6 s, Intel Quick Sync 7.2 s. SSIM against the source was 0.967, 0.968 and 0.966. `ExportSettings.UseHardwareEncoder`
+  (default on, no UI) tries `h264_qsv` first; `ExportPlan.FallbackArguments` (x264 veryfast) runs if it fails. It is
+  the same H.264 High yuv420p file, so rule 9 holds. NVENC and AMF exist in the ffmpeg build but failed on this PC.
+- **Bitrate.** Uncapped CRF 18 made a 5.5-minute brightened clip 1.27 GB (32 Mbit/s). The cap is YouTube's recommended
+  SDR upload rate plus a third (`YouTubeBitrateKbps`): 16 Mbit/s for 1080p60. QSV's quality modes ignored `-maxrate`,
+  so QSV uses a target bitrate plus `-maxrate`; x264 uses CRF 18 plus `-maxrate`/`-bufsize`.
+- **Proxies.** Today's `ultrafast` proxies (D26) disabled deblocking and adaptive quantisation, so dark footage turned
+  visibly blocky once brightened, and it saved almost no time (decode-bound: ~2.0 s per 10 s with any preset).
+  Proxies are now `superfast` CRF 21, and the `-p2` cache key rebuilds the bad ones.
+- **Existing file.** The export used to overwrite silently, and on cancel or failure it deleted the file at that path:
+  the previous export. Now it asks (Keep both = "name (2).mp4" / Replace / Cancel), writes `name.exporting.mp4`, and
+  moves it into place only on success.
+- **Done.** "Your video is ready" shows size, time and encoder, and offers Open YouTube Studio (browser + Explorer
+  with the file selected, ready to drag in) or Show in Explorer.
+
+### D30. Editing comfort from owner testing (2026-11-22, evening)
+- **Multi-select.** Ctrl+A selects all clips; Ctrl+click adds or removes one; Shift+click selects a range.
+  `TimelineControl.SelectedClipId` stays the MAIN clip (what Properties shows), and `SelectedClipIds` is the set.
+  Properties changes, M and Delete apply to every selected clip in one undo step. Split, Freeze and drag still act on one clip.
+- **Typed values.** The slider read-out is a text box: type a number and press Enter (Esc cancels). It is clamped and
+  counts as one undo step.
+- **Recent projects.** Open ▾ lists the last 5, newest first, in `%LocalAppData%\Flyweight\recent.json`
+  (`Core/Model/RecentProjects`). A project is added whenever it gets a file path. Save ▾ has Save as (Ctrl+Shift+S),
+  which starts in the project's own folder and name.
+- **Look.** `Controls/Theme` has the colours, rounded shapes, a dark `ToolRenderer` (also used for all menus via
+  `ToolStripManager`) and `RoundButton`. Toolbar buttons only highlight while the pointer is really over them: after a
+  click or a dialog WinForms leaves them "Selected" and doesn't repaint.

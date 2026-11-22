@@ -4,6 +4,13 @@ _Last updated: 2026-11-20 (end of day; `feature/audio` merged)_
 
 ## Where things stand
 
+### 2026-11-22 evening: `feature/clip-speed` (stacked on PR #5)
+Clip speed (D28); export via the graphics chip + bitrate cap + safe overwrite + YouTube Studio step (D29);
+sharper proxies (D29); multi-select / Ctrl+A, typed slider values, recent projects, Save as, dark rounded UI (D30).
+**Owner to test:** speed at 1.5x, multi-select edits, typed values, the export time and size reported, and existing-file
+handling. **Next, owner's idea:** a YouTube text file on export (title, description, tags, chapter timestamps), then
+dark dialogs. Still open: the audio crackle (playback.log).
+
 ### 2026-11-22: `feature/clip-zoom-brightness` (PR open)
 Clip zoom + brightness/contrast (D25), proxy fixes (D26: progress was 1/100, DJI timecode crash, faster, lower
 priority, play the original while optimising), New project names and saves (D27), Remove from project (D27).

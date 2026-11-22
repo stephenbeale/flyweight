@@ -42,7 +42,7 @@ public static class TimelineOps
         {
             var c = p.Timeline[i];
             if (t < start + c.Duration)
-                return new TimelineHit(i, c, start, c.In + (t - start));
+                return new TimelineHit(i, c, start, c.SourceAt(t - start));
             start += c.Duration;
         }
         return null;
@@ -78,7 +78,7 @@ public static class TimelineOps
             m.Duration = SourceMedia.StillMaxDuration;
             m.Fps = 30;
             m.HasAudio = false;
-            foreach (var c in p.Timeline.Where(c => c.SourceId == m.Id && c.Duration < MinClipLength))
+            foreach (var c in p.Timeline.Where(c => c.SourceId == m.Id && c.SourceLength < MinClipLength))
             {
                 c.In = TimeSpan.Zero;
                 c.Out = DefaultStillLength;
@@ -100,7 +100,7 @@ public static class TimelineOps
         var cut = hit.SourceTime;
         if (cut - left.In < MinClipLength || left.Out - cut < MinClipLength) return null;
 
-        var right = new Clip { SourceId = left.SourceId, In = cut, Out = left.Out, Volume = left.Volume, Muted = left.Muted };
+        var right = new Clip { SourceId = left.SourceId, In = cut, Out = left.Out, Volume = left.Volume, Muted = left.Muted, Speed = left.Speed };
         CopyLook(left, right);
         left.Out = cut;
         p.Timeline.Insert(hit.Index + 1, right);
@@ -221,6 +221,23 @@ public static class TimelineOps
         if (p.FindClip(clipId) is { } c) c.Muted = muted;
     }
 
+    // ---------------- Speed ----------------
+
+    public const double MinSpeed = 0.25, MaxSpeed = 4.0;
+
+    /// <summary>The speeds offered in the UI.</summary>
+    public static readonly double[] SpeedPresets = { 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4 };
+
+    /// <summary>
+    /// Play a clip faster or slower (clamped to 0.25–4). Its In/Out don't change, so its annotations stay on the same
+    /// footage; its length on the timeline does, and later clips ripple. Stills have no speed (use their length).
+    /// </summary>
+    public static void SetClipSpeed(Project p, Guid clipId, double speed)
+    {
+        if (p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is { IsStill: true }) return;
+        c.Speed = double.IsFinite(speed) ? Math.Clamp(speed, MinSpeed, MaxSpeed) : 1;
+    }
+
     // ---------------- Picture: zoom and brightness/contrast (maths in ClipLook) ----------------
 
     /// <summary>Set a clip's zoom (clamped to 1–<see cref="ClipLook.MaxZoom"/>). Keeps where it is panned to.</summary>
@@ -330,7 +347,7 @@ public static class TimelineOps
         var e = Min(a.End, clip.Out);
         if (e <= s) return null;
         var clipStart = ClipStart(p, idx);
-        return (clipStart + (s - clip.In), clipStart + (e - clip.In));
+        return (clipStart + clip.TimelineOffset(s), clipStart + clip.TimelineOffset(e));
     }
 
     public static IEnumerable<Annotation> VisibleAt(Project p, TimeSpan t)
@@ -351,7 +368,7 @@ public static class TimelineOps
             ClipId = hit.Clip.Id,
             Kind = kind,
             Start = hit.SourceTime,
-            End = Min(hit.SourceTime + DefaultAnnotationLength, hit.Clip.Out),
+            End = Min(hit.SourceTime + hit.Clip.SourceSpan(DefaultAnnotationLength), hit.Clip.Out), // 3 s on the timeline at any speed
             X1 = x1, Y1 = y1, X2 = x2, Y2 = y2,
         };
         if (kind == AnnotationKind.Text)
@@ -372,8 +389,8 @@ public static class TimelineOps
         if (idx < 0) return;
         var clip = p.Timeline[idx];
         var clipStart = ClipStart(p, idx);
-        var s = Clamp(clip.In + (timelineStart - clipStart), clip.In, clip.Out - MinClipLength);
-        var e = Clamp(clip.In + (timelineEnd - clipStart), s + MinClipLength, clip.Out);
+        var s = Clamp(clip.SourceAt(timelineStart - clipStart), clip.In, clip.Out - MinClipLength);
+        var e = Clamp(clip.SourceAt(timelineEnd - clipStart), s + MinClipLength, clip.Out);
         a.Start = s;
         a.End = e;
     }
@@ -470,7 +487,7 @@ public static class TimelineOps
         var clip = p.Timeline[idx];
         var clipStart = ClipStart(p, idx);
         var clipEnd = clipStart + clip.Duration;
-        var startTl = clipStart + (a.Start - clip.In);
+        var startTl = clipStart + clip.TimelineOffset(a.Start);
         if (timelineEnd <= clipEnd || idx == p.Timeline.Count - 1)
         {
             RetimeAnnotation(p, annotationId, startTl, timelineEnd);
@@ -485,7 +502,7 @@ public static class TimelineOps
         {
             var c = p.Timeline[k];
             var len = Min(remaining, c.Duration);
-            AddPiece(p, a, c, c.In, c.In + len);
+            AddPiece(p, a, c, c.In, Min(c.Out, c.In + c.SourceSpan(len)));
             remaining -= len;
         }
         TidyLink(p, a.LinkId);
@@ -502,7 +519,7 @@ public static class TimelineOps
 
         var clip = p.Timeline[idx];
         var clipStart = ClipStart(p, idx);
-        var endTl = clipStart + (a.End - clip.In);
+        var endTl = clipStart + clip.TimelineOffset(a.End);
         if (timelineStart >= clipStart || idx == 0)
         {
             RetimeAnnotation(p, annotationId, timelineStart, endTl);
@@ -517,7 +534,7 @@ public static class TimelineOps
         {
             var c = p.Timeline[k];
             var len = Min(remaining, c.Duration);
-            AddPiece(p, a, c, c.Out - len, c.Out);
+            AddPiece(p, a, c, Max(c.In, c.Out - c.SourceSpan(len)), c.Out);
             remaining -= len;
         }
         TidyLink(p, a.LinkId);

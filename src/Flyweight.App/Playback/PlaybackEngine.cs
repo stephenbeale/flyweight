@@ -294,6 +294,20 @@ public sealed class PlaybackEngine : IDisposable
     /// rather than once per load: the audio output can reset the level when new media starts, and
     /// this also picks up slider changes live and split halves that keep playing seamlessly.
     /// </summary>
+    /// <summary>
+    /// Play the clip at its speed (LibVLC keeps the pitch). Checked every tick like the volume, so a new
+    /// clip, a split half or a change in the panel takes effect straight away.
+    /// </summary>
+    void ApplyRate(Core.Model.Clip clip)
+    {
+        float target = (float)(double.IsFinite(clip.Speed) && clip.Speed > 0 ? clip.Speed : 1);
+        if (Math.Abs(_player.Rate - target) > 0.001f)
+        {
+            PlaybackLog.Write($"rate {_player.Rate:0.##} -> {target:0.##}");
+            _player.SetRate(target);
+        }
+    }
+
     void ApplyVolume(Core.Model.Clip clip)
     {
         int target = (int)Math.Round(clip.EffectiveVolume * 100);
@@ -335,7 +349,7 @@ public sealed class PlaybackEngine : IDisposable
             {
                 var prev = _clipId is { } id ? p.FindClip(id) : null;
                 bool seamless = prev is not null && prev.SourceId == hit.Clip.SourceId &&
-                                Math.Abs((hit.Clip.In - prev.Out).TotalMilliseconds) < 50 &&
+                                Math.Abs((hit.Clip.In - prev.Out).TotalMilliseconds) < 50 && prev.Speed == hit.Clip.Speed &&
                                 _loadedSourceId == hit.Clip.SourceId && _player.State == VLCState.Playing;
                 if (seamless) _clipId = hit.Clip.Id; // adjacent halves of a split: keep playing
                 else ApplySeek(t, force: true);       // a cut: load the next clip where the clock is NOW
@@ -345,6 +359,7 @@ public sealed class PlaybackEngine : IDisposable
                 KeepVideoInStep(hit);
             }
             ApplyVolume(hit.Clip);
+            ApplyRate(hit.Clip);
         }
         PositionChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -377,7 +392,8 @@ public sealed class PlaybackEngine : IDisposable
         if (_lastVlcTime < 0) return;
         var extra = _sinceVlcTime.Elapsed;
         if (extra > TimeSpan.FromMilliseconds(500)) extra = TimeSpan.FromMilliseconds(500);
-        var video = TimeSpan.FromMilliseconds(_lastVlcTime) + extra;
+        // The video advances through its footage at the clip's speed.
+        var video = TimeSpan.FromMilliseconds(_lastVlcTime) + hit.Clip.SourceSpan(extra);
         if ((video - hit.SourceTime).Duration() <= VideoDriftLimit) return;
 
         long ms = (long)hit.SourceTime.TotalMilliseconds;

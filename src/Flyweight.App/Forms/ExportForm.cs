@@ -60,7 +60,8 @@ public sealed class ExportForm : Form
 
     void Browse()
     {
-        using var dlg = new SaveFileDialog { Filter = "MP4 video|*.mp4", FileName = Path.GetFileName(_path.Text), InitialDirectory = Path.GetDirectoryName(_path.Text) };
+        // No overwrite prompt here: ExportAsync asks (replace / keep both) when the export starts.
+        using var dlg = new SaveFileDialog { Filter = "MP4 video|*.mp4", FileName = Path.GetFileName(_path.Text), InitialDirectory = Path.GetDirectoryName(_path.Text), OverwritePrompt = false };
         if (dlg.ShowDialog(this) == DialogResult.OK) _path.Text = dlg.FileName;
     }
 
@@ -69,6 +70,15 @@ public sealed class ExportForm : Form
         var output = _path.Text.Trim();
         if (string.IsNullOrEmpty(output)) { Browse(); return; }
         if (!output.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) output += ".mp4";
+        if (File.Exists(output))
+        {
+            if (AskAboutExisting(output) is not { } chosen) return;
+            output = chosen;
+            _path.Text = output;
+        }
+        // Write to a temporary file beside the real one and only swap it in when the export succeeds, so a cancel
+        // or failure never destroys an existing video at that path (it used to overwrite, then delete on cancel).
+        var working = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(output))!, Path.GetFileNameWithoutExtension(output) + ".exporting.mp4");
 
         var settings = new ExportSettings { Resolution = ExportResolutions.All[_resolution.SelectedIndex].Value };
         var (w, h) = settings.Size;
@@ -82,30 +92,32 @@ public sealed class ExportForm : Form
         {
             // Same renderer as the preview → WYSIWYG overlays.
             var overlays = OverlayRenderer.RenderAll(_project, w, h, temp);
-            var plan = ExportPlan.Build(_project, settings, overlays, output);
+            var plan = ExportPlan.Build(_project, settings, overlays, working);
             var sw = Stopwatch.StartNew();
             var progress = new Progress<double>(p =>
             {
+                if (p == 0) sw.Restart(); // the CPU fallback starts again from 0%
                 _progress.Value = (int)(p * 1000);
                 var eta = p > 0.02 ? TimeSpan.FromSeconds(sw.Elapsed.TotalSeconds * (1 - p) / p) : (TimeSpan?)null;
                 _status.Text = $"Exporting… {p:P0}" + (eta is { } e ? $"  ·  about {e:m\\:ss} left" : "");
             });
             _status.Text = "Exporting…";
             await plan.RunAsync(progress, _cts.Token);
+            File.Move(working, output, overwrite: true); // the user already agreed to replace it
 
             _progress.Value = 1000;
-            _status.Text = $"Done in {sw.Elapsed:m\\:ss}.";
-            if (MessageBox.Show(this, $"Exported to\n{output}\n\nShow it in Explorer?", "Export complete",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
-                Process.Start("explorer.exe", $"/select,\"{output}\"");
+            var size = new FileInfo(output).Length / (1024.0 * 1024.0);
+            _status.Text = $"Done in {sw.Elapsed:m\\:ss}  ·  {size:0} MB  ·  {plan.UsedEncoder}";
+            ShowDone(output, size, sw.Elapsed, plan.UsedEncoder);
         }
         catch (OperationCanceledException)
         {
             _status.Text = "Cancelled.";
-            TryDelete(output);
+            TryDelete(working);
         }
         catch (Exception ex)
         {
+            TryDelete(working);
             _status.Text = "Export failed.";
             MessageBox.Show(this, ex.Message, "Export failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
@@ -119,8 +131,80 @@ public sealed class ExportForm : Form
         }
     }
 
+    /// <summary>The file is already there: replace it, keep both (a numbered name), or stop. Null = stop.</summary>
+    string? AskAboutExisting(string output)
+    {
+        var both = UniquePath(output);
+        var replace = new TaskDialogButton("Replace it");
+        var keep = new TaskDialogButton($"Keep both: save as \"{Path.GetFileName(both)}\"");
+        var page = new TaskDialogPage
+        {
+            Caption = "Export for YouTube",
+            Heading = $"\"{Path.GetFileName(output)}\" already exists",
+            Text = $"In {Path.GetDirectoryName(output)}.",
+            Icon = TaskDialogIcon.Warning,
+            Buttons = { keep, replace, TaskDialogButton.Cancel },
+            DefaultButton = keep,
+        };
+        var choice = TaskDialog.ShowDialog(this, page);
+        return choice == replace ? output : choice == keep ? both : null;
+    }
+
+    /// <summary>"name (2).mp4", "name (3).mp4"… the first that doesn't exist yet.</summary>
+    static string UniquePath(string path)
+    {
+        var dir = Path.GetDirectoryName(path) ?? "";
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+        for (int n = 2; ; n++)
+        {
+            var candidate = Path.Combine(dir, $"{stem} ({n}){ext}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+    }
+
     static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { }
+    }
+
+    const string YouTubeStudioUrl = "https://studio.youtube.com/";
+
+    /// <summary>
+    /// "Export complete": go straight on to uploading. Open YouTube Studio opens the upload site in the browser and
+    /// selects the file in Explorer, ready to drag into Studio's upload box.
+    /// </summary>
+    void ShowDone(string output, double sizeMb, TimeSpan took, string encoder)
+    {
+        var studio = new TaskDialogButton("Open YouTube Studio");
+        var explorer = new TaskDialogButton("Show in Explorer");
+        var page = new TaskDialogPage
+        {
+            Caption = "Export complete",
+            Heading = "Your video is ready",
+            Text = $"{Path.GetFileName(output)}\n{sizeMb:0} MB · {took:m\\:ss} · {encoder}\n\n" +
+                   "Open YouTube Studio to upload it: the file will be selected in Explorer so you can drag it into Studio.",
+            Icon = TaskDialogIcon.ShieldSuccessGreenBar,
+            Buttons = { studio, explorer, TaskDialogButton.Close },
+            DefaultButton = studio,
+        };
+        var choice = TaskDialog.ShowDialog(this, page);
+        try
+        {
+            if (choice == studio)
+            {
+                Process.Start("explorer.exe", $"/select,\"{output}\"");
+                Process.Start(new ProcessStartInfo(YouTubeStudioUrl) { UseShellExecute = true }); // default browser
+            }
+            else if (choice == explorer)
+            {
+                Process.Start("explorer.exe", $"/select,\"{output}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't open that:\n\n{ex.Message}\n\nYouTube Studio is at {YouTubeStudioUrl}", "Export complete",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
     }
 }

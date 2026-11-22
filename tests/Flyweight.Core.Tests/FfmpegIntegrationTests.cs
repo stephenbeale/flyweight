@@ -383,6 +383,39 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.InRange(g.G, expected - 5, expected + 5);
     }
 
+    [Fact]
+    public async Task Export_plays_a_2x_clip_in_half_the_time_with_its_audio()
+    {
+        if (!FfmpegAvailable()) return;
+        // 2 s green then 2 s magenta, with a tone. At 2× it lasts 2 s and is magenta from 1 s.
+        var green = await MakeClip("sg.mp4", 640, 360, 2, "green", audio: true);
+        var magenta = await MakeClip("sm.mp4", 640, 360, 2, "magenta", audio: true);
+        var both = Path.Combine(_dir, "gm.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-i", green, "-i", magenta, "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]",
+            "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", both,
+        });
+        var p = new Project();
+        var m = await MediaProbe.ProbeAsync(both);
+        p.Media.Add(m);
+        var c = TimelineOps.Append(p, m);
+        TimelineOps.SetClipSpeed(p, c.Id, 2);
+
+        var output = Path.Combine(_dir, "fast.mp4");
+        var plan = ExportPlan.Build(p, new ExportSettings(), new Dictionary<Guid, string>(), output);
+        await plan.RunAsync(); // graphics chip if this machine has one, else the x264 fallback
+        Assert.NotEqual("", plan.UsedEncoder);
+
+        var info = await MediaProbe.ProbeAsync(output);
+        Assert.InRange(info.Duration.TotalSeconds, 1.9, 2.15);
+        var early = await Pixel(output, 0.5, 320, 180);
+        var late = await Pixel(output, 1.5, 320, 180);
+        Assert.True(early.G > 90 && early.R < 60, $"0.5 s = 1 s of footage: green, got {early}");
+        Assert.True(late.R > 200 && late.B > 200 && late.G < 60, $"1.5 s = 3 s of footage: magenta, got {late}");
+        Assert.True(await Rms(output, 0.2, 1.8) > 0.05, "the sped-up audio is there");
+    }
+
     sealed class SyncProgress(Action<double> a) : IProgress<double>
     {
         public void Report(double value) => a(value);
