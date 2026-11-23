@@ -60,6 +60,28 @@ public static class FrameExport
         return largest?.DirectoryName ?? Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
     }
 
+    /// <summary>
+    /// Default path for the video export: beside the largest video (falls back to Videos), named after the project
+    /// file, else "&lt;main video&gt; - edit.mp4". Not made unique: the export dialog already asks before replacing.
+    /// </summary>
+    public static string DefaultVideoPath(Project p, string? projectFilePath)
+    {
+        var main = MainVideo(p);
+        var folder = main?.DirectoryName ?? Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+        var name = !string.IsNullOrEmpty(projectFilePath) ? Path.GetFileNameWithoutExtension(projectFilePath)
+                 : main is not null ? Path.GetFileNameWithoutExtension(main.Name) + " - edit"
+                 : "My video";
+        return Path.Combine(folder, name + ".mp4");
+    }
+
+    /// <summary>The project's largest existing video file (the main recording), or null.</summary>
+    public static FileInfo? MainVideo(Project p) => p.Media
+        .Where(m => !m.IsStill && !m.IsAudioOnly)
+        .Select(m => new FileInfo(m.OriginalPath))
+        .Where(f => f.Exists)
+        .OrderByDescending(f => f.Length)
+        .FirstOrDefault();
+
     /// <summary>"Barbour guide frame 1m23s.png": the project's name (else the main video's) plus the timeline time.</summary>
     public static string DefaultFileName(Project p, string? projectFilePath, TimeSpan t)
     {

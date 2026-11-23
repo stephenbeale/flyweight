@@ -27,8 +27,8 @@ Save frame matched the preview, the installer ran.
    normal (non-pre) release with BOTH versioned and version-free assets (`Flyweight-Setup.exe`,
    `Flyweight-win-x64.zip`) so the stable link updates.
 4. **Ideas queued:** dark themed dialogs (Export, New project, Freeze, Chapters); delete the remote branches
-   `feature/youtube-chapters` and `feature/frame-export` (now in `main`); optional: default video exports / freeze
-   frames next to the footage (left out of D33); freeze-frame PNGs still live in `%LocalAppData%` (portability).
+   `feature/youtube-chapters` and `feature/frame-export` (now in `main`); ~~default video exports / freeze frames next to the
+   footage~~ ✅ (2026-11-23); ~~long filter graphs hitting the Windows command-line limit~~ ✅ (2026-11-23).
 **Testing tip:** a second instance shares `%LocalAppData%\Flyweight`; test installs into a scratch `/DIR` and avoid
 launching while the owner's instance is open.
 

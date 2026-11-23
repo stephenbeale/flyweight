@@ -48,11 +48,79 @@ public static class FfmpegRunner
         var all = new List<string> { "-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats" };
         all.AddRange(args);
 
-        await RunAsync(FfmpegLocator.Ffmpeg, all, line =>
+        // Long projects (many clips/annotations) make a filter graph too long for Windows' ~32k-character command
+        // line. Pass long graphs through a temp file instead (D-note "long filter graphs" in DECISIONS).
+        string? scriptFile = null;
+        int fi = all.IndexOf("-filter_complex");
+        if (fi >= 0 && fi + 1 < all.Count && all[fi + 1].Length > MaxInlineFilterLength)
         {
-            if (progress is null || expectedDuration is not { } total) return;
-            if (ParseProgress(line, total) is { } fraction) progress.Report(fraction);
-        }, ct, background);
+            scriptFile = Path.Combine(Path.GetTempPath(), $"flyweight-filter-{Guid.NewGuid():N}.txt");
+            await File.WriteAllTextAsync(scriptFile, all[fi + 1], ct);
+            all = UseFilterScript(all, scriptFile, await SupportsSlashOptionsAsync());
+        }
+        if (all.Sum(a => a.Length + 3) > MaxCommandLineLength)
+            throw new FfmpegException("This project is too big to export in one go (too many clips or annotations for Windows' command-line limit).", "");
+
+        try
+        {
+            await RunAsync(FfmpegLocator.Ffmpeg, all, line =>
+            {
+                if (progress is null || expectedDuration is not { } total) return;
+                if (ParseProgress(line, total) is { } fraction) progress.Report(fraction);
+            }, ct, background);
+        }
+        finally
+        {
+            if (scriptFile is not null) try { File.Delete(scriptFile); } catch { /* temp file; harmless if left */ }
+        }
+    }
+
+    /// <summary>Filter graphs longer than this go through a file. Normal projects stay well under it.</summary>
+    public const int MaxInlineFilterLength = 4000;
+
+    /// <summary>Windows' CreateProcess limit is 32,767 characters; leave headroom for the exe path.</summary>
+    public const int MaxCommandLineLength = 30000;
+
+    /// <summary>
+    /// Replace "-filter_complex GRAPH" with the file form. ffmpeg 7+ reads any option's value from a file with
+    /// "-/filter_complex FILE" (and deprecates -filter_complex_script); older builds only know -filter_complex_script.
+    /// </summary>
+    public static List<string> UseFilterScript(List<string> args, string scriptFile, bool slashOptions)
+    {
+        var result = new List<string>(args);
+        int i = result.IndexOf("-filter_complex");
+        if (i < 0 || i + 1 >= result.Count) return result;
+        result[i] = slashOptions ? "-/filter_complex" : "-filter_complex_script";
+        result[i + 1] = scriptFile;
+        return result;
+    }
+
+    static Task<bool>? _slashOptions;
+
+    /// <summary>True if the ffmpeg in use supports "-/option file" (version 7 or later, or a date-stamped nightly).</summary>
+    public static Task<bool> SupportsSlashOptionsAsync() => _slashOptions ??= DetectSlashOptionsAsync();
+
+    static async Task<bool> DetectSlashOptionsAsync()
+    {
+        var firstLine = "";
+        try
+        {
+            await RunAsync(FfmpegLocator.Ffmpeg, new[] { "-hide_banner", "-version" },
+                line => { if (firstLine.Length == 0) firstLine = line; }, CancellationToken.None);
+        }
+        catch { return false; }
+        return ParseMajorVersion(firstLine) is >= 7;
+    }
+
+    /// <summary>"ffmpeg version 7.1-full_build-www.gyan.dev" → 7; "ffmpeg version 2025-01-02-git-…" → 2025; "n6.1.1" → 6.</summary>
+    public static int? ParseMajorVersion(string versionLine)
+    {
+        const string prefix = "ffmpeg version ";
+        if (!versionLine.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var v = versionLine[prefix.Length..].TrimStart('n', 'N');
+        int end = 0;
+        while (end < v.Length && char.IsDigit(v[end])) end++;
+        return end > 0 && int.TryParse(v[..end], NumberStyles.Integer, CultureInfo.InvariantCulture, out var major) ? major : null;
     }
 
     /// <summary>

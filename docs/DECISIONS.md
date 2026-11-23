@@ -307,3 +307,14 @@ Kept for later in `assets/concepts/`: `film-fly.svg` (same, no gloves; the owner
 Source `assets/icon.svg` → `assets/icon-128.png`/`icon-512.png` and `src/Flyweight.App/flyweight.ico` (16–256 px),
 which the app, window and installer all use. Re-render all of them if the SVG changes.
 
+### Exports and freeze frames default next to the footage; long filter graphs go through a file (2026-11-23)
+**Default folders.** The video export dialog now suggests the folder of the project's largest video (the main
+recording), named after the project file, else "<main video> - edit.mp4" (`FrameExport.DefaultVideoPath`), the same
+rule Save frame uses (D33). Freeze frames are saved there too ("Match freeze 0m12s.png", never overwriting) instead of
+`%LocalAppData%\Flyweight\frames`, so they travel with the footage. This closes the D17 portability limitation.
+**Long projects.** Windows limits a command line to ~32k characters, and a project with many clips/annotations can
+produce a longer ffmpeg filter graph. `FfmpegRunner` now writes any graph over 4,000 characters to a temp file and
+passes it as `-/filter_complex FILE` (ffmpeg 7+, incl. gyan.dev nightlies) or `-filter_complex_script FILE` (older),
+chosen by parsing `ffmpeg -version` once. If the whole command is still too long it fails with a clear message
+instead of a cryptic one.
+

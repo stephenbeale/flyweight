@@ -227,11 +227,15 @@ public sealed class MediaLibrary
     /// freeze frame. Stored under the app's data folder so it outlives the proxy cache.
     /// Returns the PNG path; probe it to get a still <see cref="SourceMedia"/>.
     /// </summary>
-    public async Task<string> ExtractFrameAsync(SourceMedia media, TimeSpan sourceTime, CancellationToken ct = default)
+    /// <param name="folder">Where to save it, normally next to the project's footage so it travels with it
+    /// ("Match freeze 0m12s.png", never overwriting). Null = the app's data folder (the old behaviour).</param>
+    public async Task<string> ExtractFrameAsync(SourceMedia media, TimeSpan sourceTime, string? folder = null, CancellationToken ct = default)
     {
-        var dir = Path.Combine(Path.GetDirectoryName(CacheDirectory)!, "frames");
+        var dir = folder ?? Path.Combine(Path.GetDirectoryName(CacheDirectory)!, "frames");
         Directory.CreateDirectory(dir);
-        var png = Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} at {sourceTime.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}s {Guid.NewGuid().ToString("N")[..6]}.png");
+        var png = folder is not null
+            ? Export.FrameExport.Unique(Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} freeze {Export.FrameExport.Stamp(sourceTime)}.png"))
+            : Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} at {sourceTime.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}s {Guid.NewGuid().ToString("N")[..6]}.png");
         await FfmpegRunner.RunFfmpegAsync(new[]
         {
             // -ss before -i seeks fast; ffmpeg still decodes to the exact frame.

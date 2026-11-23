@@ -670,7 +670,8 @@ public sealed class MainForm : Form
         SourceMedia still;
         try
         {
-            var png = await _library.ExtractFrameAsync(media, hit.SourceTime);
+            // Saved next to the footage (not hidden in AppData), so it travels with the project.
+            var png = await _library.ExtractFrameAsync(media, hit.SourceTime, FrameExport.DefaultFolder(p));
             still = await _library.ProbeAsync(png);
         }
         catch (Exception ex)
@@ -887,7 +888,8 @@ public sealed class MainForm : Form
         _engine.Pause();
         _preview.CommitTextEdit();
         if (_session.Project.Timeline.Count == 0) { MessageBox.Show(this, "Add some clips to the timeline first.", "Export"); return; }
-        var suggested = _session.FilePath is { } fp ? Path.ChangeExtension(fp, ".mp4") : null;
+        // Default: next to the largest video (the main footage), named after the project.
+        var suggested = FrameExport.DefaultVideoPath(_session.Project, _session.FilePath);
         using var dlg = new ExportForm(_session.Project, suggested, details =>
         {
             // Remember the YouTube details in the project (one undo step), only if they changed.
