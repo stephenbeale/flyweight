@@ -128,7 +128,7 @@ public sealed class MainForm : Form
         tools.Items.AddRange(new ToolStripItem[]
         {
             new ToolStripSeparator(),
-            Btn("Split", "Split clip at playhead (S)", Split),
+            Btn("Split", "Split at playhead (S): the selected overlay or audio item, else the main clip", Split),
             Btn("Freeze", "Freeze this frame: hold it for a few seconds (F)", () => _ = FreezeFrameAsync()),
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
@@ -685,6 +685,8 @@ public sealed class MainForm : Form
         menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
         menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(o.Start); });
         menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, _engine.Position)));
+        menu.Items.Add(new ToolStripMenuItem("Split at playhead (S)", null, (_, _) => Split())
+            { Enabled = _engine.Position - o.Start >= TimelineOps.MinClipLength && o.End - _engine.Position >= TimelineOps.MinClipLength });
         var place = new ToolStripMenuItem("Place");
         foreach (var (pos, label) in new[]
         {
@@ -744,6 +746,8 @@ public sealed class MainForm : Form
         menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
         menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveAudio(p, audioId, _engine.Position)));
         menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(a.Start); });
+        menu.Items.Add(new ToolStripMenuItem("Split at playhead (S)", null, (_, _) => Split())
+            { Enabled = _engine.Position - a.Start >= TimelineOps.MinClipLength && a.End - _engine.Position >= TimelineOps.MinClipLength });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Mute (Shift+M)", null, (_, _) => ToggleMute(null)) { Checked = a.Muted });
         menu.Items.Add("Remove from audio track (Del)", null, (_, _) => DeleteSelection());
@@ -792,10 +796,36 @@ public sealed class MainForm : Form
         _statusText.Text = muted ? $"Muted {name}" : $"Unmuted {name}";
     }
 
+    /// <summary>
+    /// S / Split: cut the SELECTED overlay or audio item at the playhead if one is selected, else the main clip there.
+    /// The right half becomes the selection, so pressing S again keeps cutting the same track.
+    /// </summary>
     void Split()
     {
         _engine.Pause();
-        _session.Execute(p => TimelineOps.SplitAt(p, _engine.Position));
+        var at = _engine.Position;
+        var p = _session.Project;
+        if (_timeline.SelectedOverlayId is { } oid && p.FindOverlay(oid) is { } o)
+        {
+            OverlayClip? right = null;
+            _session.Execute(proj => right = TimelineOps.SplitOverlayAt(proj, oid, at));
+            if (right is null) { _statusText.Text = "Move the playhead onto the selected overlay (not right at its ends), then press S."; return; }
+            _timeline.SelectOverlay(right.Id);
+            _statusText.Text = $"Split the overlay at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
+            return;
+        }
+        if (_timeline.SelectedAudioId is { } aid && p.FindAudio(aid) is not null)
+        {
+            AudioItem? right = null;
+            _session.Execute(proj => right = TimelineOps.SplitAudioAt(proj, aid, at));
+            if (right is null) { _statusText.Text = "Move the playhead onto the selected audio item (not right at its ends), then press S."; return; }
+            _timeline.SelectedAudioId = right.Id;
+            UpdatePropertyGrid();
+            _timeline.Invalidate();
+            _statusText.Text = $"Split the audio at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
+            return;
+        }
+        _session.Execute(proj => TimelineOps.SplitAt(proj, at));
     }
 
     async Task FreezeFrameAsync()

@@ -30,12 +30,16 @@ public sealed class OverlayPropertiesPanel : UserControl
     readonly Slider _size = new((int)(OverlayLayout.MinScale * 100), (int)(OverlayLayout.MaxScale * 100), "%");
     readonly Slider _x = new(0, 100, "");
     readonly Slider _y = new(0, 100, "");
+    readonly Slider _zoom = new(100, (int)(OverlayLayout.MaxZoom * 100), "%");
+    readonly Slider _panX = new(0, 100, "");
+    readonly Slider _panY = new(0, 100, "");
     readonly Slider _volume = new(0, (int)(TimelineOps.MaxClipVolume * 100), "%");
     readonly CheckBox _muted = new() { Text = "Muted  (Shift+M)", ForeColor = Fg, AutoSize = true };
     readonly Label _note = new()
     {
         ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0),
-        Text = "Drag it in the preview to move it. Its sound plays over the main clips: mute it, or right-click it → Separate audio.",
+        Text = "Drag it in the preview to move it; scroll over it there to zoom in (crop). Its sound plays over the main clips: " +
+               "mute it, or right-click it → Separate audio.",
     };
     bool _loading;
 
@@ -60,6 +64,10 @@ public sealed class OverlayPropertiesPanel : UserControl
         Row("Size", _size);
         Row("Across", _x);
         Row("Down", _y);
+        Section("Zoom (crop)");
+        Row("Zoom", _zoom);
+        Row("Pan ↔", _panX);
+        Row("Pan ↕", _panY);
         Section("Audio");
         Row("Volume", _volume);
         Row("", _muted);
@@ -75,6 +83,9 @@ public sealed class OverlayPropertiesPanel : UserControl
         _size.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayLayout(p, id, null, null, v / 100.0), phase); };
         _x.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayLayout(p, id, v / 100.0, null, null), phase); };
         _y.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayLayout(p, id, null, v / 100.0, null), phase); };
+        _zoom.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayZoom(p, id, v / 100.0), phase); };
+        _panX.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayPan(p, id, v / 100.0, null), phase); };
+        _panY.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayPan(p, id, null, v / 100.0), phase); };
         _volume.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayVolume(p, id, v / 100.0), phase); };
         _muted.CheckedChanged += (_, _) =>
         {
@@ -97,6 +108,10 @@ public sealed class OverlayPropertiesPanel : UserControl
             _size.SetValue((int)Math.Round(o.Scale * 100));
             _x.SetValue((int)Math.Round(o.X * 100));
             _y.SetValue((int)Math.Round(o.Y * 100));
+            _zoom.SetValue((int)Math.Round(o.Zoom * 100));
+            _panX.SetValue((int)Math.Round(o.PanX * 100));
+            _panY.SetValue((int)Math.Round(o.PanY * 100));
+            _panX.Enabled = _panY.Enabled = OverlayLayout.IsZoomed(o); // nothing to pan at 100%
             bool hasAudio = media is { HasAudio: true, IsStill: false };
             _volume.SetValue((int)Math.Round(o.Volume * 100));
             _muted.Checked = o.Muted;

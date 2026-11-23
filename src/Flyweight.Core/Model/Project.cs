@@ -217,6 +217,16 @@ public sealed class OverlayClip
     public double X { get; set; } = 0.78;
     public double Y { get; set; } = 0.76;
 
+    /// <summary>
+    /// Zoom INTO the overlay's own picture, like cropping: 1 = the whole frame, up to 4. The box on screen keeps its
+    /// size and place; only less of the source fills it. Older files load as 1. See <see cref="Editing.OverlayLayout.CropRect"/>.
+    /// </summary>
+    public double Zoom { get; set; } = 1.0;
+
+    /// <summary>Which part of the source shows when zoomed: 0 = left/top edge, 0.5 = centre, 1 = right/bottom edge.</summary>
+    public double PanX { get; set; } = 0.5;
+    public double PanY { get; set; } = 0.5;
+
     /// <summary>Gain for its own audio, 0–2 like <see cref="Clip.Volume"/>.</summary>
     public double Volume { get; set; } = 1.0;
 

@@ -362,3 +362,17 @@ Owner request ("I NEED to add concurrent video tracks and separate audio from vi
   does (re-seeks went from ~10 per 4 s to none). (4) Resuming no longer counts paused time as video progress (it
   re-seeked the main video on every play). Overlays at ≤ 50% size decode at 480×270; drawing copies the frame out
   under the lock first so the decoder never waits for GDI+.
+
+### D35. Overlay zoom (crop) and splitting overlays / audio items (2026-11-23)
+Owner: "add zoom possibility for overlaid videos, like cropping" and "split either video on the timeline".
+- **Zoom = crop.** `OverlayClip.Zoom` (1–4) + `PanX`/`PanY`, like a main clip's zoom (D25): the overlay's box keeps its
+  size and place, and less of the source fills it. `OverlayLayout.CropRect` is the one formula (source-relative,
+  same shape as the source); the export and Save frame crop the ORIGINAL with it before scaling (even-pixel `crop`
+  expressions, so yuv420p sources never get odd sizes), the preview crops the decoded proxy picture. Old files load
+  unzoomed. Properties: Zoom (crop) section; in the preview, scroll over an overlay to zoom (a burst of wheel notches
+  is one undo step). A zoomed small overlay decodes at full size so the magnified part stays sharp.
+- **Split.** S / Split cuts the SELECTED overlay (`SplitOverlayAt`) or audio item (`SplitAudioAt`) at the playhead,
+  else the main clip as before. The right half is a copy (placement, zoom, volume, track, stacking order) and becomes
+  the selection, so S again keeps cutting the same track. Clicking an overlay's or audio item's body now also moves
+  the playhead there (as clips always did), so you can click where to cut and press S. Free-shape cropping (e.g. only
+  trimming the sides of a webcam) isn't there yet: the crop keeps the source's shape.

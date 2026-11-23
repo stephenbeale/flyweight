@@ -379,6 +379,38 @@ public sealed class PreviewCanvas : Control
 
     Annotation? Selected() => SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
 
+    // Scrolling over an overlay zooms into it (crop). A burst of wheel notches is ONE undo step: the edit stays open
+    // until the wheel has been still for a moment.
+    readonly System.Windows.Forms.Timer _wheelCommit = new() { Interval = 600 };
+    bool _wheelEditing;
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (_session is null || _drag != DragMode.None || OverlayAt(e.Location) is not { } ov) return;
+        if (ov.Id != SelectedOverlayId) OverlayClicked?.Invoke(ov.Id);
+        _engine.Pause();
+        if (!_wheelEditing)
+        {
+            _wheelEditing = true;
+            _session.BeginEdit();
+            _wheelCommit.Tick += WheelCommit;
+        }
+        var id = ov.Id;
+        double factor = Math.Pow(1.1, e.Delta / 120.0);
+        _session.Preview(p => { if (p.FindOverlay(id) is { } o) TimelineOps.SetOverlayZoom(p, id, o.Zoom * factor); });
+        _wheelCommit.Stop();
+        _wheelCommit.Start();
+    }
+
+    void WheelCommit(object? sender, EventArgs e)
+    {
+        _wheelCommit.Stop();
+        _wheelCommit.Tick -= WheelCommit;
+        _wheelEditing = false;
+        _session.CommitEdit();
+    }
+
     /// <summary>The topmost overlay showing under a point, if any.</summary>
     OverlayClip? OverlayAt(Point pt)
     {

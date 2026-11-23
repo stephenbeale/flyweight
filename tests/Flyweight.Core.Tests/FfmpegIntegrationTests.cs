@@ -193,6 +193,40 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.True(IsRed(await Pixel(png, 0, 400, 540)), "saved frame: main picture");
     }
 
+    [Fact]
+    public async Task Zoomed_overlay_exports_and_saves_only_the_cropped_part()
+    {
+        if (!FfmpegAvailable()) return;
+        var red = await MakeClip("main2.mp4", 1280, 720, 2, "red", audio: false);
+        // Overlay source: left half blue, right half yellow.
+        var split = Path.Combine(_dir, "split.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=2,drawbox=x=320:y=0:w=320:h=360:color=yellow:t=fill",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", split,
+        });
+
+        var p = new Project();
+        TimelineOps.Append(p, await MediaProbe.ProbeAsync(red));
+        var o = TimelineOps.AddOverlay(p, await MediaProbe.ProbeAsync(split), TimeSpan.Zero);
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.5); // box = middle of the frame, 960×540 at 1080p
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        TimelineOps.SetOverlayPan(p, o.Id, 1, 0.5);            // the right half's middle: all yellow
+
+        static bool IsYellow((int R, int G, int B) c) => c.R > 200 && c.G > 200 && c.B < 80;
+        static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
+
+        var output = Path.Combine(_dir, "zoomed.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
+        Assert.True(IsYellow(await Pixel(output, 1, 520, 540)), "box's left edge shows the crop (yellow), not the source's left (blue)");
+        Assert.True(IsYellow(await Pixel(output, 1, 1400, 540)), "box's right edge: yellow");
+        Assert.True(IsRed(await Pixel(output, 1, 300, 540)), "outside the box: main picture");
+
+        var png = Path.Combine(_dir, "zoomed.png");
+        await FfmpegRunner.RunFfmpegAsync(FrameExport.BuildArgs(p, FrameExport.LocateFrame(p, TimeSpan.FromSeconds(1))!.Value, 1920, 1080, png));
+        Assert.True(IsYellow(await Pixel(png, 0, 520, 540)), "saved frame: cropped the same way");
+    }
+
     async Task<string> MakeImage(string name, int w, int h, string color)
     {
         var path = Path.Combine(_dir, name);

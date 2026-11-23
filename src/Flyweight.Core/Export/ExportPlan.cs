@@ -119,7 +119,8 @@ public sealed class ExportPlan
             else args.AddRange(new[] { "-ss", Sec(o.In), "-t", d, "-i", media.OriginalPath });
             var (px, py, pw, ph) = OverlayLayout.PixelRect(o, media, w, h);
             var label = $"ov{overlays.Count}";
-            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},scale={pw}:{ph}:flags=bicubic,setsar=1,format=yuv420p," +
+            // Zoom crops the ORIGINAL before scaling (sharp), like a main clip's zoom.
+            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{OverlayLayout.CropFilter(o)}scale={pw}:{ph}:flags=bicubic,setsar=1,format=yuv420p," +
                          $"tpad=stop=-1:stop_mode=clone,trim=duration={d},setpts=PTS+{Sec(o.Start)}/TB[{label}];\n");
             var end = o.End < total ? o.End : total;
             overlays.Add((label, px, py, o.Start, end));

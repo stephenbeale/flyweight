@@ -286,6 +286,50 @@ public static class TimelineOps
         if (scale is { } s) o.Scale = double.IsFinite(s) ? Math.Clamp(s, OverlayLayout.MinScale, OverlayLayout.MaxScale) : DefaultOverlayScale;
     }
 
+    /// <summary>
+    /// Cut an overlay in two at timeline time <paramref name="t"/>. The right half is a copy (same placement, zoom,
+    /// volume) starting at <paramref name="t"/>, so each half can then be moved, trimmed, re-zoomed or deleted on its own.
+    /// Returns the new right half, or null if <paramref name="t"/> isn't at least <see cref="MinClipLength"/> inside it.
+    /// </summary>
+    public static OverlayClip? SplitOverlayAt(Project p, Guid id, TimeSpan t)
+    {
+        if (p.FindOverlay(id) is not { } o || t - o.Start < MinClipLength || o.End - t < MinClipLength) return null;
+        var cut = o.In + (t - o.Start);
+        var right = new OverlayClip
+        {
+            SourceId = o.SourceId, Track = o.Track, Start = t, In = cut, Out = o.Out,
+            Scale = o.Scale, X = o.X, Y = o.Y, Zoom = o.Zoom, PanX = o.PanX, PanY = o.PanY, Volume = o.Volume, Muted = o.Muted,
+        };
+        o.Out = cut;
+        p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right); // same stacking order as the original
+        return right;
+    }
+
+    /// <summary>The same for an audio-track item: two items, each keeping the volume. Null if <paramref name="t"/> is too near an end.</summary>
+    public static AudioItem? SplitAudioAt(Project p, Guid id, TimeSpan t)
+    {
+        if (p.FindAudio(id) is not { } a || t - a.Start < MinClipLength || a.End - t < MinClipLength) return null;
+        var cut = a.In + (t - a.Start);
+        var right = new AudioItem { SourceId = a.SourceId, Start = t, In = cut, Out = a.Out, Volume = a.Volume, Muted = a.Muted };
+        a.Out = cut;
+        p.AudioTrack.Insert(p.AudioTrack.IndexOf(a) + 1, right);
+        return right;
+    }
+
+    /// <summary>Zoom into the overlay's own picture (1–4, like cropping). Keeps where it's panned to.</summary>
+    public static void SetOverlayZoom(Project p, Guid id, double zoom)
+    {
+        if (p.FindOverlay(id) is { } o) o.Zoom = double.IsFinite(zoom) ? Math.Clamp(zoom, 1, OverlayLayout.MaxZoom) : 1;
+    }
+
+    /// <summary>Which part of the source shows when zoomed: 0–1 each way, 0.5 = centred. Null leaves that axis alone.</summary>
+    public static void SetOverlayPan(Project p, Guid id, double? panX, double? panY)
+    {
+        if (p.FindOverlay(id) is not { } o) return;
+        if (panX is { } x) o.PanX = double.IsFinite(x) ? Math.Clamp(x, 0, 1) : 0.5;
+        if (panY is { } y) o.PanY = double.IsFinite(y) ? Math.Clamp(y, 0, 1) : 0.5;
+    }
+
     /// <summary>Snap to a corner, the centre, or full frame.</summary>
     public static void PlaceOverlay(Project p, Guid id, OverlayPosition pos)
     {

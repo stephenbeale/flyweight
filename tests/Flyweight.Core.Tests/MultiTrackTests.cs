@@ -300,6 +300,99 @@ public class MultiTrackTests
     }
 
     [Fact]
+    public void Overlay_zoom_crops_the_source_and_keeps_the_box()
+    {
+        var p = new Project();
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(0));
+        var box = OverlayLayout.Rect(o, p.FindMedia(o.SourceId));
+        Assert.Equal((0.0, 0.0, 1.0, 1.0), OverlayLayout.CropRect(o));
+        Assert.Equal("", OverlayLayout.CropFilter(o));
+
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        Assert.Equal((0.25, 0.25, 0.5, 0.5), OverlayLayout.CropRect(o)); // centred: the middle half each way
+        TimelineOps.SetOverlayPan(p, o.Id, 1, 0);
+        Assert.Equal((0.5, 0.0, 0.5, 0.5), OverlayLayout.CropRect(o));   // top-right quarter
+        Assert.Equal(box, OverlayLayout.Rect(o, p.FindMedia(o.SourceId))); // same box on screen
+
+        TimelineOps.SetOverlayZoom(p, o.Id, 99);
+        Assert.Equal(OverlayLayout.MaxZoom, o.Zoom);
+        TimelineOps.SetOverlayZoom(p, o.Id, 0.2);
+        Assert.Equal(1, o.Zoom);
+    }
+
+    [Fact]
+    public void Zoomed_overlay_is_cropped_before_scaling_in_the_export()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("main.mp4", 20));
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(1));
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+
+        var g = ExportPlan.Build(p, new ExportSettings { UseHardwareEncoder = false }, new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
+
+        Assert.Contains("crop=w='2*trunc(iw*0.5/2)':h='2*trunc(ih*0.5/2)':x='2*trunc(iw*0.25/2)':y='2*trunc(ih*0.25/2)',scale=", g);
+    }
+
+    [Fact]
+    public void SplitOverlayAt_cuts_it_into_two_independent_halves()
+    {
+        var p = new Project();
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(4), track: 2);
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.3, 0.4, 0.5);
+
+        var right = TimelineOps.SplitOverlayAt(p, o.Id, S(7))!;
+
+        Assert.Equal((S(4), S(0), S(3)), (o.Start, o.In, o.Out));
+        Assert.Equal((S(7), S(3), S(10), S(14)), (right.Start, right.In, right.Out, right.End));
+        Assert.Equal((2, 0.3, 0.4, 0.5, 2.0), (right.Track, right.X, right.Y, right.Scale, right.Zoom));
+        Assert.NotEqual(o.Id, right.Id);
+        Assert.Equal(p.Overlays.IndexOf(o) + 1, p.Overlays.IndexOf(right));
+
+        // Each half is its own now.
+        TimelineOps.SetOverlayZoom(p, right.Id, 1);
+        Assert.Equal(2, o.Zoom);
+    }
+
+    [Theory]
+    [InlineData(4.0)]   // at its start
+    [InlineData(14.0)]  // at its end
+    [InlineData(20.0)]  // not on it
+    public void SplitOverlayAt_refuses_cuts_at_or_outside_its_ends(double t)
+    {
+        var p = new Project();
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(4));
+        Assert.Null(TimelineOps.SplitOverlayAt(p, o.Id, S(t)));
+        Assert.Single(p.Overlays);
+    }
+
+    [Fact]
+    public void SplitAudioAt_cuts_an_audio_item_in_two()
+    {
+        var p = new Project();
+        var clip = TimelineOps.Append(p, Video("talk.mp4", 10));
+        var a = TimelineOps.SeparateAudio(p, clip.Id)!;
+        TimelineOps.SetAudioVolume(p, a.Id, 0.5);
+
+        var right = TimelineOps.SplitAudioAt(p, a.Id, S(6))!;
+
+        Assert.Equal((S(0), S(6)), (a.In, a.Out));
+        Assert.Equal((S(6), S(6), S(10), 0.5), (right.Start, right.In, right.Out, right.Volume));
+        Assert.Equal(2, p.AudioTrack.Count);
+    }
+
+    [Fact]
+    public void Old_files_load_overlays_unzoomed()
+    {
+        var p = new Project();
+        TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(0));
+        var json = ProjectSerializer.Serialize(p).Replace("\"Zoom\": 1,", "").Replace("\"PanX\": 0.5,", "").Replace("\"PanY\": 0.5,", "");
+        Assert.DoesNotContain("PanX", json);
+        var o = ProjectSerializer.Deserialize(json).Overlays.Single();
+        Assert.Equal((1.0, 0.5, 0.5), (o.Zoom, o.PanX, o.PanY));
+    }
+
+    [Fact]
     public void Muted_overlay_is_not_heard_in_the_export()
     {
         var p = new Project();

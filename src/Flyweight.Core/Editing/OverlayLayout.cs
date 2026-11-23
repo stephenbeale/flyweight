@@ -41,6 +41,35 @@ public static class OverlayLayout
         return (px, py, pw, ph);
     }
 
+    public const double MaxZoom = 4.0;
+
+    public static bool IsZoomed(OverlayClip o) => o.Zoom > 1.0005;
+
+    /// <summary>
+    /// The part of the SOURCE picture that fills the overlay's box, as fractions of the source (0–1): the same shape as
+    /// the source, 1/zoom of its size, placed by the pan. Preview, export and Save frame all crop exactly this.
+    /// </summary>
+    public static (double X, double Y, double W, double H) CropRect(OverlayClip o)
+    {
+        double z = double.IsFinite(o.Zoom) ? Math.Clamp(o.Zoom, 1, MaxZoom) : 1;
+        double s = 1 / z;
+        double px = double.IsFinite(o.PanX) ? Math.Clamp(o.PanX, 0, 1) : 0.5;
+        double py = double.IsFinite(o.PanY) ? Math.Clamp(o.PanY, 0, 1) : 0.5;
+        return (px * (1 - s), py * (1 - s), s, s);
+    }
+
+    /// <summary>ffmpeg crop of the source for a zoomed overlay (empty when not zoomed). Runs before the scale, so it stays sharp.</summary>
+    public static string CropFilter(OverlayClip o)
+    {
+        if (!IsZoomed(o)) return "";
+        var (x, y, w, h) = CropRect(o);
+        static string N(double v) => FfmpegNum(v);
+        // Whole, even pixel sizes: yuv420p sources can't be cropped to odd sizes or offsets.
+        return $"crop=w='2*trunc(iw*{N(w)}/2)':h='2*trunc(ih*{N(h)}/2)':x='2*trunc(iw*{N(x)}/2)':y='2*trunc(ih*{N(y)}/2)',";
+    }
+
+    static string FfmpegNum(double v) => Media.FfmpegRunner.Num(Math.Round(v, 6));
+
     /// <summary>Centre and scale for a quick placement. Corners keep the current size; Full frame fills the width.</summary>
     public static (double X, double Y, double Scale) Place(OverlayPosition pos, double scale, SourceMedia? m)
     {

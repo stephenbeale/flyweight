@@ -34,7 +34,7 @@ public static class FrameExport
             if (!om.IsStill) args.AddRange(new[] { "-ss", Sec(o.In + (t - o.Start)) });
             args.AddRange(new[] { "-i", om.OriginalPath });
             var (x, y, w, h) = OverlayLayout.PixelRect(o, om, width, height);
-            graph += $";[{n + 1}:v]scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";
+            graph += $";[{n + 1}:v]{OverlayLayout.CropFilter(o)}scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";
             n++;
         }
         if (n == 0)
