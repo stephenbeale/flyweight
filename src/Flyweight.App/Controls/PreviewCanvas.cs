@@ -32,8 +32,9 @@ public sealed class PreviewCanvas : Control
     Image? _standIn;
 
     // Drag state
-    enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21 }
+    enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21, MoveOverlay }
     DragMode _drag;
+    (Guid Id, double X, double Y) _overlayOrigin;
     PointF _dragStartNorm;
     Annotation? _dragOrigin;      // copy of the annotation before the drag
     Annotation? _creating;        // ghost shown while drawing a new shape
@@ -59,6 +60,13 @@ public sealed class PreviewCanvas : Control
     }
 
     public Guid? SelectedAnnotationId { get; private set; }
+
+    /// <summary>The overlay selected on the timeline (MainForm keeps it in step): drawn with a dashed outline.</summary>
+    public Guid? SelectedOverlayId { get; set; }
+
+    /// <summary>An overlay was clicked in the picture (null = clicked off every overlay and annotation).</summary>
+    public event Action<Guid?>? OverlayClicked;
+
     public event EventHandler? SelectionChanged;
     public event EventHandler? ToolChanged;
     public bool IsEditingText => _editor is not null;
@@ -163,6 +171,8 @@ public sealed class PreviewCanvas : Control
         }
 
         g.SetClip(canvas);
+        // Overlay tracks (picture-in-picture / cutaways) over the main picture, under the annotations (as in the export).
+        _engine.Overlays.Draw(g, canvas, _session.Project, _engine.Position, SelectedOverlayId, Font);
         foreach (var a in TimelineOps.VisibleAt(_session.Project, _engine.Position))
         {
             if (a.Id == _editingId) continue; // the inline editor is showing it
@@ -369,6 +379,14 @@ public sealed class PreviewCanvas : Control
 
     Annotation? Selected() => SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
 
+    /// <summary>The topmost overlay showing under a point, if any.</summary>
+    OverlayClip? OverlayAt(Point pt)
+    {
+        var p = _session.Project;
+        return Enumerable.Reverse(TimelineOps.OverlaysAt(p, _engine.Position))
+            .FirstOrDefault(o => OverlayLanePlayer.Dest(CanvasRect, o, p.FindMedia(o.SourceId)).Contains(pt));
+    }
+
     bool IsVisibleNow(Annotation a) => TimelineOps.VisibleAt(_session.Project, _engine.Position).Any(v => v.Id == a.Id);
 
     // ---------------- Mouse ----------------
@@ -428,7 +446,18 @@ public sealed class PreviewCanvas : Control
 
         var hit = TimelineOps.VisibleAt(_session.Project, _engine.Position).Reverse()
             .FirstOrDefault(a => AnnotationRenderer.HitTest(a, canvas, e.Location));
+        if (hit is null && OverlayAt(e.Location) is { } ov)
+        {
+            // Drag an overlay around the picture (annotations are on top, so they win the click).
+            Select(null);
+            OverlayClicked?.Invoke(ov.Id);
+            _drag = DragMode.MoveOverlay;
+            _overlayOrigin = (ov.Id, ov.X, ov.Y);
+            _session.BeginEdit();
+            return;
+        }
         Select(hit?.Id);
+        if (hit is null) OverlayClicked?.Invoke(null);
         if (hit is not null)
         {
             _drag = DragMode.Move;
@@ -448,7 +477,8 @@ public sealed class PreviewCanvas : Control
             if (_tool == Tool.Select)
             {
                 Cursor = HandleCursorAt(e.Location) ?? (TimelineOps.VisibleAt(_session.Project, _engine.Position)
-                    .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location)) ? Cursors.SizeAll : Cursors.Default);
+                    .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location)) || OverlayAt(e.Location) is not null
+                    ? Cursors.SizeAll : Cursors.Default);
             }
             return;
         }
@@ -458,6 +488,17 @@ public sealed class PreviewCanvas : Control
             _creating.X2 = norm.X;
             _creating.Y2 = norm.Y;
             Invalidate();
+            return;
+        }
+
+        if (_drag == DragMode.MoveOverlay)
+        {
+            // Unclamped mouse position, so the overlay follows the pointer even near the edges.
+            var c = CanvasRect;
+            double ox = _overlayOrigin.X + (e.X - c.X) / c.Width - _dragStartNorm.X;
+            double oy = _overlayOrigin.Y + (e.Y - c.Y) / c.Height - _dragStartNorm.Y;
+            var oid = _overlayOrigin.Id;
+            _session.Preview(p => TimelineOps.SetOverlayLayout(p, oid, ox, oy, null));
             return;
         }
 

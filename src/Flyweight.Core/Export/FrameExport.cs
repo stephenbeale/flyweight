@@ -22,14 +22,26 @@ public static class FrameExport
 
         var args = new List<string>();
         if (!media.IsStill) args.AddRange(new[] { "-ss", Sec(hit.SourceTime) }); // input seek: fast, and exact when decoding
-        args.AddRange(new[]
+        args.AddRange(new[] { "-i", media.OriginalPath });
+
+        // Overlay-track video showing at this moment goes on, placed as in the export (OverlayLayout).
+        var t = TimelineTimeOf(hit);
+        var graph = $"[0:v]{fit},{ClipLook.ToneFilter(clip)}format=yuv420p[b0]";
+        int n = 0;
+        foreach (var o in TimelineOps.OverlaysAt(p, t))
         {
-            "-i", media.OriginalPath,
-            "-frames:v", "1",
-            "-vf", $"{fit},{ClipLook.ToneFilter(clip)}format=rgb24",
-            "-f", "image2", "-update", "1",
-            outputPng,
-        });
+            if (p.FindMedia(o.SourceId) is not { IsAudioOnly: false } om) continue;
+            if (!om.IsStill) args.AddRange(new[] { "-ss", Sec(o.In + (t - o.Start)) });
+            args.AddRange(new[] { "-i", om.OriginalPath });
+            var (x, y, w, h) = OverlayLayout.PixelRect(o, om, width, height);
+            graph += $";[{n + 1}:v]scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";
+            n++;
+        }
+        if (n == 0)
+            args.AddRange(new[] { "-vf", $"{fit},{ClipLook.ToneFilter(clip)}format=rgb24" });
+        else
+            args.AddRange(new[] { "-filter_complex", graph + $";[b{n}]format=rgb24[out]", "-map", "[out]" });
+        args.AddRange(new[] { "-frames:v", "1", "-f", "image2", "-update", "1", outputPng });
         return args;
     }
 

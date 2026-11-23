@@ -147,6 +147,52 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.True(IsBlack(await Pixel(output, 4.5, 50, 540)), "vertical clip: black side bars");
     }
 
+    [Fact]
+    public async Task Export_draws_overlay_tracks_in_their_box_at_their_time_with_separated_audio()
+    {
+        if (!FfmpegAvailable()) return;
+        var red = await MakeClip("main.mp4", 1280, 720, 4, "red", audio: true);
+        var blue = await MakeClip("cam.mp4", 640, 360, 3, "blue", audio: true);
+        var green = await MakeClip("cut.mp4", 640, 360, 3, "green", audio: false);
+
+        var p = new Project();
+        var mRed = await MediaProbe.ProbeAsync(red);
+        var mBlue = await MediaProbe.ProbeAsync(blue);
+        var mGreen = await MediaProbe.ProbeAsync(green);
+        var main = TimelineOps.Append(p, mRed);
+        // Blue picture-in-picture, right half, 1.0–2.0 s; green full-frame cutaway on V3, 3.0–3.5 s.
+        var pip = TimelineOps.AddOverlay(p, mBlue, TimeSpan.FromSeconds(1));
+        TimelineOps.TrimOverlayOut(p, pip.Id, TimeSpan.FromSeconds(1));
+        TimelineOps.SetOverlayLayout(p, pip.Id, 0.75, 0.5, 0.5);
+        var cut = TimelineOps.AddOverlay(p, mGreen, TimeSpan.FromSeconds(3), track: 2);
+        TimelineOps.TrimOverlayOut(p, cut.Id, TimeSpan.FromSeconds(0.5));
+        TimelineOps.PlaceOverlay(p, cut.Id, OverlayPosition.FullFrame);
+        Assert.NotNull(TimelineOps.SeparateAudio(p, main.Id)); // the main clip's sound now comes from the audio track
+
+        var output = Path.Combine(_dir, "overlay.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
+
+        var info = await MediaProbe.ProbeAsync(output);
+        Assert.InRange(info.Duration.TotalSeconds, 3.9, 4.15); // the main track sets the length
+        Assert.True(info.HasAudio);
+
+        static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
+        static bool IsBlue((int R, int G, int B) c) => c.B > 200 && c.R < 60 && c.G < 60;
+        static bool IsGreen((int R, int G, int B) c) => c.G > 90 && c.R < 60 && c.B < 60; // lavfi "green" is #008000
+
+        Assert.True(IsRed(await Pixel(output, 0.5, 1440, 540)), "before the overlay: main picture");
+        Assert.True(IsBlue(await Pixel(output, 1.5, 1440, 540)), "during: overlay in its box (right half)");
+        Assert.True(IsRed(await Pixel(output, 1.5, 400, 540)), "during: main picture outside the box");
+        Assert.True(IsRed(await Pixel(output, 2.5, 1440, 540)), "after the overlay: main picture again");
+        Assert.True(IsGreen(await Pixel(output, 3.25, 100, 100)), "full-frame cutaway covers everything");
+
+        // Save frame (D33) puts the overlay in too, in the same place.
+        var png = Path.Combine(_dir, "frame.png");
+        await FfmpegRunner.RunFfmpegAsync(FrameExport.BuildArgs(p, FrameExport.LocateFrame(p, TimeSpan.FromSeconds(1.5))!.Value, 1920, 1080, png));
+        Assert.True(IsBlue(await Pixel(png, 0, 1440, 540)), "saved frame: overlay");
+        Assert.True(IsRed(await Pixel(png, 0, 400, 540)), "saved frame: main picture");
+    }
+
     async Task<string> MakeImage(string name, int w, int h, string color)
     {
         var path = Path.Combine(_dir, name);

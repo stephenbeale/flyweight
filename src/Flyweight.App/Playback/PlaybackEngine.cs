@@ -31,6 +31,9 @@ public sealed class PlaybackEngine : IDisposable
     readonly System.Windows.Forms.Timer _timer;
     readonly AudioLanePlayer _lane;
 
+    /// <summary>The overlay tracks' players; PreviewCanvas draws their frames over the main picture.</summary>
+    public OverlayLanePlayer Overlays { get; }
+
     // Keep delegates in fields so the GC can't collect them while native code holds them.
     readonly MediaPlayer.LibVLCVideoLockCb _lockCb;
     readonly MediaPlayer.LibVLCVideoDisplayCb _displayCb;
@@ -101,6 +104,8 @@ public sealed class PlaybackEngine : IDisposable
         _player.SetVideoCallbacks(_lockCb, null, _displayCb);
 
         _lane = new AudioLanePlayer(_vlc, session);
+        Overlays = new OverlayLanePlayer(_vlc, session, library);
+        Overlays.FrameReady += (_, _) => FrameReady?.Invoke(this, EventArgs.Empty);
 
         _timer = new System.Windows.Forms.Timer { Interval = 15 };
         _timer.Tick += (_, _) => Tick();
@@ -325,6 +330,7 @@ public sealed class PlaybackEngine : IDisposable
             ApplySeek(pending);
 
         _lane.Update(Position, _playing);
+        Overlays.Update(Position, _playing);
         if (!_playing) return;
 
         // The playhead runs on a REAL-TIME clock, and the video follows it (D23). It used to follow the
@@ -408,6 +414,7 @@ public sealed class PlaybackEngine : IDisposable
         _timer.Stop();
         _timer.Dispose();
         _lane.Dispose();
+        Overlays.Dispose();
         _player.Stop();
         _player.Dispose();
         _vlc.Dispose();
