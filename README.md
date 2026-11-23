@@ -2,104 +2,44 @@
 
 # Flyweight
 
-**Flyweight: the video editor that punches above its weight.**
+**The video editor that punches above its weight.**
 
-A simple, lightweight video editor for Windows, focused on long-form content (YouTube).
-Cut your clips, put them in order, draw **arrows, boxes and text** on them, and export a
-YouTube-ready MP4, without the lag and crashes of heavyweight editors.
+A simple, lightweight video editor for Windows, made for YouTube videos. Cut your clips, draw arrows, boxes and text
+on them, add music, and export a YouTube-ready MP4, without the lag and crashes of heavyweight editors.
 
-> Status: MVP scaffold. Core editing/export logic is covered by tests; the WinForms UI compiles
-> but needs a first run-through on Windows. See [docs/ROADMAP.md](docs/ROADMAP.md) for status and next steps,
-> [docs/DECISIONS.md](docs/DECISIONS.md) for the reasoning behind the design, and [CLAUDE.md](CLAUDE.md) for AI-session context.
+## Download
 
-## Features (v0.1)
+**[Download Flyweight for Windows](https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe)**
+(Windows 10 or 11, 64-bit). Everything it needs is included.
 
-- Import MP4/MOV/MKV etc. by drag-drop or **Import…**, including phone footage (HEVC, VFR, portrait)
-- Background **"optimise"** step: each clip gets an edit-friendly proxy, so scrubbing stays smooth
-- Single-track timeline: reorder (drag), trim (drag edges), split (**S**), ripple delete (**Del**)
-- **Annotations**: arrow, box, text. Draw on the preview, move/resize, style in the Properties panel,
-  set timing by dragging the bars under the clip
-- Unlimited undo/redo, autosave every 10s, crash recovery
-- **Export for YouTube**: 1080p / 1440p / 4K, H.264 High + AAC, `+faststart`
+It's an early preview, so expect rough edges. Windows may say "Windows protected your PC" because the app isn't
+code-signed yet: click **More info**, then **Run anyway**.
 
-## Getting started
+## What it does
 
-1. Visual Studio 2022 (17.8+) with the **.NET desktop development** workload (.NET 8).
-2. Download `ffmpeg.exe` and `ffprobe.exe` and put them in `src/Flyweight.App/ffmpeg/`
-   (see the README there for which build to use). If omitted, ffmpeg on your `PATH` is used.
-3. Open `Flyweight.sln`, set **Flyweight.App** as the startup project, press F5.
-
-```
-dotnet test     # core tests; the ffmpeg integration tests run if ffmpeg is on PATH
-```
-
-## YouTube chapters and details
-
-Press **M** at the start of each section to drop a named chapter marker (flags on the timeline ruler: drag to move,
-double-click to rename, Del to delete). **Ctrl+Shift+C** copies the chapters as YouTube timestamps:
-
-```
-0:00 Intro
-1:23 Setup
-12:05 Results
-```
-
-**Chapters…** checks YouTube's rules (starts at 0:00, at least 3 chapters, each 10 s or longer) and can save a `.txt`.
-**Export for YouTube…** also has Title / Description / Tags boxes (remembered in the project) and saves
-`<video name> - YouTube.txt` beside the video, with the chapters added under the description, ready to paste into
-YouTube Studio.
+- **Edit:** trim, split, reorder and copy clips; freeze a frame; change speed, zoom and brightness
+- **Annotate:** arrows, boxes and text, drawn straight onto the video
+- **Sound:** clip volume and mute, plus a music or narration track
+- **YouTube:** export at 1080p, 1440p or 4K; chapter markers become description timestamps; title, description
+  and tags saved ready to paste into YouTube Studio
+- **Save frame:** grab any frame as a PNG, e.g. for a thumbnail
+- **Smooth and safe:** big phone and 4K files stay smooth to edit; autosave and crash recovery
 
 ## Keyboard
 
 | Key | Action | Key | Action |
 |---|---|---|---|
 | Space | Play / pause | S | Split at playhead |
-| ← / → | Previous / next frame | Del | Delete selected clip, annotation or marker |
-| Shift+← / → | ∓1 second | V / Esc | Select tool |
-| J / K / L | Back 1s / pause / play | A / R / T | Arrow / box / text tool |
-| Home / End | Start / end | Ctrl+Z / Ctrl+Y | Undo / redo |
-| Ctrl+wheel | Zoom timeline | Ctrl+0 | Zoom to fit |
-| Ctrl+I / O / S / E | Import / open / save / export | Enter (in text) | Finish editing (Shift+Enter = new line) |
-| F | Freeze frame | Ctrl+Shift+E | Export current frame as PNG |
-| M | Add chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
-| Shift+M / Ctrl+M | Mute / unmute the selected clip | | |
+| ← / → | Previous / next frame | Del | Delete selection |
+| A / R / T | Arrow / box / text | V / Esc | Select tool |
+| M | Chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
+| F | Freeze frame | Ctrl+Shift+E | Save frame as image |
+| Shift+M | Mute clip | Ctrl+Z / Ctrl+Y | Undo / redo |
+| Ctrl+I | Import | Ctrl+E | Export for YouTube |
 
-## How it works
+## Feedback
 
-```
-Flyweight.Core   (net8.0, no UI; unit-tested)
-  Model/       Project → Media, Timeline (clips), Annotations. Pure JSON-serialisable data
-  Editing/     TimelineOps (split/trim/move/delete/retime), ProjectSession (snapshot undo, autosave)
-  Media/       ffmpeg/ffprobe runner, probe, MediaLibrary (proxy + thumbnail cache)
-  Export/      ExportPlan: whole project → one ffmpeg command
-
-Flyweight.App    (WinForms, net8.0-windows)
-  Playback/    LibVLC decodes proxies into memory (not a VideoView), so we can paint over video
-  Rendering/   AnnotationRenderer: ONE GDI+ routine used by preview AND export (WYSIWYG)
-  Controls/    PreviewCanvas, TimelineControl (owner-drawn), MediaBinControl
-```
-
-Key decisions:
-
-- **Edit decision list, never touch originals.** Clips are just (source, in, out). Export renders from
-  the originals; preview uses proxies.
-- **Proxies** are 960×540, constant frame rate, every frame a keyframe. That fixes slow/inaccurate
-  scrubbing, variable-frame-rate phone video and HEVC decode cost in one step. Cached in
-  `%LocalAppData%\Flyweight\cache`.
-- **16:9 canvas.** Non-16:9 sources (portrait phone clips) are fitted with black bars, identically in
-  proxy and export, so annotation coordinates (normalised 0–1) mean the same spot everywhere.
-- **Annotations are anchored to a clip in source time**, so they stay on the footage they point at
-  when you trim or reorder.
-- **Export** renders each annotation to a transparent PNG with the preview's renderer, then ffmpeg
-  overlays them with `enable='between(t,start,end)'`.
-- **ffmpeg runs out of process**: a bad file can't crash the editor.
-
-## Roadmap
-
-- Fades on annotations, blur/redact box, numbered callouts, freehand pen
-- Chapter markers → YouTube description timestamps; thumbnail frame export
-- Audio: music track, volume, fades
-- Blurred-background fill for portrait clips; title cards; transitions
+Something confusing, slow or broken? [Open an issue](https://github.com/stephenbeale/flyweight/issues).
 
 ## Support
 
@@ -107,5 +47,5 @@ Flyweight is free. If it saves you time, you can [buy Steve a coffee ☕](https:
 
 ## Licence
 
-MIT. Flyweight calls ffmpeg as a separate program and uses LibVLC (LGPL); check their licences
-before redistributing binaries.
+MIT. The download includes ffmpeg (GPL v3) and LibVLC (LGPL 2.1).
+Building from source: see [docs/DEVELOPING.md](docs/DEVELOPING.md).
