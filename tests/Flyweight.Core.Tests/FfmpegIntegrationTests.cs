@@ -248,7 +248,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
 
         var p = new Project();
         var clip = TimelineOps.Append(p, await MediaProbe.ProbeAsync(main));
-        TimelineOps.SetClipCrop(p, clip.Id, CropSide.Left, 0.45); // keeps 55% of the width: a little green left
+        TimelineOps.SetClipCrop(p, clip.Id, CropSide.Left, 0.45); // blacks out the left 45%, in place
         TimelineOps.SetClipCrop(p, clip.Id, CropSide.Left, 0.5);  // clamped to 45%
         var o = TimelineOps.AddOverlay(p, await MediaProbe.ProbeAsync(band), TimeSpan.Zero);
         TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.25, 0.4);
@@ -259,12 +259,14 @@ public sealed class FfmpegIntegrationTests : IDisposable
         static bool IsBlue((int R, int G, int B) c) => c.B > 200 && c.R < 60 && c.G < 60;
         static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
         static bool IsBlack((int R, int G, int B) c) => c.R < 40 && c.G < 40 && c.B < 40;
+        static bool IsGreen((int R, int G, int B) c) => c.G > 90 && c.R < 60 && c.B < 60;
 
         var output = Path.Combine(_dir, "cropped.mp4");
         await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
-        // The kept 704×720 (11:11.25) picture is fitted to 16:9: pillarboxed, mostly blue.
-        Assert.True(IsBlack(await Pixel(output, 1, 100, 800)), "main: black bar beside the narrower cropped picture");
+        // Blacked out in place: nothing moves, the left 45% (864 px at 1080p) is black, the right half still blue.
+        Assert.True(IsBlack(await Pixel(output, 1, 100, 800)), "main: cropped edge is black");
         Assert.True(IsBlue(await Pixel(output, 1, 1200, 800)), "main: the kept right part (blue)");
+        Assert.True(IsGreen(await Pixel(output, 1, 900, 800)), "main: green just right of the cut, where it always was: it didn't slide");
         Assert.True(IsRed(await Pixel(output, 1, bx + 6, by + bh / 2)), "overlay: its left edge is red, the white band was cropped off");
 
         var png = Path.Combine(_dir, "cropped.png");

@@ -549,17 +549,22 @@ public static class TimelineOps
         }
     }
 
-    /// <summary>The same for an overlay: its box shrinks with the crop, keeping its centre.</summary>
+    /// <summary>
+    /// The same for an overlay. Only that edge of its box moves: the picture stays exactly where it is on screen and the
+    /// cut part just disappears (the centre shifts by half the change to make that so).
+    /// </summary>
     public static void SetOverlayCrop(Project p, Guid overlayId, CropSide side, double amount)
     {
         if (p.FindOverlay(overlayId) is not { } o) return;
         var v = ClipLook.CleanCrop(amount);
+        // Size of the uncropped picture on the canvas: the crop fractions are of this.
+        double fullW = o.Scale, fullH = o.Scale * (16.0 / 9) / OverlayLayout.Aspect(p.FindMedia(o.SourceId));
         switch (side)
         {
-            case CropSide.Left: o.CropLeft = v; break;
-            case CropSide.Top: o.CropTop = v; break;
-            case CropSide.Right: o.CropRight = v; break;
-            default: o.CropBottom = v; break;
+            case CropSide.Left: o.X += (v - ClipLook.CleanCrop(o.CropLeft)) * fullW / 2; o.CropLeft = v; break;
+            case CropSide.Right: o.X -= (v - ClipLook.CleanCrop(o.CropRight)) * fullW / 2; o.CropRight = v; break;
+            case CropSide.Top: o.Y += (v - ClipLook.CleanCrop(o.CropTop)) * fullH / 2; o.CropTop = v; break;
+            default: o.Y -= (v - ClipLook.CleanCrop(o.CropBottom)) * fullH / 2; o.CropBottom = v; break;
         }
     }
 

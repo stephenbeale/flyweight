@@ -381,12 +381,13 @@ Owner: "add zoom possibility for overlaid videos, like cropping" and "split eith
 Owner: "I want to be able to crop all videos though, not just zoom or pan". `CropLeft/Top/Right/Bottom` (fraction of
 the source, 0–0.45 each so at least 10% remains) on both `Clip` and `OverlayClip`; old files load uncropped. Unlike
 zoom, crop changes the picture's SHAPE.
-- **Main clips:** the kept part is fitted to 16:9 (bars where it doesn't fill), THEN zoom and tone apply as before.
-  Export / Save frame: `ClipLook.CropFilter` (even-pixel `crop` of the original) runs before the fit or zoom filter.
-  Preview: `PreviewCanvas.Cropped` cuts the same part out of the proxy picture and fits it with bars. Split, freeze
+- **Nothing slides (owner: "it feels like it is going the wrong way, can't it crop without sliding the image"):** a crop
+  only hides edges; the picture stays exactly where it was. (The first version re-fitted what was left, so it moved/grew.)
+- **Main clips:** the cut edges are blacked out IN PLACE on the original (`ClipLook.MaskFilter`: `drawbox` fills), then
+  the usual fit, zoom and tone. Zoom afterwards if you want it to fill the frame. Preview: `PreviewCanvas.Masked`. Split, freeze
   frame and Reset picture carry / clear the crop (`CopyLook`).
-- **Overlays:** the BOX shrinks with the crop around its centre (the picture keeps its size), so trimming a webcam's
-  sides gives a narrower box; `Scale` is the width the uncropped picture would have (now up to 400%, so a cropped
+- **Overlays:** only the cropped EDGE of the box moves (`SetOverlayCrop` shifts the centre by half the change), so the
+  picture stays put on screen and trimming a webcam's sides gives a narrower box; `Scale` is the width the uncropped picture would have (now up to 400%, so a cropped
   picture can fill the frame; Full frame computes that). Zoom then works inside the cropped area: `CropRect` composes
   crop then zoom, and the one crop filter serves both.
 - **UI:** Crop section (Left / Right / Top / Bottom sliders) in both Properties panels. Dragging crop handles in the

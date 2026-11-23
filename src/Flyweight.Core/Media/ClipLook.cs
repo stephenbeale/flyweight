@@ -65,11 +65,23 @@ public static class ClipLook
         return $"crop=w='2*trunc(iw*{N(w)}/2)':h='2*trunc(ih*{N(h)}/2)':x='2*trunc(iw*{N(x)}/2)':y='2*trunc(ih*{N(y)}/2)',";
     }
 
-    /// <summary>A main clip's crop, applied to the original before it is fitted to 16:9 (and zoomed).</summary>
-    public static string CropFilter(Clip c)
+    /// <summary>
+    /// A main clip's crop: the cut edges are blacked out IN PLACE on the original (nothing moves or rescales), before
+    /// it is fitted to 16:9 and zoomed. Ends with a comma; "" when uncropped. The preview does the same
+    /// (PreviewCanvas.Masked).
+    /// </summary>
+    public static string MaskFilter(Clip c)
     {
-        var (x, y, w, h) = CropBox(c.CropLeft, c.CropTop, c.CropRight, c.CropBottom);
-        return CropFilter(x, y, w, h);
+        if (!IsCropped(c)) return "";
+        double l = CleanCrop(c.CropLeft), t = CleanCrop(c.CropTop), r = CleanCrop(c.CropRight), b = CleanCrop(c.CropBottom);
+        static string N(double v) => Num(Math.Round(v, 6));
+        var s = "";
+        // +1 px on the far edges so rounding never leaves a hairline of picture.
+        if (l > 0) s += $"drawbox=x=0:y=0:w=iw*{N(l)}:h=ih:color=black:t=fill,";
+        if (r > 0) s += $"drawbox=x=iw*{N(1 - r)}:y=0:w=iw*{N(r)}+1:h=ih:color=black:t=fill,";
+        if (t > 0) s += $"drawbox=x=0:y=0:w=iw:h=ih*{N(t)}:color=black:t=fill,";
+        if (b > 0) s += $"drawbox=x=0:y=ih*{N(1 - b)}:w=iw:h=ih*{N(b)}+1:color=black:t=fill,";
+        return s;
     }
 
     /// <summary>The visible part of the canvas, normalised 0–1: always 16:9 and always inside the frame.</summary>

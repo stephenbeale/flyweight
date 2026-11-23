@@ -382,21 +382,30 @@ public class MultiTrackTests
     }
 
     [Fact]
-    public void Cropping_an_overlay_shrinks_its_box_around_its_centre()
+    public void Cropping_an_overlay_moves_only_that_edge_and_the_picture_stays_put()
     {
         var p = new Project();
         var cam = Video("cam.mp4", 10);
         var o = TimelineOps.AddOverlay(p, cam, S(0));
         TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.4);
-        var (_, _, w0, h0) = OverlayLayout.Rect(o, cam);
+        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam); // 0.3–0.7 across
 
         TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
-        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
-
         var (x, y, w, h) = OverlayLayout.Rect(o, cam);
-        Assert.Equal(w0 / 2, w, 6);   // half the width kept → half as wide
-        Assert.Equal(h0, h, 6);       // height untouched
-        Assert.Equal(0.5, x + w / 2, 6); // same centre
+        Assert.Equal(x0 + 0.1, x, 6);       // the left edge moved in by a quarter of the picture
+        Assert.Equal(x0 + w0, x + w, 6);    // the right edge stayed
+        Assert.Equal((y0, h0), (y, h));     // height untouched
+
+        // The source pixel at a given screen point is the same before and after: nothing slid.
+        double screenX = 0.55;
+        double before = (screenX - x0) / w0;                       // fraction across the uncropped picture
+        var (sx, _, sw, _) = OverlayLayout.CropRect(o);
+        double after = sx + (screenX - x) / w * sw;
+        Assert.Equal(before, after, 6);
+
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
+        (x, _, w, _) = OverlayLayout.Rect(o, cam);
+        Assert.Equal((0.4, 0.6), (Math.Round(x, 6), Math.Round(x + w, 6)));
         Assert.Equal((0.25, 0.0, 0.5, 1.0), OverlayLayout.CropRect(o));
 
         // Zoom then works inside what's left.
@@ -435,7 +444,9 @@ public class MultiTrackTests
         Assert.Equal(16.0 / 9 / 0.8, ClipLook.CroppedAspect(16.0 / 9, 0, 0, 0, 0.2), 6);
 
         var g = ExportPlan.Build(p, new ExportSettings { UseHardwareEncoder = false }, new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
-        Assert.Contains("crop=w='2*trunc(iw*1/2)':h='2*trunc(ih*0.8/2)':x='2*trunc(iw*0/2)':y='2*trunc(ih*0/2)',scale=1920:1080", g);
+        // Blacked out in place on the original, before the fit: the picture doesn't move or rescale.
+        Assert.Contains("drawbox=x=0:y=ih*0.8:w=iw:h=ih*0.2+1:color=black:t=fill,scale=1920:1080", g);
+        Assert.DoesNotContain("crop=", g);
 
         var right = TimelineOps.SplitAt(p, S(10))!;
         Assert.Equal(0.2, right.CropBottom);
