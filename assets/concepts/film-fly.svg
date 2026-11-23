@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="#111216"/>
+  <g fill="#e9e9ee">
+    <rect x="46" y="62" width="34" height="44" rx="9"/><rect x="46" y="164" width="34" height="44" rx="9"/>
+    <rect x="46" y="266" width="34" height="44" rx="9"/><rect x="46" y="368" width="34" height="44" rx="9"/>
+    <rect x="432" y="62" width="34" height="44" rx="9"/><rect x="432" y="164" width="34" height="44" rx="9"/>
+    <rect x="432" y="266" width="34" height="44" rx="9"/><rect x="432" y="368" width="34" height="44" rx="9"/>
+  </g>
+  <rect x="104" y="40" width="304" height="432" rx="20" fill="#fbfbfb"/>
+  <!-- wings: swept back, grey so the silhouette still reads -->
+  <g fill="#8a8a92" stroke="#111" stroke-width="6" stroke-linejoin="round">
+    <path d="M240 214 C196 226 150 286 146 350 C144 392 178 404 202 380 C232 350 246 286 250 232 Z"/>
+    <path d="M272 214 C316 226 362 286 366 350 C368 392 334 404 310 380 C280 350 266 286 262 232 Z"/>
+  </g>
+  <g stroke="#fbfbfb" stroke-width="3" stroke-opacity="0.7" fill="none">
+    <path d="M238 236 C214 280 190 330 170 372"/><path d="M274 236 C298 280 322 330 342 372"/>
+  </g>
+  <!-- legs -->
+  <g stroke="#111" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M232 200 L200 176 L190 128"/><path d="M280 200 L312 176 L322 128"/>
+    <path d="M226 226 L182 236 L150 270"/><path d="M286 226 L330 236 L362 270"/>
+    <path d="M236 260 L204 306 L196 352"/><path d="M276 260 L308 306 L316 352"/>
+  </g>
+  <!-- body -->
+  <ellipse cx="256" cy="312" rx="38" ry="72" fill="#111"/>
+  <ellipse cx="256" cy="226" rx="44" ry="40" fill="#111"/>
+  <!-- head with big compound eyes (part of the silhouette) -->
+  <ellipse cx="256" cy="172" rx="30" ry="24" fill="#111"/>
+  <circle cx="236" cy="164" r="20" fill="#111"/><circle cx="276" cy="164" r="20" fill="#111"/>
+  <g stroke="#111" stroke-width="5" stroke-linecap="round" fill="none"><path d="M248 150 L240 132"/><path d="M264 150 L272 132"/></g>
+</svg>
