@@ -210,6 +210,9 @@ public sealed class ExportForm : Form
 
     const string YouTubeStudioUrl = "https://studio.youtube.com/";
 
+    /// <summary>Optional tip jar. Only ever shown as a small footnote after a finished export (DECISIONS: support link).</summary>
+    public const string BuyMeACoffeeUrl = "https://buymeacoffee.com/stephenbeale";
+
     /// <summary>
     /// "Export complete": go straight on to uploading. Open YouTube Studio opens the upload site in the browser and
     /// selects the file in Explorer, ready to drag into Studio's upload box.
@@ -238,7 +241,7 @@ public sealed class ExportForm : Form
         text += chapters is { Chapters.Count: > 0 }
             ? $"\n{chapters.Chapters.Count} chapters from your markers are added below the description" +
               (chapters.YouTubeWillShowChapters ? "." : $" (YouTube won't show them yet: {chapters.Warnings[0]})")
-            : "\nNo chapters: press C on the timeline to add chapter markers.";
+            : "\nNo chapters: press M on the timeline to add chapter markers.";
         var problems = YouTubeText.Problems(d, lines);
         if (problems.Count > 0) text += "\n⚠ " + string.Join("\n⚠ ", problems);
         _ytInfo.Text = text;
@@ -265,6 +268,18 @@ public sealed class ExportForm : Form
             Icon = TaskDialogIcon.ShieldSuccessGreenBar,
             Buttons = { studio, explorer, TaskDialogButton.Close },
             DefaultButton = studio,
+            // Unobtrusive: a one-line footnote, only here, only after a successful export. Never a pop-up.
+            EnableLinks = true,
+            Footnote = new TaskDialogFootnote
+            {
+                Text = $"Enjoying Flyweight? <a href=\"{BuyMeACoffeeUrl}\">Buy Steve a coffee ☕</a>",
+                Icon = TaskDialogIcon.None,
+            },
+        };
+        page.LinkClicked += (_, e) =>
+        {
+            try { Process.Start(new ProcessStartInfo(e.LinkHref) { UseShellExecute = true }); }
+            catch { /* no browser: nothing else to do */ }
         };
         var choice = TaskDialog.ShowDialog(this, page);
         try

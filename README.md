@@ -101,6 +101,10 @@ Key decisions:
 - Audio: music track, volume, fades
 - Blurred-background fill for portrait clips; title cards; transitions
 
+## Support
+
+Flyweight is free. If it saves you time, you can [buy Steve a coffee ☕](https://buymeacoffee.com/stephenbeale).
+
 ## Licence
 
 MIT. Flyweight calls ffmpeg as a separate program and uses LibVLC (LGPL); check their licences

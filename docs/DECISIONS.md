@@ -292,3 +292,9 @@ and freeze frames next to the footage by default; that part was NOT brought in.
 Owner decision. M for markers is the convention in Premiere, Resolve and Final Cut, so YouTubers expect it; mute
 moved to Shift+M (Ctrl+M unchanged). C stays as an alias for adding a marker.
 
+### Support link (2026-11-23): "Buy Steve a coffee", never obtrusive
+Owner request: a donation option via https://buymeacoffee.com/stephenbeale that doesn't get in the way. It appears
+in exactly one place in the app: a one-line footnote link in the "Your video is ready" dialog after a successful
+export (`ExportForm.BuyMeACoffeeUrl`), plus a Support section in the README. No pop-ups, no nag timers, nothing during
+editing, no feature gating. Don't add it anywhere else without the owner asking.
+
