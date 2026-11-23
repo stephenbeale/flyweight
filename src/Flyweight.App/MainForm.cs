@@ -713,7 +713,7 @@ public sealed class MainForm : Form
     {
         _engine.Pause();
         var at = _engine.Position;
-        if (TimelineOps.Locate(_session.Project, at) is null) { _statusText.Text = "Move the playhead onto a clip first, then press C."; return; }
+        if (TimelineOps.Locate(_session.Project, at) is null) { _statusText.Text = "Move the playhead onto a clip first, then press M."; return; }
         using var dlg = new ChapterTitleForm(MarkerOps.NextDefaultTitle(_session.Project), "Add chapter marker");
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         Marker? added = null;

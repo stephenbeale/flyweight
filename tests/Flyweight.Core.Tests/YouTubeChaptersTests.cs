@@ -75,7 +75,7 @@ public class YouTubeChaptersTests
         var c = YouTubeChapters.Build(TwoClips());
         Assert.Equal("", c.Text);
         Assert.False(c.YouTubeWillShowChapters);
-        Assert.Contains("Press C", c.Warnings[0]); // C = chapter (M is mute)
+        Assert.Contains("Press M", c.Warnings[0]); // M = chapter marker (mute is Shift+M)
     }
 
     [Fact]
