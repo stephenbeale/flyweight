@@ -32,6 +32,12 @@ public sealed class Project
     /// </summary>
     public List<AudioItem> AudioTrack { get; set; } = new();
 
+    /// <summary>
+    /// Video on the overlay tracks (V2, V3…): picture-in-picture or full-frame cutaways placed at TIMELINE times over
+    /// the main track, like the audio track. Higher <see cref="OverlayClip.Track"/> draws on top. Older files load with none.
+    /// </summary>
+    public List<OverlayClip> Overlays { get; set; } = new();
+
     /// <summary>Chapter markers (for YouTube timestamps). Each is anchored to a clip, like annotations.</summary>
     public List<Marker> Markers { get; set; } = new();
 
@@ -41,6 +47,7 @@ public sealed class Project
     public SourceMedia? FindMedia(Guid id) => Media.FirstOrDefault(m => m.Id == id);
     public Clip? FindClip(Guid id) => Timeline.FirstOrDefault(c => c.Id == id);
     public AudioItem? FindAudio(Guid id) => AudioTrack.FirstOrDefault(a => a.Id == id);
+    public OverlayClip? FindOverlay(Guid id) => Overlays.FirstOrDefault(o => o.Id == id);
     public Annotation? FindAnnotation(Guid id) => Annotations.FirstOrDefault(a => a.Id == id);
     public Marker? FindMarker(Guid id) => Markers.FirstOrDefault(m => m.Id == id);
 }
@@ -171,6 +178,46 @@ public sealed class AudioItem
     public TimeSpan Out { get; set; }
 
     /// <summary>Gain 0–2 (0–200%), like <see cref="Clip.Volume"/>.</summary>
+    public double Volume { get; set; } = 1.0;
+
+    public bool Muted { get; set; }
+
+    [JsonIgnore] public TimeSpan Duration => Out - In;
+    [JsonIgnore] public TimeSpan End => Start + Duration;
+    [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
+}
+
+/// <summary>
+/// A video (or still) on an overlay track, drawn over the main track at a fixed TIMELINE time (<see cref="Start"/>),
+/// so trimming or reordering the main clips doesn't move it. It is scaled to <see cref="Scale"/> of the canvas width,
+/// keeps its own shape, and sits with its CENTRE at (<see cref="X"/>, <see cref="Y"/>) on the 16:9 canvas (0–1).
+/// See <see cref="Editing.OverlayLayout"/> for the maths shared by preview and export.
+/// </summary>
+public sealed class OverlayClip
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid SourceId { get; set; }
+
+    /// <summary>1 = V2 (just above the main track), 2 = V3… Higher tracks draw on top.</summary>
+    public int Track { get; set; } = 1;
+
+    /// <summary>Where it appears, in timeline time.</summary>
+    public TimeSpan Start { get; set; }
+
+    /// <summary>In point, in source time.</summary>
+    public TimeSpan In { get; set; }
+
+    /// <summary>Out point (exclusive), in source time.</summary>
+    public TimeSpan Out { get; set; }
+
+    /// <summary>Width as a fraction of the canvas width: 1 = full width (a full-frame cutaway for 16:9 footage).</summary>
+    public double Scale { get; set; } = 0.35;
+
+    /// <summary>Centre, as a fraction of the canvas (0 = left/top, 1 = right/bottom).</summary>
+    public double X { get; set; } = 0.78;
+    public double Y { get; set; } = 0.76;
+
+    /// <summary>Gain for its own audio, 0–2 like <see cref="Clip.Volume"/>.</summary>
     public double Volume { get; set; } = 1.0;
 
     public bool Muted { get; set; }

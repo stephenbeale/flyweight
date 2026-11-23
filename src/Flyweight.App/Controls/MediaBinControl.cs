@@ -15,6 +15,15 @@ public sealed class MediaBinControl : UserControl
     /// <summary>Right-click "Insert before/after current clip": media id, and true for after.</summary>
     public event Action<Guid, bool>? InsertRequested;
 
+    /// <summary>"Insert at playhead": split the clip under the playhead and put this file in between.</summary>
+    public event Action<Guid>? InsertAtPlayheadRequested;
+
+    /// <summary>"Add as overlay at playhead": picture-in-picture on the overlay track.</summary>
+    public event Action<Guid>? AddOverlayRequested;
+
+    /// <summary>Set by MainForm: whether a media id is a pure audio file (for the right-click menu).</summary>
+    public Func<Guid, bool> IsAudio { get; set; } = _ => false;
+
     /// <summary>"Remove from project" (right-click, or Delete with the bin focused): media id.</summary>
     public event Action<Guid>? RemoveRequested;
 
@@ -59,13 +68,24 @@ public sealed class MediaBinControl : UserControl
         };
         var menu = new ContextMenuStrip();
         Guid? MenuMedia() => _list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id ? id : null;
-        menu.Items.Add("Insert before current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, false); });
-        menu.Items.Add("Insert after current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, true); });
+        var atPlayhead = menu.Items.Add("Insert at playhead (I)", null, (_, _) => { if (MenuMedia() is { } id) InsertAtPlayheadRequested?.Invoke(id); });
+        atPlayhead.ToolTipText = "Splits the clip under the playhead and puts this in between";
+        var before = menu.Items.Add("Insert before current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, false); });
+        var after = menu.Items.Add("Insert after current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, true); });
+        var overlay = menu.Items.Add("Add as overlay at playhead (O)", null, (_, _) => { if (MenuMedia() is { } id) AddOverlayRequested?.Invoke(id); });
+        overlay.ToolTipText = "Picture-in-picture over the main video, on the overlay track (V2). Drag it in the preview to place it.";
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Add to end of timeline", null, (_, _) => { if (MenuMedia() is { } id) AddToTimelineRequested?.Invoke(this, id); });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Remove from project (Del)", null, (_, _) => { if (MenuMedia() is { } id) RemoveRequested?.Invoke(id); });
-        menu.Opening += (_, e) => e.Cancel = MenuMedia() is null;
+        menu.Opening += (_, e) =>
+        {
+            e.Cancel = MenuMedia() is null;
+            // Audio files only go on the audio track (at the playhead); the video-only placements don't apply.
+            bool video = MenuMedia() is { } id && !IsAudio(id);
+            before.Visible = after.Visible = overlay.Visible = video;
+            atPlayhead.Text = video ? "Insert at playhead (I)" : "Add to audio track at playhead";
+        };
         _list.ContextMenuStrip = menu;
 
         var hint = new Label

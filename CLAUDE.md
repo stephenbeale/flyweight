@@ -22,7 +22,8 @@ src/Flyweight.Core/        net8.0, NO UI, NO System.Drawing. Unit-testable on an
   Media/                   FfmpegRunner/Locator, MediaProbe, MediaLibrary (proxies), Canvas, ExportSettings
   Export/                  ExportPlan: project → one ffmpeg command
 src/Flyweight.App/         WinForms, net8.0-windows. Code-only UI (no .Designer.cs files).
-  Playback/PlaybackEngine  LibVLC → memory buffer (video callbacks), timeline playback across clips
+  Playback/PlaybackEngine  LibVLC → memory buffer (video callbacks), timeline playback across clips;
+                           OverlayLanePlayer / AudioLanePlayer play the overlay tracks and audio track alongside
   Rendering/               AnnotationRenderer (shared by preview + export), OverlayRenderer (export PNGs)
   Controls/                PreviewCanvas, TimelineControl (owner-drawn), MediaBinControl, AnnotationStylePanel
   Forms/                   ExportForm, FreezeFrameForm, NewProjectForm

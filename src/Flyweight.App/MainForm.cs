@@ -29,8 +29,10 @@ public sealed class MainForm : Form
     readonly MediaBinControl _bin = new() { Dock = DockStyle.Fill };
     readonly AnnotationStylePanel _props = new() { Dock = DockStyle.Fill, Visible = false };
     readonly ClipPropertiesPanel _clipProps = new() { Dock = DockStyle.Fill, Visible = false };
+    readonly OverlayPropertiesPanel _overlayProps = new() { Dock = DockStyle.Fill, Visible = false };
     readonly Label _propsEmpty = new() { Dock = DockStyle.Fill, ForeColor = Color.Gray, TextAlign = ContentAlignment.MiddleCenter,
-        Text = "Select an arrow, box or text\nto edit its style,\nor a clip for its volume.\n\nA  arrow    R  box    T  text\nM  mute clip" };
+        Text = "Select an arrow, box or text\nto edit its style,\nor a clip for its volume.\n\nA  arrow    R  box    T  text\nShift+M  mute clip\n\n" +
+               "With a file selected in Media:\nI  insert at playhead\nO  add as overlay" };
     // AutoSize: a fixed pixel width clipped "/ total" once Windows display scaling enlarged the font.
     readonly Label _timecode = new() { AutoSize = true, Padding = new Padding(12, 0, 12, 0), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
         Font = new Font("Consolas", 11f), Dock = DockStyle.Left };
@@ -175,6 +177,7 @@ public sealed class MainForm : Form
         var propsPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(28, 28, 32) };
         propsPanel.Controls.Add(_props);
         propsPanel.Controls.Add(_clipProps);
+        propsPanel.Controls.Add(_overlayProps);
         propsPanel.Controls.Add(_propsEmpty);
         propsPanel.Controls.Add(new Label { Text = "Properties", Dock = DockStyle.Top, Height = 26, Padding = new Padding(8, 6, 0, 0), ForeColor = Color.Silver, BackColor = Color.FromArgb(38, 38, 44) });
 
@@ -200,7 +203,7 @@ public sealed class MainForm : Form
         // SplitContainer distances can only be set once the controls have a size.
         Load += (_, _) =>
         {
-            main.SplitterDistance = Math.Max(200, main.Height - 250); // ruler + video + audio track + annotation lanes
+            main.SplitterDistance = Math.Max(200, main.Height - 290); // ruler + overlay track + video + audio track + annotation lanes
             top.SplitterDistance = 280;
             centreRight.SplitterDistance = Math.Max(300, centreRight.Width - 290);
         };
@@ -247,7 +250,7 @@ public sealed class MainForm : Form
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
-            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = _timeline.SelectedAudioId = null;
+            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
             _timeline.Invalidate();
             UpdatePropertyGrid();
         };
@@ -339,6 +342,33 @@ public sealed class MainForm : Form
             UpdatePropertyGrid();
         };
         _timeline.AudioMenuRequested += ShowAudioMenu;
+
+        // Overlay tracks: select on the timeline or by clicking it in the preview; edit in its own panel.
+        _timeline.OverlaySelected += (_, _) =>
+        {
+            if (_timeline.SelectedOverlayId is not null) _preview.Select(null);
+            UpdatePropertyGrid();
+        };
+        _timeline.OverlayMenuRequested += ShowOverlayMenu;
+        _preview.OverlayClicked += id =>
+        {
+            if (id is not null || _timeline.SelectedOverlayId is not null) _timeline.SelectOverlay(id);
+        };
+        _overlayProps.Edit += (edit, phase) =>
+        {
+            if (_timeline.SelectedOverlayId is not { } oid) return;
+            Action<Project> apply = p => edit(p, oid);
+            switch (phase)
+            {
+                case StyleEditPhase.Single: _session.Execute(apply); break;
+                case StyleEditPhase.Live: _session.BeginEdit(); _session.Preview(apply); break;
+                case StyleEditPhase.Commit: _session.Preview(apply); _session.CommitEdit(); break;
+            }
+            ShowOverlayUnderPlayhead(oid);
+        };
+        _bin.IsAudio = id => _session.Project.FindMedia(id) is { IsAudioOnly: true };
+        _bin.InsertAtPlayheadRequested += InsertAtPlayhead;
+        _bin.AddOverlayRequested += AddOverlayAtPlayhead;
 
         _bin.AddToTimelineRequested += (_, id) =>
         {
@@ -433,6 +463,8 @@ public sealed class MainForm : Form
             case Keys.Control | Keys.Shift | Keys.C: CopyChapters(); return true;
             case Keys.Control | Keys.Shift | Keys.E: _ = ExportFrameAsync(chooseLocation: false); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
+            case Keys.I: WithBinSelection(InsertAtPlayhead, "I"); return true;
+            case Keys.O: WithBinSelection(AddOverlayAtPlayhead, "O"); return true;
             // Ctrl+M too: Windows turns it into Enter, which in the media bin re-added the selected file.
             case Keys.Shift | Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
             case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
@@ -543,21 +575,27 @@ public sealed class MainForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        var atPlayhead = new ToolStripMenuItem("Insert at playhead") { ToolTipText = "Splits the clip at the playhead and puts the file in between" };
         var before = new ToolStripMenuItem("Insert before");
         var after = new ToolStripMenuItem("Insert after");
-        foreach (var m in _session.Project.Media)
+        var overlay = new ToolStripMenuItem("Add as overlay at playhead") { ToolTipText = "Picture-in-picture over this clip (overlay track)" };
+        foreach (var m in _session.Project.Media.Where(m => !m.IsAudioOnly))
         {
             var id = m.Id;
+            atPlayhead.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertAtPlayhead(id));
             before.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertMedia(id, clipId, after: false));
             after.DropDownItems.Add(m.DisplayName, null, (_, _) => InsertMedia(id, clipId, after: true));
+            overlay.DropDownItems.Add(m.DisplayName, null, (_, _) => AddOverlayAtPlayhead(id));
         }
-        if (_session.Project.Media.Count == 0)
+        if (atPlayhead.DropDownItems.Count == 0)
         {
-            before.Enabled = after.Enabled = false;
-            before.ToolTipText = after.ToolTipText = "Import some media first";
+            atPlayhead.Enabled = before.Enabled = after.Enabled = overlay.Enabled = false;
+            atPlayhead.ToolTipText = before.ToolTipText = after.ToolTipText = overlay.ToolTipText = "Import some video or images first";
         }
+        menu.Items.Add(atPlayhead);
         menu.Items.Add(before);
         menu.Items.Add(after);
+        menu.Items.Add(overlay);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Split at playhead (S)", null, (_, _) => Split());
         menu.Items.Add(new ToolStripMenuItem("Copy (Ctrl+C)", null, (_, _) => CopyClips()));
@@ -571,7 +609,115 @@ public sealed class MainForm : Form
             Enabled = clip is not null && _session.Project.FindMedia(clip.SourceId)?.HasAudio == true,
         };
         menu.Items.Add(mute);
+        var why = TimelineOps.CannotSeparateAudio(_session.Project, clipId);
+        menu.Items.Add(new ToolStripMenuItem("Separate audio", null, (_, _) => SeparateAudio(clipId))
+        {
+            Enabled = why is null,
+            ToolTipText = why ?? "Puts this clip's sound on the audio track, where you can move or trim it on its own. The clip is muted.",
+        });
         menu.Show(screen);
+    }
+
+    /// <summary>Run a bin command (I / O) on the file selected in the media bin.</summary>
+    void WithBinSelection(Action<Guid> command, string key)
+    {
+        if (_bin.SelectedMediaId is { } id) command(id);
+        else _statusText.Text = $"Select a file in Media first, then press {key}.";
+    }
+
+    /// <summary>Insert a bin file at the playhead: the clip there is split and the file goes in between (one undo step).</summary>
+    void InsertAtPlayhead(Guid mediaId)
+    {
+        if (_session.Project.FindMedia(mediaId) is not { } media) return;
+        if (media.IsAudioOnly) { AddAudioAtPlayhead(media); return; }
+        _engine.Pause();
+        var at = _engine.Position;
+        Clip? inserted = null;
+        _session.Execute(p => { if (p.FindMedia(mediaId) is { } m) inserted = TimelineOps.InsertMediaAt(p, m, at); });
+        if (inserted is null) return;
+        _timeline.SelectedClipId = inserted.Id;
+        _engine.Seek(TimelineOps.ClipStart(_session.Project, inserted.Id));
+        _timeline.EnsurePlayheadVisible();
+        UpdatePropertyGrid();
+        _statusText.Text = $"Inserted {media.DisplayName} at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
+    }
+
+    /// <summary>Put a bin file on the first free overlay track at the playhead, as a picture-in-picture, and select it.</summary>
+    void AddOverlayAtPlayhead(Guid mediaId)
+    {
+        var p = _session.Project;
+        if (p.FindMedia(mediaId) is not { } media) return;
+        if (media.IsAudioOnly) { AddAudioAtPlayhead(media); return; }
+        var total = TimelineOps.TotalDuration(p);
+        if (total <= TimeSpan.Zero) { _statusText.Text = "Overlays go over the main video: add a clip to the timeline first."; return; }
+        _engine.Pause();
+        var at = _engine.Position >= total ? TimeSpan.Zero : _engine.Position;
+        var length = media.IsStill ? TimelineOps.DefaultStillLength : media.Duration;
+        OverlayClip? added = null;
+        _session.Execute(proj => added = TimelineOps.AddOverlay(proj, media, at, TimelineOps.FreeOverlayTrack(proj, at, length)));
+        if (added is null) return;
+        _timeline.SelectOverlay(added.Id);
+        _engine.Seek(at);
+        _statusText.Text = $"Added {media.DisplayName} as an overlay on V{added.Track + 1}. Drag it in the preview to place it; " +
+                           "the Properties panel sets its size or makes it full frame.";
+    }
+
+    void SeparateAudio(Guid clipId)
+    {
+        if (TimelineOps.CannotSeparateAudio(_session.Project, clipId) is { } why) { _statusText.Text = why; return; }
+        _engine.Pause();
+        AudioItem? item = null;
+        _session.Execute(p => item = TimelineOps.SeparateAudio(p, clipId));
+        if (item is null) return;
+        _timeline.SelectedClipId = null;
+        _timeline.SelectedAudioId = item.Id;
+        _preview.Select(null);
+        UpdatePropertyGrid();
+        _timeline.Invalidate();
+        _statusText.Text = "Separated the audio onto the audio track; the clip is muted. Move or trim the audio on its own (Ctrl+Z to undo).";
+    }
+
+    void ShowOverlayMenu(Guid overlayId, Point screen)
+    {
+        if (_session.Project.FindOverlay(overlayId) is not { } o) return;
+        var media = _session.Project.FindMedia(o.SourceId);
+        var menu = new ContextMenuStrip();
+        menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(o.Start); });
+        menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, _engine.Position)));
+        var place = new ToolStripMenuItem("Place");
+        foreach (var (pos, label) in new[]
+        {
+            (OverlayPosition.BottomRight, "Bottom right"), (OverlayPosition.BottomLeft, "Bottom left"),
+            (OverlayPosition.TopRight, "Top right"), (OverlayPosition.TopLeft, "Top left"),
+            (OverlayPosition.Centre, "Centre"), (OverlayPosition.FullFrame, "Full frame (cutaway)"),
+        })
+            place.DropDownItems.Add(label, null, (_, _) => { _session.Execute(p => TimelineOps.PlaceOverlay(p, overlayId, pos)); ShowOverlayUnderPlayhead(overlayId); });
+        menu.Items.Add(place);
+        menu.Items.Add(new ToolStripMenuItem("Move up a track", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, o.Start, o.Track + 1)))
+            { Enabled = o.Track < TimelineOps.MaxOverlayTracks });
+        menu.Items.Add(new ToolStripMenuItem("Move down a track", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, o.Start, o.Track - 1)))
+            { Enabled = o.Track > 1 });
+        menu.Items.Add(new ToolStripSeparator());
+        bool hasAudio = media is { HasAudio: true, IsStill: false };
+        menu.Items.Add(new ToolStripMenuItem("Mute (Shift+M)", null, (_, _) => ToggleMute(null)) { Checked = o.Muted, Enabled = hasAudio });
+        menu.Items.Add(new ToolStripMenuItem("Separate audio", null, (_, _) =>
+        {
+            AudioItem? item = null;
+            _session.Execute(p => item = TimelineOps.SeparateOverlayAudio(p, overlayId));
+            if (item is not null) _statusText.Text = "Separated the overlay's audio onto the audio track; the overlay is muted.";
+        }) { Enabled = hasAudio });
+        menu.Items.Add("Remove overlay (Del)", null, (_, _) => DeleteSelection());
+        menu.Show(screen);
+    }
+
+    /// <summary>Overlay edits only show if the playhead is on it: if it isn't, jump to its start.</summary>
+    void ShowOverlayUnderPlayhead(Guid overlayId)
+    {
+        if (_session.Project.FindOverlay(overlayId) is not { } o) return;
+        if (o.Start <= _engine.Position && _engine.Position < o.End) return;
+        _engine.Pause();
+        _engine.Seek(o.Start);
     }
 
     /// <summary>Put an audio file on the audio track at the playhead (it stays at that timeline time) and select it.</summary>
@@ -619,6 +765,14 @@ public sealed class MainForm : Form
             bool m = !item.Muted;
             _session.Execute(p => TimelineOps.SetAudioMuted(p, aid, m));
             var n = _session.Project.FindMedia(item.SourceId)?.DisplayName ?? "audio";
+            _statusText.Text = m ? $"Muted {n}" : $"Unmuted {n}";
+            return;
+        }
+        if (_timeline.SelectedOverlayId is { } oid && _session.Project.FindOverlay(oid) is { } ov)
+        {
+            bool m = !ov.Muted;
+            _session.Execute(p => TimelineOps.SetOverlayMuted(p, oid, m));
+            var n = _session.Project.FindMedia(ov.SourceId)?.DisplayName ?? "overlay";
             _statusText.Text = m ? $"Muted {n}" : $"Unmuted {n}";
             return;
         }
@@ -773,6 +927,11 @@ public sealed class MainForm : Form
             _timeline.SelectedAudioId = null;
             UpdatePropertyGrid();
         }
+        else if (_timeline.SelectedOverlayId is { } overlayId)
+        {
+            _session.Execute(p => TimelineOps.DeleteOverlay(p, overlayId)); // the file stays in the bin
+            _timeline.SelectOverlay(null);
+        }
         else if (_timeline.SelectedClipId is not null)
         {
             var clips = SelectedClips(); // every selected clip (Ctrl+A, Ctrl/Shift+click), one undo step
@@ -782,7 +941,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            _statusText.Text = "Click a clip, audio item, annotation or chapter marker first, then press Delete.";
+            _statusText.Text = "Click a clip, overlay, audio item, annotation or chapter marker first, then press Delete.";
         }
     }
 
@@ -1126,6 +1285,7 @@ public sealed class MainForm : Form
         // Drop selections that no longer exist (e.g. after undo).
         if (_preview.SelectedAnnotationId is { } aid && _session.Project.FindAnnotation(aid) is null) _preview.Select(null);
         _timeline.PruneSelection(_session.Project);
+        if (_timeline.SelectedOverlayId is { } oid && _session.Project.FindOverlay(oid) is null) _timeline.SelectedOverlayId = null;
 
         var mediaSig = string.Join('|', _session.Project.Media.Select(m => m.Id));
         if (mediaSig != _mediaSig) { _mediaSig = mediaSig; _bin.Sync(_session.Project, _library); } // status updates come via OnMediaStateChanged
@@ -1152,14 +1312,20 @@ public sealed class MainForm : Form
         var p = _session.Project;
         var a = _preview.SelectedAnnotationId is { } id ? p.FindAnnotation(id) : null;
         var audio = a is null && _timeline.SelectedAudioId is { } aid ? p.FindAudio(aid) : null;
-        var clip = a is null && audio is null && _timeline.SelectedClipId is { } cid ? p.FindClip(cid) : null;
+        var overlay = a is null && audio is null && _timeline.SelectedOverlayId is { } oid ? p.FindOverlay(oid) : null;
+        var clip = a is null && audio is null && overlay is null && _timeline.SelectedClipId is { } cid ? p.FindClip(cid) : null;
+
+        // The preview outlines the selected overlay.
+        if (_preview.SelectedOverlayId != overlay?.Id) { _preview.SelectedOverlayId = overlay?.Id; _preview.Invalidate(); }
 
         if (a is not null) _props.ShowAnnotation(a); // updates values in place; leaves a focused text box / dragged slider alone
         if (audio is not null) _clipProps.ShowAudio(audio, p.FindMedia(audio.SourceId));
         else if (clip is not null) _clipProps.ShowClip(clip, p.FindMedia(clip.SourceId), SelectedClips().Count);
+        if (overlay is not null) _overlayProps.ShowOverlay(overlay, p.FindMedia(overlay.SourceId));
         _props.Visible = a is not null;
         _clipProps.Visible = audio is not null || clip is not null;
-        _propsEmpty.Visible = a is null && audio is null && clip is null;
+        _overlayProps.Visible = overlay is not null;
+        _propsEmpty.Visible = a is null && audio is null && clip is null && overlay is null;
     }
 
     void UpdateToolButtons()

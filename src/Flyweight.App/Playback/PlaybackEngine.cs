@@ -31,6 +31,9 @@ public sealed class PlaybackEngine : IDisposable
     readonly System.Windows.Forms.Timer _timer;
     readonly AudioLanePlayer _lane;
 
+    /// <summary>The overlay tracks' players; PreviewCanvas draws their frames over the main picture.</summary>
+    public OverlayLanePlayer Overlays { get; }
+
     // Keep delegates in fields so the GC can't collect them while native code holds them.
     readonly MediaPlayer.LibVLCVideoLockCb _lockCb;
     readonly MediaPlayer.LibVLCVideoDisplayCb _displayCb;
@@ -72,8 +75,14 @@ public sealed class PlaybackEngine : IDisposable
 
     public bool IsPlaying => _playing;
 
-    /// <summary>Raised on a LibVLC thread when a new frame is ready. Marshal to the UI before painting.</summary>
+    /// <summary>
+    /// Raised on the UI thread when new frames (main or overlay) have arrived, at most once per timer tick.
+    /// Decoder threads only set <see cref="_newFrame"/>: posting a repaint per decoded frame from several players
+    /// flooded the message queue, and Windows only delivers WM_TIMER when the queue is empty, so the playhead
+    /// clock stalled (it advanced 1.8 s in 4 s of play with two overlays).
+    /// </summary>
     public event EventHandler? FrameReady;
+    int _newFrame;
 
     /// <summary>Raised on the UI thread whenever <see cref="Position"/> changes.</summary>
     public event EventHandler? PositionChanged;
@@ -101,6 +110,8 @@ public sealed class PlaybackEngine : IDisposable
         _player.SetVideoCallbacks(_lockCb, null, _displayCb);
 
         _lane = new AudioLanePlayer(_vlc, session);
+        Overlays = new OverlayLanePlayer(_vlc, session, library);
+        Overlays.FrameReady += (_, _) => Interlocked.Exchange(ref _newFrame, 1); // decoder thread: just flag it
 
         _timer = new System.Windows.Forms.Timer { Interval = 15 };
         _timer.Tick += (_, _) => Tick();
@@ -136,7 +147,7 @@ public sealed class PlaybackEngine : IDisposable
                 _player.Mute = false;
             });
         }
-        FrameReady?.Invoke(this, EventArgs.Empty);
+        Interlocked.Exchange(ref _newFrame, 1); // the UI timer repaints (see FrameReady)
     }
 
     // ---- Public controls (UI thread) ----
@@ -173,7 +184,15 @@ public sealed class PlaybackEngine : IDisposable
         StartClock(Position);
         _pauseOnFirstFrame = false;
         _player.Mute = false;
-        if (_player.State == VLCState.Paused && _clipId is not null) _player.SetPause(false);
+        if (_player.State == VLCState.Paused && _clipId is not null)
+        {
+            _player.SetPause(false);
+            // The paused player is exactly on the playhead. Restart the drift estimate from here, else the time
+            // spent paused counted as progress and every resume began with a needless re-seek (a visible hitch).
+            ResetClock((long)(Locate(Position)?.SourceTime.TotalMilliseconds ?? _player.Time));
+            _ignoreVlcTimeBelowMs = _lastVlcTime;
+            _sinceLastSeek.Restart();
+        }
         else ApplySeek(Position, force: true);
         PlayingChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -325,6 +344,8 @@ public sealed class PlaybackEngine : IDisposable
             ApplySeek(pending);
 
         _lane.Update(Position, _playing);
+        Overlays.Update(Position, _playing);
+        if (Interlocked.Exchange(ref _newFrame, 0) == 1) FrameReady?.Invoke(this, EventArgs.Empty);
         if (!_playing) return;
 
         // The playhead runs on a REAL-TIME clock, and the video follows it (D23). It used to follow the
@@ -408,6 +429,7 @@ public sealed class PlaybackEngine : IDisposable
         _timer.Stop();
         _timer.Dispose();
         _lane.Dispose();
+        Overlays.Dispose();
         _player.Stop();
         _player.Dispose();
         _vlc.Dispose();

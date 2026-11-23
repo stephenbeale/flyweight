@@ -141,10 +141,7 @@ public static class TimelineOps
         // What's on screen at the frozen moment, captured before the split below moves things around.
         var onScreen = copyAnnotations ? VisibleAt(p, t).Select(a => a.Clone()).ToList() : new List<Annotation>();
 
-        int insertAt;
-        if (hit.SourceTime - hit.Clip.In < MinClipLength) insertAt = hit.Index;               // at the clip's start
-        else if (hit.Clip.Out - hit.SourceTime < MinClipLength) insertAt = hit.Index + 1;     // at its end
-        else { SplitAt(p, t); insertAt = hit.Index + 1; }
+        int insertAt = OpenGapAt(p, t, hit);
 
         if (p.FindMedia(still.Id) is null) p.Media.Add(still);
         var hold = Clamp(length, MinClipLength, still.Duration);
@@ -164,6 +161,157 @@ public static class TimelineOps
         return clip;
     }
 
+    /// <summary>
+    /// Make room for a new clip at timeline time <paramref name="t"/> and return the index it should go in: the clip
+    /// under <paramref name="t"/> is split there, unless <paramref name="t"/> is at (or within <see cref="MinClipLength"/>
+    /// of) one of its ends, where no split is needed.
+    /// </summary>
+    static int OpenGapAt(Project p, TimeSpan t, TimelineHit hit)
+    {
+        if (hit.SourceTime - hit.Clip.In < MinClipLength) return hit.Index;               // at the clip's start
+        if (hit.Clip.Out - hit.SourceTime < MinClipLength) return hit.Index + 1;          // at its end
+        SplitAt(p, t);
+        return hit.Index + 1;
+    }
+
+    /// <summary>
+    /// Insert the whole of <paramref name="media"/> at the playhead: the clip under <paramref name="t"/> is split there
+    /// and the rest of the timeline ripples right. Past the end it is appended. The audio track and overlays stay at
+    /// their timeline times, as for every other ripple edit.
+    /// </summary>
+    public static Clip InsertMediaAt(Project p, SourceMedia media, TimeSpan t)
+    {
+        if (media.IsAudioOnly)
+            throw new ArgumentException("Audio files go on the audio track (AddAudio), not the video timeline.", nameof(media));
+        int index = Locate(p, t) is { } hit ? OpenGapAt(p, t, hit) : p.Timeline.Count;
+        return InsertMedia(p, media, index);
+    }
+
+    // ---------------- Separate audio (the clip's sound becomes an audio-track item) ----------------
+
+    /// <summary>Why <see cref="SeparateAudio"/> would refuse this clip, or null if it can be done.</summary>
+    public static string? CannotSeparateAudio(Project p, Guid clipId) =>
+        p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is not { } m ? "That clip no longer exists."
+        : m.IsStill || !m.HasAudio ? "This clip has no sound to separate."
+        : Math.Abs(c.Speed - 1) > 0.0005 ? "Set the clip back to 1× speed first: audio-track items play at normal speed."
+        : null;
+
+    /// <summary>
+    /// Split a clip's sound off onto the audio track: a new audio item plays the same part of the same file at the
+    /// clip's timeline position and volume, and the clip itself is muted. From then on the two are independent: the
+    /// audio can be moved, trimmed or deleted without touching the picture, and it stays put when clips ripple.
+    /// Returns the new item, or null (see <see cref="CannotSeparateAudio"/>).
+    /// </summary>
+    public static AudioItem? SeparateAudio(Project p, Guid clipId)
+    {
+        if (CannotSeparateAudio(p, clipId) is not null) return null;
+        var c = p.FindClip(clipId)!;
+        var item = new AudioItem { SourceId = c.SourceId, Start = ClipStart(p, clipId), In = c.In, Out = c.Out, Volume = c.Volume, Muted = c.Muted };
+        p.AudioTrack.Add(item);
+        c.Muted = true;
+        return item;
+    }
+
+    /// <summary>The same for an overlay: its sound goes onto the audio track and the overlay is muted.</summary>
+    public static AudioItem? SeparateOverlayAudio(Project p, Guid overlayId)
+    {
+        if (p.FindOverlay(overlayId) is not { } o || p.FindMedia(o.SourceId) is not { HasAudio: true, IsStill: false }) return null;
+        var item = new AudioItem { SourceId = o.SourceId, Start = o.Start, In = o.In, Out = o.Out, Volume = o.Volume, Muted = o.Muted };
+        p.AudioTrack.Add(item);
+        o.Muted = true;
+        return item;
+    }
+
+    // ---------------- Overlay tracks (V2, V3…: picture-in-picture / cutaways at fixed timeline times) ----------------
+
+    public const int MaxOverlayTracks = 4;
+
+    /// <summary>Default overlay size: a picture-in-picture about a third of the screen wide, bottom right.</summary>
+    public const double DefaultOverlayScale = 0.35;
+
+    /// <summary>Put the whole of a video or image on overlay track <paramref name="track"/>, starting at <paramref name="start"/>.</summary>
+    public static OverlayClip AddOverlay(Project p, SourceMedia media, TimeSpan start, int track = 1)
+    {
+        if (media.IsAudioOnly) throw new ArgumentException("Audio files go on the audio track, not an overlay track.", nameof(media));
+        if (p.FindMedia(media.Id) is null) p.Media.Add(media);
+        var o = new OverlayClip
+        {
+            SourceId = media.Id, Track = Math.Clamp(track, 1, MaxOverlayTracks), Start = Max(start, TimeSpan.Zero),
+            In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration,
+        };
+        (o.X, o.Y, o.Scale) = OverlayLayout.Place(OverlayPosition.BottomRight, DefaultOverlayScale, media);
+        p.Overlays.Add(o);
+        return o;
+    }
+
+    /// <summary>The lowest overlay track with nothing on it between <paramref name="start"/> and +<paramref name="length"/> (the top track if all are busy).</summary>
+    public static int FreeOverlayTrack(Project p, TimeSpan start, TimeSpan length)
+    {
+        var end = start + length;
+        for (int t = 1; t <= MaxOverlayTracks; t++)
+            if (!p.Overlays.Any(o => o.Track == t && o.Start < end && start < o.End)) return t;
+        return MaxOverlayTracks;
+    }
+
+    /// <summary>Slide an overlay to a new start (never before 0) and, if given, onto another track.</summary>
+    public static void MoveOverlay(Project p, Guid id, TimeSpan start, int? track = null)
+    {
+        if (p.FindOverlay(id) is not { } o) return;
+        o.Start = Max(start, TimeSpan.Zero);
+        if (track is { } t) o.Track = Math.Clamp(t, 1, MaxOverlayTracks);
+    }
+
+    /// <summary>Trim the front; the END stays put on the timeline (like an audio item).</summary>
+    public static void TrimOverlayIn(Project p, Guid id, TimeSpan newIn)
+    {
+        if (p.FindOverlay(id) is not { } o) return;
+        var lo = Max(TimeSpan.Zero, o.In - o.Start);
+        var inPoint = Clamp(newIn, lo, o.Out - MinClipLength);
+        o.Start += inPoint - o.In;
+        o.In = inPoint;
+    }
+
+    public static void TrimOverlayOut(Project p, Guid id, TimeSpan newOut)
+    {
+        if (p.FindOverlay(id) is not { } o || p.FindMedia(o.SourceId) is not { } m) return;
+        o.Out = Clamp(newOut, o.In + MinClipLength, m.Duration);
+    }
+
+    /// <summary>Centre (0–1 each way) and size (fraction of the canvas width). Null leaves that value alone.</summary>
+    public static void SetOverlayLayout(Project p, Guid id, double? x, double? y, double? scale)
+    {
+        if (p.FindOverlay(id) is not { } o) return;
+        if (x is { } vx) o.X = double.IsFinite(vx) ? Math.Clamp(vx, 0, 1) : 0.5;
+        if (y is { } vy) o.Y = double.IsFinite(vy) ? Math.Clamp(vy, 0, 1) : 0.5;
+        if (scale is { } s) o.Scale = double.IsFinite(s) ? Math.Clamp(s, OverlayLayout.MinScale, OverlayLayout.MaxScale) : DefaultOverlayScale;
+    }
+
+    /// <summary>Snap to a corner, the centre, or full frame.</summary>
+    public static void PlaceOverlay(Project p, Guid id, OverlayPosition pos)
+    {
+        if (p.FindOverlay(id) is not { } o) return;
+        // Leaving full frame for a corner: go back to the default picture-in-picture size.
+        var scale = pos != OverlayPosition.FullFrame && o.Scale > 0.9 ? DefaultOverlayScale : o.Scale;
+        var (x, y, s) = OverlayLayout.Place(pos, scale, p.FindMedia(o.SourceId));
+        SetOverlayLayout(p, id, x, y, s);
+    }
+
+    public static void SetOverlayVolume(Project p, Guid id, double volume)
+    {
+        if (p.FindOverlay(id) is { } o) o.Volume = double.IsFinite(volume) ? Math.Clamp(volume, 0, MaxClipVolume) : 1.0;
+    }
+
+    public static void SetOverlayMuted(Project p, Guid id, bool muted)
+    {
+        if (p.FindOverlay(id) is { } o) o.Muted = muted;
+    }
+
+    public static void DeleteOverlay(Project p, Guid id) => p.Overlays.RemoveAll(o => o.Id == id);
+
+    /// <summary>Overlays showing at timeline time <paramref name="t"/>, bottom first (track, then the order they were added).</summary>
+    public static List<OverlayClip> OverlaysAt(Project p, TimeSpan t) =>
+        p.Overlays.Where(o => o.Start <= t && t < o.End).OrderBy(o => o.Track).ToList(); // OrderBy is stable
+
     /// <summary>Ripple delete: remove the clip and close the gap. Its annotations go too.</summary>
     public static void Delete(Project p, Guid clipId)
     {
@@ -180,12 +328,14 @@ public static class TimelineOps
     {
         foreach (var c in p.Timeline.Where(c => c.SourceId == mediaId).ToList()) Delete(p, c.Id);
         p.AudioTrack.RemoveAll(a => a.SourceId == mediaId);
+        p.Overlays.RemoveAll(o => o.SourceId == mediaId);
         p.Media.RemoveAll(m => m.Id == mediaId);
     }
 
-    /// <summary>How many timeline clips and audio items use this file (to warn before removing it).</summary>
+    /// <summary>How many timeline clips, overlays and audio items use this file (to warn before removing it).</summary>
     public static int UsageCount(Project p, Guid mediaId) =>
-        p.Timeline.Count(c => c.SourceId == mediaId) + p.AudioTrack.Count(a => a.SourceId == mediaId);
+        p.Timeline.Count(c => c.SourceId == mediaId) + p.AudioTrack.Count(a => a.SourceId == mediaId) +
+        p.Overlays.Count(o => o.SourceId == mediaId);
 
     // ---------------- Copy / paste clips ----------------
 

@@ -1,9 +1,19 @@
 # Roadmap & status
 
-_Last updated: 2026-11-22 (session close; PRs #5-#10 merged)_
+_Last updated: 2026-11-23 (feature/multitrack)_
 
 ## Where things stand
 
+### 2026-11-23: `feature/multitrack` (D34): overlay video tracks, Separate audio, Insert at playhead
+**Built (owner asked for them):** picture-in-picture / cutaway video on overlay tracks V2–V5 (drag in time, between
+tracks and in the preview; Place / Size / Across / Down / Volume / Mute in Properties; exported and in Save frame);
+**Separate audio** (clip or overlay right-click: its sound goes on the audio track, the clip is muted); **Insert at
+playhead** (bin / clip right-click, or I with a file selected in Media: splits the clip there). 220 tests pass incl.
+a real-ffmpeg overlay export checked by pixels. Smoke-tested in the debug build with generated footage.
+**Not yet verified by the owner in-app.** Known limits: overlays have no speed/zoom/tone; the main track sets the
+length; audio items have no speed (so Separate audio needs 1×).
+**Fixed after owner testing:** lag and overlays not pausing on play/pause with several videos (see D34). The audio-track
+re-seek fix there may also be the old **audio crackle** (item 1 below): worth re-checking.
 ### 2026-11-22 session close: PRs #5-#10 merged to `main` (e839f98)
 **Shipped today:** #5 clip zoom + brightness/contrast (D25), proxy fixes (D26), Remove from project, named New project
 (D27); #6 clip speed (D28), Quick Sync export + YouTube bitrate cap + safe overwrite + "Your video is ready" step (D29),
@@ -203,4 +213,4 @@ hurts search. They want something that says lean / light / fast / nimble.
 - Cross-project media library / proxy-cache manager → SQLite + Dapper (DECISIONS D13)
 
 ## Explicitly not planned (for now)
-Vertical / 9:16 output · multi-track video compositing · real-time GPU effects · AI features · transitions library
+Vertical / 9:16 output · real-time GPU effects · AI features · transitions library

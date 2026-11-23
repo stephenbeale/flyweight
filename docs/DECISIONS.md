@@ -318,3 +318,47 @@ passes it as `-/filter_complex FILE` (ffmpeg 7+, incl. gyan.dev nightlies) or `-
 chosen by parsing `ffmpeg -version` once. If the whole command is still too long it fails with a clear message
 instead of a cryptic one.
 
+
+### D34. Overlay video tracks, Separate audio, Insert at playhead (2026-11-23)
+Owner request ("I NEED to add concurrent video tracks and separate audio from video"). This lifts the old
+"multi-track video compositing" out-of-scope line, kept deliberately small:
+- **Model.** `Project.Overlays` holds `OverlayClip`s: `Track` (1 = V2, higher draws on top, max 4), `Start` in
+  TIMELINE time + source `In`/`Out` (like `AudioItem`, D23, so rippling the main track never moves them), and a
+  placement: `Scale` (fraction of canvas width) and centre `X`/`Y` (0–1), keeping the source's own shape. Own
+  `Volume`/`Muted`. Old files load with none. The MAIN track still sets the video's length; an overlay past the end
+  is cut off. No speed, zoom or tone on overlays (yet).
+- **One layout.** `OverlayLayout` (Core) is the only place that turns an overlay into a rectangle; the preview, the
+  export and Save frame all use it, so they agree (the overlay version of rule 5). Quick placements: corners, centre,
+  Full frame (cutaway). Pixel sizes are rounded to even numbers for yuv420p.
+- **Export.** Each overlay is its own input (`-ss In -t len`), scaled to its box, `tpad`/`trim`'d to length, then
+  `setpts=PTS+start/TB` and `overlay=x:y:eof_action=pass:enable='between(t,s,e)'` on top of the concatenated main
+  track, bottom track first, and BEFORE the annotation PNGs (annotations stay on top). Its sound joins the `amix`.
+  Save frame (`FrameExport.BuildArgs`) overlays the frames showing at that moment the same way.
+- **Preview.** `OverlayLanePlayer`: one extra LibVLC player per overlay on screen (max 4), each decoding its 960×540
+  proxy into its own buffer (same video-callback pattern as `PlaybackEngine`, rule 8). PreviewCanvas crops the proxy's
+  letterbox (`Fit` by the media's aspect) and draws it into the overlay's box, under the annotations. Playing: drift
+  >250 ms is re-seeked. Paused: each player is seeked to the playhead's exact frame (throttled 40 ms). No proxy yet:
+  it plays the original (stretched, so drawn whole) or shows an "Optimising…" box.
+- **UI.** Overlay rows sit ABOVE the main track (V2 just above, V3 above that), so the main track moves down by one
+  row per track. Drag to move in time; drag up/down to change track (above the top row = a new track one higher than
+  the highest *other* overlay, so it can't run away while rows are added); drag ends to trim. In the preview, drag an
+  overlay to place it (annotations win the click: they're on top). Properties: Place, Size, Across, Down, Volume, Mute.
+  Media bin: "Add as overlay at playhead" (O) uses the lowest free track.
+- **Separate audio.** `TimelineOps.SeparateAudio` adds an `AudioItem` for the clip's own file/In/Out/volume at its
+  timeline start and mutes the clip. Audio items may now come from VIDEO files (the export just reads their audio
+  stream; the lane player already used `:no-video`); the timeline shows the file name instead of a waveform for those.
+  Refused for stills, silent clips and clips not at 1× (audio items have no speed). Overlays can do the same.
+- **Insert at playhead.** `TimelineOps.InsertMediaAt` splits the clip under the playhead (same rule as freeze frames:
+  no split within 100 ms of a cut, shared via `OpenGapAt`) and inserts the whole file there; past the end it appends.
+  Bin menu, clip menu, and I with a file selected in Media.
+- **Smooth play/pause with several videos (2026-11-23, owner: "laggy on play pause with multiple videos", "play pause
+  doesn't work for all videos").** (1) Decoder threads used to post a repaint per decoded frame; with overlays that
+  flooded the message queue and Windows only delivers WM_TIMER when the queue is empty, so the playhead clock stalled
+  (1.8 s of progress in 4 s of play). Now decoders only set a flag and the 15 ms timer repaints once per tick
+  (`PlaybackEngine.FrameReady`, raised on the UI thread). (2) Overlays were paused only on the tick where play
+  switched to pause, so one still opening then kept running; play/pause is now enforced every tick (rapid-toggle test:
+  15,417 → 0 changed pixels while paused). (3) Drift checks on LibVLC's coarse `Time` re-seeked overlays and audio
+  items about every second, and each seek lost time; `PlayerClock` estimates the real position like the main engine
+  does (re-seeks went from ~10 per 4 s to none). (4) Resuming no longer counts paused time as video progress (it
+  re-seeked the main video on every play). Overlays at ≤ 50% size decode at 480×270; drawing copies the frame out
+  under the lock first so the decoder never waits for GDI+.

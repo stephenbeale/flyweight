@@ -10,11 +10,13 @@ namespace Flyweight.Core.Export;
 /// Turns the project into ONE ffmpeg command. Pure: no I/O, so it is unit-testable.
 ///
 ///   inputs:  one "-ss In -t Dur -i original" per clip (fast + accurate input seeking),
-///            then one per audio-track item, then one transparent full-frame PNG per visible annotation
+///            then one per audio-track item, then one per overlay-track clip,
+///            then one transparent full-frame PNG per visible annotation
 ///   graph:   each clip → speed (setpts / atempo), fps, fit/pad to 16:9 (or zoom-crop), brightness/contrast curve,
 ///            48k stereo audio (silence if none)
-///            → concat → amix the audio-track items (adelay'd to their start) over the clip audio
-///            → overlay each PNG with enable='between(t,start,end)'
+///            → concat → amix the audio-track items and overlays' sound (adelay'd to their start) over the clip audio
+///            → overlay each overlay-track clip, scaled to its box (OverlayLayout), bottom track first
+///            → overlay each annotation PNG with enable='between(t,start,end)' (always on top)
 ///   output:  H.264 High / yuv420p / AAC 48k / +faststart  (YouTube's recommended upload)
 ///
 /// Annotation PNGs are rendered by the UI using the SAME renderer as the preview, which is
@@ -104,6 +106,33 @@ public sealed class ExportPlan
             input++;
         }
 
+        // 2b. Overlay tracks (picture-in-picture / cutaways): each scaled to its box and shifted to its timeline start.
+        // Bottom track first, so higher tracks are overlaid later (on top). Their own sound joins the mix.
+        var overlays = new List<(string Label, int X, int Y, TimeSpan Start, TimeSpan End)>();
+        foreach (var o in p.Overlays.OrderBy(o => o.Track))
+        {
+            if (o.Start >= total || o.Duration < TimelineOps.MinClipLength) continue; // after the video ends: never seen
+            var media = p.FindMedia(o.SourceId) ?? throw new InvalidOperationException("An overlay refers to missing media.");
+            if (media.IsAudioOnly) continue;
+            var d = Sec(o.Duration);
+            if (media.IsStill) args.AddRange(new[] { "-loop", "1", "-framerate", "1", "-t", d, "-i", media.OriginalPath });
+            else args.AddRange(new[] { "-ss", Sec(o.In), "-t", d, "-i", media.OriginalPath });
+            var (px, py, pw, ph) = OverlayLayout.PixelRect(o, media, w, h);
+            var label = $"ov{overlays.Count}";
+            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},scale={pw}:{ph}:flags=bicubic,setsar=1,format=yuv420p," +
+                         $"tpad=stop=-1:stop_mode=clone,trim=duration={d},setpts=PTS+{Sec(o.Start)}/TB[{label}];\n");
+            var end = o.End < total ? o.End : total;
+            overlays.Add((label, px, py, o.Start, end));
+            if (media.HasAudio && o.EffectiveVolume > 0)
+            {
+                var vol = Math.Abs(o.EffectiveVolume - 1) < 0.001 ? "" : $"volume={Num(Math.Round(o.EffectiveVolume, 3))},";
+                var al = $"m{mix.Count}";
+                graph.Append($"[{input}:a]{AudioIn(media)}{vol}atrim=duration={d},adelay={(long)Math.Round(o.Start.TotalMilliseconds)}:all=1[{al}];\n");
+                mix.Add(al);
+            }
+            input++;
+        }
+
         // 3. Concat, then mix the audio track over the clips' sound. normalize=0 keeps every input
         // at its own level (amix's default would halve the clip audio as soon as music is added);
         // duration=first ends the mix with the video.
@@ -114,8 +143,16 @@ public sealed class ExportPlan
             graph.Append($"concat=n={p.Timeline.Count}:v=1:a=1[vcat][acat];\n[acat]{string.Concat(mix.Select(m => $"[{m}]"))}" +
                          $"amix=inputs={mix.Count + 1}:duration=first:dropout_transition=0:normalize=0[aout]");
 
-        // 4. Annotation overlays, in list order (later = on top).
+        // 4. Overlay-track video over the main track (eof_action=pass: nothing left behind once it ends).
         string last = "vcat";
+        for (int j = 0; j < overlays.Count; j++)
+        {
+            var (label, x, y, s, e) = overlays[j];
+            graph.Append($";\n[{last}][{label}]overlay={x}:{y}:eof_action=pass:enable='between(t,{Sec(s)},{Sec(e)})'[vo{j}]");
+            last = $"vo{j}";
+        }
+
+        // 5. Annotation PNGs, in list order (later = on top), above everything.
         int k = 0;
         foreach (var a in p.Annotations)
         {
