@@ -298,3 +298,12 @@ in exactly one place in the app: a one-line footnote link in the "Your video is 
 export (`ExportForm.BuyMeACoffeeUrl`), plus a Support section in the README. No pop-ups, no nag timers, nothing during
 editing, no feature gating. Don't add it anywhere else without the owner asking.
 
+### Icon update (2026-11-23): black fly with red boxing gloves, in the film frame
+Supersedes D16's gold glove. The owner chose a black fly silhouette, vertical, on a white picture area inside the
+same film frame (sprocket holes both sides), wearing red boxing gloves. Fly = the name, gloves = "punches above its
+weight", film frame = video. The red gloves are what keep it recognisable at 16 px. Still no red + white play button.
+Kept for later in `assets/concepts/`: `film-fly.svg` (same, no gloves; the owner likes it too),
+`glove-in-film-frame.svg` (the previous icon) and earlier drafts, with comparison images.
+Source `assets/icon.svg` → `assets/icon-128.png`/`icon-512.png` and `src/Flyweight.App/flyweight.ico` (16–256 px),
+which the app, window and installer all use. Re-render all of them if the SVG changes.
+
