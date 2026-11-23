@@ -351,3 +351,14 @@ Owner request ("I NEED to add concurrent video tracks and separate audio from vi
 - **Insert at playhead.** `TimelineOps.InsertMediaAt` splits the clip under the playhead (same rule as freeze frames:
   no split within 100 ms of a cut, shared via `OpenGapAt`) and inserts the whole file there; past the end it appends.
   Bin menu, clip menu, and I with a file selected in Media.
+- **Smooth play/pause with several videos (2026-11-23, owner: "laggy on play pause with multiple videos", "play pause
+  doesn't work for all videos").** (1) Decoder threads used to post a repaint per decoded frame; with overlays that
+  flooded the message queue and Windows only delivers WM_TIMER when the queue is empty, so the playhead clock stalled
+  (1.8 s of progress in 4 s of play). Now decoders only set a flag and the 15 ms timer repaints once per tick
+  (`PlaybackEngine.FrameReady`, raised on the UI thread). (2) Overlays were paused only on the tick where play
+  switched to pause, so one still opening then kept running; play/pause is now enforced every tick (rapid-toggle test:
+  15,417 → 0 changed pixels while paused). (3) Drift checks on LibVLC's coarse `Time` re-seeked overlays and audio
+  items about every second, and each seek lost time; `PlayerClock` estimates the real position like the main engine
+  does (re-seeks went from ~10 per 4 s to none). (4) Resuming no longer counts paused time as video progress (it
+  re-seeked the main video on every play). Overlays at ≤ 50% size decode at 480×270; drawing copies the frame out
+  under the lock first so the decoder never waits for GDI+.

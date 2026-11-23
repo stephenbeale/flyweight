@@ -26,6 +26,8 @@ sealed class AudioLanePlayer : IDisposable
         public required MediaPlayer Player;
         public required Guid SourceId;
         public readonly Stopwatch SinceSeek = Stopwatch.StartNew();
+        public readonly PlayerClock Clock = new();
+        public int Volume = -2; // last value we set, so we don't query the audio output every tick
     }
 
     readonly LibVLC _vlc;
@@ -62,22 +64,22 @@ sealed class AudioLanePlayer : IDisposable
 
             var player = v.Player;
             int target = (int)Math.Round(item.EffectiveVolume * 100);
-            int now = player.Volume;
-            if (now >= 0 && now != target)
+            if (v.Volume != target && player.Volume >= 0) // -1 = no audio output yet: try again next tick
             {
-                PlaybackLog.Write($"lane volume {now} -> {target}");
+                PlaybackLog.Write($"lane volume -> {target}");
                 player.Volume = target;
+                v.Volume = target;
             }
 
-            if (v.SinceSeek.Elapsed > SettleTime && player.State == VLCState.Playing)
+            // Compare an ESTIMATE of where it is (PlayerClock), not LibVLC's coarse Time: the raw value always
+            // looked a few hundred ms behind, and re-seeking for it every second made the music stutter.
+            if (v.SinceSeek.Elapsed > SettleTime && player.State == VLCState.Playing &&
+                v.Clock.Estimate(player.Time) is { } at && Math.Abs(at - expected.TotalMilliseconds) > DriftLimit.TotalMilliseconds)
             {
-                var at = TimeSpan.FromMilliseconds(player.Time);
-                if ((at - expected).Duration() > DriftLimit)
-                {
-                    PlaybackLog.Write($"lane drift resync: {at.TotalMilliseconds:0} -> {expected.TotalMilliseconds:0} ms");
-                    player.Time = (long)expected.TotalMilliseconds;
-                    v.SinceSeek.Restart();
-                }
+                PlaybackLog.Write($"lane drift resync: ~{at} -> {expected.TotalMilliseconds:0} ms");
+                player.Time = (long)expected.TotalMilliseconds;
+                v.SinceSeek.Restart();
+                v.Clock.Reset((long)expected.TotalMilliseconds);
             }
         }
     }
@@ -90,7 +92,9 @@ sealed class AudioLanePlayer : IDisposable
             $":start-time={FfmpegRunner.Num(sourceTime.TotalSeconds)}", ":no-video");
         player.Play(media);
         player.Volume = (int)Math.Round(item.EffectiveVolume * 100);
-        return new Voice { Player = player, SourceId = item.SourceId };
+        var voice = new Voice { Player = player, SourceId = item.SourceId };
+        voice.Clock.Reset((long)sourceTime.TotalMilliseconds);
+        return voice;
     }
 
     void Stop(Guid id)

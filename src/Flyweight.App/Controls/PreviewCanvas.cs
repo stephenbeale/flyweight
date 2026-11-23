@@ -82,7 +82,7 @@ public sealed class PreviewCanvas : Control
         _session = session;
         _engine = engine;
         _library = library;
-        _engine.FrameReady += (_, _) => { if (IsHandleCreated) BeginInvoke(Invalidate); };
+        _engine.FrameReady += (_, _) => Invalidate(); // raised on the UI thread, once per tick at most
         _engine.PositionChanged += (_, _) => Invalidate();
     }
 

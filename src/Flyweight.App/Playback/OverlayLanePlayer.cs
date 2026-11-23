@@ -11,20 +11,23 @@ namespace Flyweight.App.Playback;
 
 /// <summary>
 /// Plays the overlay tracks (V2, V3…) in the preview. One LibVLC player per overlay on screen, each decoding its
-/// PROXY into its own 960×540 buffer like <see cref="PlaybackEngine"/> does for the main track; PreviewCanvas then
-/// draws each one into its box (<see cref="OverlayLayout"/>) over the main picture.
+/// PROXY into its own buffer like <see cref="PlaybackEngine"/> does for the main track; PreviewCanvas then draws each
+/// one into its box (<see cref="OverlayLayout"/>) over the main picture.
 ///
 /// Driven from the engine's UI timer: <see cref="Update"/> loads overlays the playhead has reached, drops ones it
 /// has left, and keeps each on the right frame: while playing by re-seeking one that has drifted, while paused by
-/// seeking it to the playhead's frame (proxies are all-keyframe, so that's cheap). Stopping a player blocks, so it
-/// runs on the thread pool, and the callbacks never call player methods (rule 8).
+/// seeking it to the playhead's frame (proxies are all-keyframe, so that's cheap). Play/pause is re-checked EVERY
+/// tick, not just when it changes, so a player that was still opening at that moment can't miss it and keep running.
+/// Stopping a player blocks, so it runs on the thread pool, and the callbacks never call player methods (rule 8).
+///
+/// Smoothness: decoder threads only flag new frames (the engine repaints once per tick); small overlays decode at
+/// half size; the UI copies a frame out under the lock and draws it after, so drawing never stalls a decoder.
 /// </summary>
 public sealed class OverlayLanePlayer : IDisposable
 {
-    const int W = Canvas.ProxyWidth, H = Canvas.ProxyHeight, Pitch = W * 4;
     const int MaxLayers = 4;
-    static readonly TimeSpan DriftLimit = TimeSpan.FromMilliseconds(250);
-    static readonly TimeSpan SettleTime = TimeSpan.FromMilliseconds(600);
+    static readonly TimeSpan DriftLimit = TimeSpan.FromMilliseconds(300);
+    static readonly TimeSpan SettleTime = TimeSpan.FromMilliseconds(800);
     static readonly TimeSpan SeekThrottle = TimeSpan.FromMilliseconds(40);
 
     sealed class Layer
@@ -32,25 +35,32 @@ public sealed class OverlayLanePlayer : IDisposable
         public required MediaPlayer Player;
         public required Guid SourceId;
         public required string Path;
-        public required bool IsOriginal; // no proxy yet: the original, stretched to 960×540
+        public required bool IsOriginal; // no proxy yet: the original, stretched to the buffer
+        public required int W, H;
         public required IntPtr Decode, Display;
-        public required Bitmap Frame;
+        public required Bitmap Frame;    // over Display; written by the decoder under FrameLock
+        public required Bitmap Snap;     // UI-only copy that gets drawn
         public required MediaPlayer.LibVLCVideoLockCb LockCb;       // kept alive while native code holds them
         public required MediaPlayer.LibVLCVideoDisplayCb DisplayCb;
         public readonly object FrameLock = new();
         public volatile bool HasFrame;
+        public volatile bool FreshFrame;  // a frame arrived since the last Snap copy
         public volatile bool PauseOnFirstFrame;
         public readonly Stopwatch SinceSeek = Stopwatch.StartNew();
-        public long ShownMs = -1; // source ms last asked for while paused
+        public readonly PlayerClock Clock = new();
+        public long ShownMs = -1;         // source ms last asked for while paused
+        public int Volume = -2;           // last values we set, so we don't query LibVLC every tick
+        public bool? Muted;
+        public bool HasSnap;
     }
 
     readonly LibVLC _vlc;
     readonly ProjectSession _session;
     readonly MediaLibrary _library;
     readonly Dictionary<Guid, Layer> _layers = new();
-    bool _wasPlaying;
+    volatile bool _playing;
 
-    /// <summary>Raised on a LibVLC thread when an overlay has a new frame. Marshal to the UI before painting.</summary>
+    /// <summary>Raised on a LibVLC thread when an overlay has a new frame. Only set a flag here.</summary>
     public event EventHandler? FrameReady;
 
     public OverlayLanePlayer(LibVLC vlc, ProjectSession session, MediaLibrary library)
@@ -60,17 +70,23 @@ public sealed class OverlayLanePlayer : IDisposable
         _library = library;
     }
 
+    /// <summary>Decode size for an overlay: half size is plenty for a picture-in-picture, full size for big ones.</summary>
+    static (int W, int H) DecodeSize(OverlayClip o) =>
+        o.Scale <= 0.5 ? (Canvas.ProxyWidth / 2, Canvas.ProxyHeight / 2) : (Canvas.ProxyWidth, Canvas.ProxyHeight);
+
     /// <summary>Call every tick with the timeline playhead.</summary>
     public void Update(TimeSpan position, bool playing)
     {
+        _playing = playing;
         var p = _session.Project;
         var want = TimelineOps.OverlaysAt(p, position)
             .Where(o => p.FindMedia(o.SourceId) is { IsAudioOnly: false })
             .TakeLast(MaxLayers) // the topmost, if someone stacks more than we decode at once
             .ToDictionary(o => o.Id);
 
-        foreach (var id in _layers.Keys.Where(id => !want.ContainsKey(id) || _layers[id].SourceId != want[id].SourceId ||
-                                                   _layers[id].Path != PathFor(want[id].SourceId)).ToList())
+        foreach (var id in _layers.Keys.Where(id => !want.TryGetValue(id, out var o) || _layers[id].SourceId != o.SourceId ||
+                                                   _layers[id].Path != PathFor(o.SourceId) ||
+                                                   (_layers[id].W, _layers[id].H) != DecodeSize(o)).ToList())
             Stop(id);
 
         foreach (var o in want.Values)
@@ -84,43 +100,50 @@ public sealed class OverlayLanePlayer : IDisposable
                 continue;
             }
             var player = layer.Player;
+            var state = player.State; // one native call per tick per overlay
 
             int volume = (int)Math.Round(o.EffectiveVolume * 100);
-            if (player.Volume >= 0 && player.Volume != volume) player.Volume = volume;
-            if (player.Mute == playing) player.Mute = !playing; // silent while paused / scrubbing
+            if (layer.Volume != volume) { player.Volume = volume; layer.Volume = volume; }
+            if (layer.Muted != !playing) { player.Mute = !playing; layer.Muted = !playing; } // silent while paused / scrubbing
 
             if (playing)
             {
-                if (player.State == VLCState.Paused) { player.SetPause(false); layer.SinceSeek.Restart(); }
-                else if (player.State == VLCState.Ended) { Restart(layer, expected); }
-                else if (layer.SinceSeek.Elapsed > SettleTime && player.State == VLCState.Playing &&
-                         (TimeSpan.FromMilliseconds(player.Time) - expected).Duration() > DriftLimit)
+                layer.ShownMs = -1;
+                if (state == VLCState.Paused)
                 {
-                    PlaybackLog.Write($"overlay drift resync: {player.Time} -> {ms} ms");
+                    player.SetPause(false);
+                    layer.SinceSeek.Restart();
+                    layer.Clock.Reset(player.Time);
+                }
+                else if (state is VLCState.Ended or VLCState.Stopped or VLCState.Error) Load(layer, expected, playing: true);
+                else if (state == VLCState.Playing && layer.SinceSeek.Elapsed > SettleTime &&
+                         layer.Clock.Estimate(player.Time) is { } at && Math.Abs(at - ms) > DriftLimit.TotalMilliseconds)
+                {
+                    PlaybackLog.Write($"overlay drift resync: ~{at} -> {ms} ms");
                     player.Time = ms;
                     layer.SinceSeek.Restart();
+                    layer.Clock.Reset(ms);
                 }
-                layer.ShownMs = -1;
             }
             else
             {
-                if (_wasPlaying && player.State == VLCState.Playing) player.SetPause(true);
+                if (layer.PauseOnFirstFrame) continue; // still loading: its first frame pauses it
+                if (state == VLCState.Playing) player.SetPause(true); // every tick until it really is paused
                 // Paused: show exactly the playhead's frame. Seeking a paused player redraws it.
-                if (ms != layer.ShownMs && layer.SinceSeek.Elapsed >= SeekThrottle && !layer.PauseOnFirstFrame)
+                if (ms != layer.ShownMs && layer.SinceSeek.Elapsed >= SeekThrottle)
                 {
-                    if (player.State is VLCState.Paused or VLCState.Playing)
+                    if (state is VLCState.Paused or VLCState.Playing)
                     {
                         player.Time = ms;
                         layer.ShownMs = ms;
                         layer.SinceSeek.Restart();
                     }
-                    else if (player.State is VLCState.Ended or VLCState.Stopped or VLCState.Error)
-                        Restart(layer, expected);
+                    else if (state is VLCState.Ended or VLCState.Stopped or VLCState.Error)
+                        Load(layer, expected, playing: false);
                     // Opening / buffering: try again next tick.
                 }
             }
         }
-        _wasPlaying = playing;
     }
 
     /// <summary>The file to play for this media: its proxy, else (still optimising) the original video. Null = nothing yet.</summary>
@@ -134,9 +157,11 @@ public sealed class OverlayLanePlayer : IDisposable
 
     Layer Start(OverlayClip o, string path, TimeSpan sourceTime, bool playing)
     {
+        var (w, h) = DecodeSize(o);
+        int pitch = w * 4;
         var player = new MediaPlayer(_vlc);
-        var decode = Marshal.AllocHGlobal(Pitch * H);
-        var display = Marshal.AllocHGlobal(Pitch * H);
+        var decode = Marshal.AllocHGlobal(pitch * h);
+        var display = Marshal.AllocHGlobal(pitch * h);
         Layer layer = null!;
         MediaPlayer.LibVLCVideoLockCb lockCb = (_, planes) =>
         {
@@ -147,14 +172,15 @@ public sealed class OverlayLanePlayer : IDisposable
         layer = new Layer
         {
             Player = player, SourceId = o.SourceId, Path = path, IsOriginal = _library.GetState(o.SourceId).ProxyPath is null,
-            Decode = decode, Display = display, Frame = new Bitmap(W, H, Pitch, PixelFormat.Format32bppRgb, display),
+            W = w, H = h, Decode = decode, Display = display,
+            Frame = new Bitmap(w, h, pitch, PixelFormat.Format32bppRgb, display),
+            Snap = new Bitmap(w, h, PixelFormat.Format32bppRgb),
             LockCb = lockCb, DisplayCb = displayCb,
         };
-        player.SetVideoFormat("RV32", W, H, Pitch);
+        player.SetVideoFormat("RV32", (uint)w, (uint)h, (uint)pitch);
         player.SetVideoCallbacks(lockCb, null, displayCb);
-        PlaybackLog.Write($"overlay load {System.IO.Path.GetFileName(path)} at {sourceTime.TotalMilliseconds:0} ms");
+        PlaybackLog.Write($"overlay load {System.IO.Path.GetFileName(path)} ({w}×{h}) at {sourceTime.TotalMilliseconds:0} ms");
         Load(layer, sourceTime, playing);
-        player.Volume = (int)Math.Round(o.EffectiveVolume * 100);
         return layer;
     }
 
@@ -163,27 +189,29 @@ public sealed class OverlayLanePlayer : IDisposable
         using var media = new LibVLCSharp.Shared.Media(_vlc, layer.Path, FromType.FromPath, $":start-time={FfmpegRunner.Num(sourceTime.TotalSeconds)}");
         layer.PauseOnFirstFrame = !playing;
         layer.Player.Mute = !playing;
+        layer.Muted = !playing;
+        layer.Volume = -2; // the audio output can reset it on new media: set it again next tick
         layer.ShownMs = (long)sourceTime.TotalMilliseconds;
         layer.SinceSeek.Restart();
+        layer.Clock.Reset(layer.ShownMs);
         layer.Player.Play(media);
     }
-
-    /// <summary>Reached the end of its file (e.g. a still's proxy, or scrubbing back after it ended): load it again.</summary>
-    void Restart(Layer layer, TimeSpan sourceTime) => Load(layer, sourceTime, _wasPlaying);
 
     // LibVLC thread: copy the frame out, never call player methods here (rule 8).
     unsafe void OnDisplay(Layer layer)
     {
+        int bytes = layer.W * 4 * layer.H;
         lock (layer.FrameLock)
-            Buffer.MemoryCopy((void*)layer.Decode, (void*)layer.Display, Pitch * H, Pitch * H);
+            Buffer.MemoryCopy((void*)layer.Decode, (void*)layer.Display, bytes, bytes);
         layer.HasFrame = true;
+        layer.FreshFrame = true;
         if (layer.PauseOnFirstFrame)
         {
-            layer.PauseOnFirstFrame = false;
             var player = layer.Player;
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                try { if (!_wasPlaying) player.SetPause(true); } catch { }
+                try { if (!_playing) player.SetPause(true); } catch { }
+                layer.PauseOnFirstFrame = false; // only now may Update seek it (it is paused, or playing on purpose)
             });
         }
         FrameReady?.Invoke(this, EventArgs.Empty);
@@ -199,13 +227,15 @@ public sealed class OverlayLanePlayer : IDisposable
         {
             if (p.FindMedia(o.SourceId) is not { IsAudioOnly: false } media) continue;
             var dest = Dest(canvas, o, media);
-            if (_layers.TryGetValue(o.Id, out var layer) && layer.HasFrame)
+            if (_layers.TryGetValue(o.Id, out var layer) && layer.HasFrame && Snapshot(layer) is { } snap)
             {
-                // The proxy is the media fitted into 960×540 with bars; draw just the picture part.
-                var src = layer.IsOriginal ? new RectangleF(0, 0, W, H) : Fit(OverlayLayout.Aspect(media), new RectangleF(0, 0, W, H));
+                // The proxy is the media fitted into the buffer with bars; draw just the picture part.
+                var full = new RectangleF(0, 0, layer.W, layer.H);
+                var src = layer.IsOriginal ? full : Fit(OverlayLayout.Aspect(media), full);
                 g.InterpolationMode = InterpolationMode.Bilinear;
-                lock (layer.FrameLock)
-                    g.DrawImage(layer.Frame, dest, src, GraphicsUnit.Pixel);
+                g.CompositingMode = CompositingMode.SourceCopy; // opaque video: no blending needed
+                g.DrawImage(snap, dest, src, GraphicsUnit.Pixel);
+                g.CompositingMode = CompositingMode.SourceOver;
             }
             else
             {
@@ -220,6 +250,31 @@ public sealed class OverlayLanePlayer : IDisposable
                 g.DrawRectangle(pen, dest.X, dest.Y, dest.Width, dest.Height);
             }
         }
+    }
+
+    /// <summary>The latest frame as a UI-owned bitmap: a quick copy under the lock, so the decoder never waits for a draw.</summary>
+    static unsafe Bitmap? Snapshot(Layer layer)
+    {
+        if (layer.FreshFrame || !layer.HasSnap)
+        {
+            var rect = new Rectangle(0, 0, layer.W, layer.H);
+            var dst = layer.Snap.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+            try
+            {
+                int bytes = layer.W * 4 * layer.H;
+                lock (layer.FrameLock)
+                {
+                    layer.FreshFrame = false;
+                    if (dst.Stride == layer.W * 4) Buffer.MemoryCopy((void*)layer.Display, (void*)dst.Scan0, bytes, bytes);
+                    else
+                        for (int y = 0; y < layer.H; y++)
+                            Buffer.MemoryCopy((byte*)layer.Display + y * layer.W * 4, (byte*)dst.Scan0 + y * dst.Stride, layer.W * 4, layer.W * 4);
+                }
+            }
+            finally { layer.Snap.UnlockBits(dst); }
+            layer.HasSnap = true;
+        }
+        return layer.Snap;
     }
 
     /// <summary>Where an overlay lands in the preview canvas (screen pixels).</summary>
@@ -248,6 +303,7 @@ public sealed class OverlayLanePlayer : IDisposable
         try { layer.Player.Stop(); } catch { }
         layer.Player.Dispose();
         lock (layer.FrameLock) layer.Frame.Dispose();
+        layer.Snap.Dispose();
         Marshal.FreeHGlobal(layer.Decode);
         Marshal.FreeHGlobal(layer.Display);
     }

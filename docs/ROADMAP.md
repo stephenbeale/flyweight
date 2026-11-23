@@ -12,6 +12,8 @@ playhead** (bin / clip right-click, or I with a file selected in Media: splits t
 a real-ffmpeg overlay export checked by pixels. Smoke-tested in the debug build with generated footage.
 **Not yet verified by the owner in-app.** Known limits: overlays have no speed/zoom/tone; the main track sets the
 length; audio items have no speed (so Separate audio needs 1×).
+**Fixed after owner testing:** lag and overlays not pausing on play/pause with several videos (see D34). The audio-track
+re-seek fix there may also be the old **audio crackle** (item 1 below): worth re-checking.
 ### 2026-11-22 session close: PRs #5-#10 merged to `main` (e839f98)
 **Shipped today:** #5 clip zoom + brightness/contrast (D25), proxy fixes (D26), Remove from project, named New project
 (D27); #6 clip speed (D28), Quick Sync export + YouTube bitrate cap + safe overwrite + "Your video is ready" step (D29),
