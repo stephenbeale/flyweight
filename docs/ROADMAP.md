@@ -7,7 +7,7 @@ _Last updated: 2026-11-22 (session close; PRs #5-#10 merged)_
 ### 2026-11-22 session close: PRs #5-#10 merged to `main` (e839f98)
 **Shipped today:** #5 clip zoom + brightness/contrast (D25), proxy fixes (D26), Remove from project, named New project
 (D27); #6 clip speed (D28), Quick Sync export + YouTube bitrate cap + safe overwrite + "Your video is ready" step (D29),
-multi-select / Ctrl+A, typed slider values, recent projects, Save as, dark rounded UI (D30); #7 chapter markers (C),
+multi-select / Ctrl+A, typed slider values, recent projects, Save as, dark rounded UI (D30); #7 chapter markers (M; C still works),
 YouTube details + `<video> - YouTube.txt` (D31), Ctrl+C / Ctrl+V clips, packaging script; #8 per-user Inno Setup
 installer, single-file folder, only the first window owns the session lock/autosave (D32); #9 stable download link;
 #10 Save frame as image (D33).
@@ -21,7 +21,7 @@ Save frame matched the preview, the installer ran.
 **Still open:**
 1. **Audio crackle during playback:** undiagnosed; proxy audio verified clean. Debug builds write
    `%LocalAppData%\Flyweight\playback.log` (about 40 KB of real playback captured). Next step: read it.
-2. **Not yet verified by the owner in-app:** chapter markers (C), YouTube details / `.txt`, Ctrl+C / Ctrl+V, typed
+2. **Not yet verified by the owner in-app:** chapter markers (M), YouTube details / `.txt`, Ctrl+C / Ctrl+V, typed
    slider values, the lag-when-maximised fix, zoom.
 3. **Release 0.2.2 to ship Save frame:** run `pwsh packaging\package-preview.ps1 -Version 0.2.2-preview`, publish as a
    normal (non-pre) release with BOTH versioned and version-free assets (`Flyweight-Setup.exe`,
@@ -41,7 +41,7 @@ then ducking/fades or clip speed.
 Passed:
 - Import MP3; waveform; drag; trim; stays put when video is trimmed.
 - Music plays straight through cuts (after the D24 clock fix).
-- M / Ctrl+M mute; volume per clip and per item; 150% boost; normal playback sound (after the D23 DirectSound fix).
+- Shift+M / Ctrl+M mute (M is now chapter marker: see the shortcut note in DECISIONS); volume per clip and per item; 150% boost; normal playback sound (after the D23 DirectSound fix).
 - Waveform-only look with a hover tooltip.
 
 Still to test (test files are in `C:\Users\sjbeale\Music\Flyweight test audio\`):

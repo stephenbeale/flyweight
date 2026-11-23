@@ -131,7 +131,7 @@ public sealed class MainForm : Form
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
             new ToolStripSeparator(),
-            Btn("Chapter", "Add a chapter marker at the playhead (C): they become the 0:00 timestamps in your YouTube description", AddMarker),
+            Btn("Chapter", "Add a chapter marker at the playhead (M): they become the 0:00 timestamps in your YouTube description", AddMarker),
             Btn("Chapters…", "See, copy or save your YouTube chapter timestamps (Ctrl+Shift+C copies)", ShowChapters),
             new ToolStripSeparator(),
             Btn("Save frame", "Save the frame under the playhead as a PNG (with zoom, brightness and annotations) next to your footage, e.g. for a thumbnail (Ctrl+Shift+E)", () => _ = ExportFrameAsync(chooseLocation: false)),
@@ -144,7 +144,7 @@ public sealed class MainForm : Form
         previewMenu.Items.Add("Save this frame as…", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
         previewMenu.Items.Add(new ToolStripSeparator());
         previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
-        previewMenu.Items.Add("Add chapter marker here (C)", null, (_, _) => AddMarker());
+        previewMenu.Items.Add("Add chapter marker here (M)", null, (_, _) => AddMarker());
         previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
         _preview.ContextMenuStrip = previewMenu;
 
@@ -429,12 +429,12 @@ public sealed class MainForm : Form
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
-            case Keys.C: AddMarker(); return true; // C = chapter (M is mute)
+            case Keys.M: case Keys.C: AddMarker(); return true; // M = marker (as in Premiere/Resolve/Final Cut); C kept as an alias
             case Keys.Control | Keys.Shift | Keys.C: CopyChapters(); return true;
             case Keys.Control | Keys.Shift | Keys.E: _ = ExportFrameAsync(chooseLocation: false); return true;
             case Keys.F: _ = FreezeFrameAsync(); return true;
             // Ctrl+M too: Windows turns it into Enter, which in the media bin re-added the selected file.
-            case Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
+            case Keys.Shift | Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
             case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
             case Keys.V: case Keys.Escape: _preview.Tool = Tool.Select; return true;
             case Keys.A: _preview.Tool = Tool.Arrow; return true;
@@ -565,7 +565,7 @@ public sealed class MainForm : Form
         menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
         menu.Items.Add(new ToolStripSeparator());
         var clip = _session.Project.FindClip(clipId);
-        var mute = new ToolStripMenuItem("Mute clip (M)", null, (_, _) => ToggleMute(clipId))
+        var mute = new ToolStripMenuItem("Mute clip (Shift+M)", null, (_, _) => ToggleMute(clipId))
         {
             Checked = clip?.Muted == true,
             Enabled = clip is not null && _session.Project.FindMedia(clip.SourceId)?.HasAudio == true,
@@ -599,7 +599,7 @@ public sealed class MainForm : Form
         menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveAudio(p, audioId, _engine.Position)));
         menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(a.Start); });
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("Mute (M)", null, (_, _) => ToggleMute(null)) { Checked = a.Muted });
+        menu.Items.Add(new ToolStripMenuItem("Mute (Shift+M)", null, (_, _) => ToggleMute(null)) { Checked = a.Muted });
         menu.Items.Add("Remove from audio track (Del)", null, (_, _) => DeleteSelection());
         menu.Show(screen);
     }

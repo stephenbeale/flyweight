@@ -23,7 +23,7 @@ public sealed class ClipPropertiesPanel : UserControl
     readonly Label _heading;
     readonly Label _name = new() { ForeColor = Fg, AutoSize = true, MaximumSize = new Size(250, 0), Margin = new Padding(0, 2, 0, 4) }; // wraps "Changes apply to all…"
     readonly Slider _volume = new(0, (int)(TimelineOps.MaxClipVolume * 100), "%");
-    readonly CheckBox _muted = new() { Text = "Muted  (M)", ForeColor = Fg, AutoSize = true };
+    readonly CheckBox _muted = new() { Text = "Muted  (Shift+M)", ForeColor = Fg, AutoSize = true };
     readonly Label _note = new() { ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0) };
     readonly Slider _zoom = new(100, (int)(ClipLook.MaxZoom * 100), "%");
     readonly Slider _panX = new(0, 100, "");
@@ -136,7 +136,7 @@ public sealed class ClipPropertiesPanel : UserControl
         foreach (var sc in _speedControls) sc.Visible = false;
         Show("Audio track item", media, a.Volume, a.Muted, hasAudio: true,
             $"Starts at {TimelineControl.FormatTime(a.Start, tenths: true)}, plays {a.Duration.TotalSeconds:0.0}s. " +
-            "It plays over the clips' own sound: turn clips down or mute them (M) to hear only this.");
+            "It plays over the clips' own sound: turn clips down or mute them (Shift+M) to hear only this.");
     }
 
     void SetPictureVisible(bool on)

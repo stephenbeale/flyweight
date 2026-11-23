@@ -245,7 +245,7 @@ Trim drags convert the mouse's timeline delta with `SourceSpan`. Audio-track ite
 
 ### D31. Chapter markers and the YouTube details file
 Brought in from the unmerged `feature/youtube-chapters` branch (21 Nov; its separate "export frame" feature was left
-out). **C** (M is now mute), toolbar "Chapter", or right-click the preview adds a named marker at the playhead. Markers
+out). **M** (C still works; mute is Shift+M / Ctrl+M, see the shortcut note below), toolbar "Chapter", or right-click the preview adds a named marker at the playhead. Markers
 are flags on the ruler: click to jump, drag to move, double-click to rename, Del to delete. Like annotations they are
 anchored to a clip in **source time** (`Marker.ClipId` + `SourceTime`), so they follow their footage through reorder,
 trim, split and speed changes (`MarkerOps.TimelineTime` uses `Clip.TimelineOffset`), and go with a deleted clip.
@@ -287,3 +287,8 @@ the clip's zoom (`ClipLook.ZoomFilter`) and tone (`ClipLook.ToneFilter`), the sa
 preview and the export. It is saved next to the largest video in the project, as "<project> frame 1m23s.png", never
 overwriting, and added to the media bin (not the timeline) and highlighted. The old branch also moved video exports
 and freeze frames next to the footage by default; that part was NOT brought in.
+
+### Shortcut note (2026-11-23): M = chapter marker, Shift+M / Ctrl+M = mute
+Owner decision. M for markers is the convention in Premiere, Resolve and Final Cut, so YouTubers expect it; mute
+moved to Shift+M (Ctrl+M unchanged). C stays as an alias for adding a marker.
+

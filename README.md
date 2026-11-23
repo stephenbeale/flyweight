@@ -35,7 +35,7 @@ dotnet test     # core tests; the ffmpeg integration tests run if ffmpeg is on P
 
 ## YouTube chapters and details
 
-Press **C** at the start of each section to drop a named chapter marker (flags on the timeline ruler: drag to move,
+Press **M** at the start of each section to drop a named chapter marker (flags on the timeline ruler: drag to move,
 double-click to rename, Del to delete). **Ctrl+Shift+C** copies the chapters as YouTube timestamps:
 
 ```
@@ -62,6 +62,7 @@ YouTube Studio.
 | Ctrl+I / O / S / E | Import / open / save / export | Enter (in text) | Finish editing (Shift+Enter = new line) |
 | F | Freeze frame | Ctrl+Shift+E | Export current frame as PNG |
 | M | Add chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
+| Shift+M / Ctrl+M | Mute / unmute the selected clip | | |
 
 ## How it works
 
