@@ -309,6 +309,10 @@ public sealed class MainForm : Form
                 LookSetting.PanX => (p, id) => TimelineOps.SetClipPan(p, id, v, null),
                 LookSetting.PanY => (p, id) => TimelineOps.SetClipPan(p, id, null, v),
                 LookSetting.Brightness => (p, id) => TimelineOps.SetClipBrightness(p, id, v),
+                LookSetting.CropLeft => (p, id) => TimelineOps.SetClipCrop(p, id, CropSide.Left, v),
+                LookSetting.CropRight => (p, id) => TimelineOps.SetClipCrop(p, id, CropSide.Right, v),
+                LookSetting.CropTop => (p, id) => TimelineOps.SetClipCrop(p, id, CropSide.Top, v),
+                LookSetting.CropBottom => (p, id) => TimelineOps.SetClipCrop(p, id, CropSide.Bottom, v),
                 _ => (p, id) => TimelineOps.SetClipContrast(p, id, v),
             };
             Action<Project> apply = p => { foreach (var id in clips) one(p, id); };

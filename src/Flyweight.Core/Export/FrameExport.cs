@@ -26,7 +26,7 @@ public static class FrameExport
 
         // Overlay-track video showing at this moment goes on, placed as in the export (OverlayLayout).
         var t = TimelineTimeOf(hit);
-        var graph = $"[0:v]{fit},{ClipLook.ToneFilter(clip)}format=yuv420p[b0]";
+        var graph = $"[0:v]{ClipLook.CropFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=yuv420p[b0]";
         int n = 0;
         foreach (var o in TimelineOps.OverlaysAt(p, t))
         {
@@ -38,7 +38,7 @@ public static class FrameExport
             n++;
         }
         if (n == 0)
-            args.AddRange(new[] { "-vf", $"{fit},{ClipLook.ToneFilter(clip)}format=rgb24" });
+            args.AddRange(new[] { "-vf", $"{ClipLook.CropFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=rgb24" });
         else
             args.AddRange(new[] { "-filter_complex", graph + $";[b{n}]format=rgb24[out]", "-map", "[out]" });
         args.AddRange(new[] { "-frames:v", "1", "-f", "image2", "-update", "1", outputPng });

@@ -130,7 +130,10 @@ public sealed class PreviewCanvas : Control
             lock (_engine.FrameLock)
             {
                 Bitmap frame = _engine.Frame;
-                if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
+                if (look is not null && ClipLook.IsCropped(look) &&
+                    _session.Project.FindMedia(look.SourceId) is { Width: > 0, Height: > 0 } cm)
+                    frame = Cropped(frame, cm, look, _engine.PlayingOriginal);
+                else if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
                     Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
                     frame = Letterboxed(frame, pm.Width, pm.Height);
                 if (look is not null && ClipLook.HasTone(look)) frame = Toned(frame, look);
@@ -218,6 +221,34 @@ public sealed class PreviewCanvas : Control
         g.Clear(Color.Black);
         g.InterpolationMode = InterpolationMode.Bilinear;
         g.DrawImage(frame, Fit(new Size(mediaW, mediaH), new RectangleF(0, 0, frame.Width, frame.Height)));
+        return _boxed;
+    }
+
+    /// <summary>
+    /// A cropped clip, as the export makes it: the kept part of the picture, fitted to 16:9 with black bars (then
+    /// tone and zoom run on that as usual). The proxy holds the picture fitted with bars, so find the picture first;
+    /// an original playing before its proxy is ready fills the whole buffer (stretched). Call while holding FrameLock.
+    /// </summary>
+    Bitmap Cropped(Bitmap frame, SourceMedia media, Clip c, bool original)
+    {
+        if (_boxed is null || _boxed.Size != frame.Size)
+        {
+            _boxed?.Dispose();
+            _boxed = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
+        }
+        var full = new RectangleF(0, 0, frame.Width, frame.Height);
+        var pic = original ? full : Fit(new Size(media.Width, media.Height), full);
+        var (x, y, w, h) = ClipLook.CropBox(c.CropLeft, c.CropTop, c.CropRight, c.CropBottom);
+        var src = new RectangleF(pic.X + (float)(x * pic.Width), pic.Y + (float)(y * pic.Height), (float)(w * pic.Width), (float)(h * pic.Height));
+        // Shape of what's kept, in real pixels (not the stretched buffer's).
+        var keptShape = new Size(Math.Max(1, (int)Math.Round(media.Width * w)), Math.Max(1, (int)Math.Round(media.Height * h)));
+        using var g = Graphics.FromImage(_boxed);
+        g.Clear(Color.Black);
+        g.InterpolationMode = InterpolationMode.Bilinear;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        using var attrs = new ImageAttributes();
+        attrs.SetWrapMode(WrapMode.TileFlipXY);
+        g.DrawImage(frame, Rectangle.Round(Fit(keptShape, full)), src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel, attrs);
         return _boxed;
     }
 

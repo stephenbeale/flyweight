@@ -125,6 +125,15 @@ public sealed class Clip
     public double Contrast { get; set; }
 
     /// <summary>
+    /// Crop: how much to cut off each edge of the source, as a fraction of it (0–0.45). The rest is fitted to the 16:9
+    /// frame (bars where it doesn't fill it), then zoom applies as usual. Older files load uncropped. See <see cref="Media.ClipLook.CropBox"/>.
+    /// </summary>
+    public double CropLeft { get; set; }
+    public double CropTop { get; set; }
+    public double CropRight { get; set; }
+    public double CropBottom { get; set; }
+
+    /// <summary>
     /// Playback speed: 1 = as shot, 0.25–4. Older project files load as 1. Stills are always 1.
     /// In/Out stay in SOURCE time; the clip's length on the timeline is <see cref="Duration"/>.
     /// </summary>
@@ -226,6 +235,16 @@ public sealed class OverlayClip
     /// <summary>Which part of the source shows when zoomed: 0 = left/top edge, 0.5 = centre, 1 = right/bottom edge.</summary>
     public double PanX { get; set; } = 0.5;
     public double PanY { get; set; } = 0.5;
+
+    /// <summary>
+    /// Crop: cut off each edge of the source (fraction 0–0.45). The BOX shrinks with it (the picture keeps its size,
+    /// so trimming a webcam's sides makes a narrower box); zoom then works inside what's left. <see cref="Scale"/> is
+    /// the width the UNCROPPED picture would have.
+    /// </summary>
+    public double CropLeft { get; set; }
+    public double CropTop { get; set; }
+    public double CropRight { get; set; }
+    public double CropBottom { get; set; }
 
     /// <summary>Gain for its own audio, 0–2 like <see cref="Clip.Volume"/>.</summary>
     public double Volume { get; set; } = 1.0;

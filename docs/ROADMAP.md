@@ -7,7 +7,8 @@ _Last updated: 2026-11-23 (feature/multitrack)_
 ### 2026-11-23: `feature/overlay-zoom` (D35): overlay zoom (crop) + split overlays / audio items
 PR #12 (overlay tracks, Separate audio, Insert at playhead, playback fixes) is merged to `main` (6bcfa79).
 Overlay zoom: Properties → Zoom (crop) or scroll over it in the preview. S splits the selected overlay / audio item.
-229 tests pass (incl. real-ffmpeg crop pixels). Not yet verified by the owner in-app.
+Owner verified zoom + split in-app. Then **crop for all videos** (D36): Crop sliders for main clips and overlays.
+233 tests pass (incl. real-ffmpeg crop pixels for both). Crop not yet verified by the owner in-app.
 
 ### 2026-11-23: `feature/multitrack` (D34): overlay video tracks, Separate audio, Insert at playhead
 **Built (owner asked for them):** picture-in-picture / cutaway video on overlay tracks V2–V5 (drag in time, between

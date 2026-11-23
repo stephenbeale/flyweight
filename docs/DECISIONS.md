@@ -376,3 +376,18 @@ Owner: "add zoom possibility for overlaid videos, like cropping" and "split eith
   the selection, so S again keeps cutting the same track. Clicking an overlay's or audio item's body now also moves
   the playhead there (as clips always did), so you can click where to cut and press S. Free-shape cropping (e.g. only
   trimming the sides of a webcam) isn't there yet: the crop keeps the source's shape.
+
+### D36. Crop for every video: main clips and overlays (2026-11-23)
+Owner: "I want to be able to crop all videos though, not just zoom or pan". `CropLeft/Top/Right/Bottom` (fraction of
+the source, 0–0.45 each so at least 10% remains) on both `Clip` and `OverlayClip`; old files load uncropped. Unlike
+zoom, crop changes the picture's SHAPE.
+- **Main clips:** the kept part is fitted to 16:9 (bars where it doesn't fill), THEN zoom and tone apply as before.
+  Export / Save frame: `ClipLook.CropFilter` (even-pixel `crop` of the original) runs before the fit or zoom filter.
+  Preview: `PreviewCanvas.Cropped` cuts the same part out of the proxy picture and fits it with bars. Split, freeze
+  frame and Reset picture carry / clear the crop (`CopyLook`).
+- **Overlays:** the BOX shrinks with the crop around its centre (the picture keeps its size), so trimming a webcam's
+  sides gives a narrower box; `Scale` is the width the uncropped picture would have (now up to 400%, so a cropped
+  picture can fill the frame; Full frame computes that). Zoom then works inside the cropped area: `CropRect` composes
+  crop then zoom, and the one crop filter serves both.
+- **UI:** Crop section (Left / Right / Top / Bottom sliders) in both Properties panels. Dragging crop handles in the
+  preview isn't there yet.

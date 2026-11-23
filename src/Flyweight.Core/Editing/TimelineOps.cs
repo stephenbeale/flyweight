@@ -239,7 +239,7 @@ public static class TimelineOps
             SourceId = media.Id, Track = Math.Clamp(track, 1, MaxOverlayTracks), Start = Max(start, TimeSpan.Zero),
             In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration,
         };
-        (o.X, o.Y, o.Scale) = OverlayLayout.Place(OverlayPosition.BottomRight, DefaultOverlayScale, media);
+        (o.X, o.Y, o.Scale) = OverlayLayout.Place(OverlayPosition.BottomRight, DefaultOverlayScale, media, o);
         p.Overlays.Add(o);
         return o;
     }
@@ -299,6 +299,7 @@ public static class TimelineOps
         {
             SourceId = o.SourceId, Track = o.Track, Start = t, In = cut, Out = o.Out,
             Scale = o.Scale, X = o.X, Y = o.Y, Zoom = o.Zoom, PanX = o.PanX, PanY = o.PanY, Volume = o.Volume, Muted = o.Muted,
+            CropLeft = o.CropLeft, CropTop = o.CropTop, CropRight = o.CropRight, CropBottom = o.CropBottom,
         };
         o.Out = cut;
         p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right); // same stacking order as the original
@@ -336,7 +337,7 @@ public static class TimelineOps
         if (p.FindOverlay(id) is not { } o) return;
         // Leaving full frame for a corner: go back to the default picture-in-picture size.
         var scale = pos != OverlayPosition.FullFrame && o.Scale > 0.9 ? DefaultOverlayScale : o.Scale;
-        var (x, y, s) = OverlayLayout.Place(pos, scale, p.FindMedia(o.SourceId));
+        var (x, y, s) = OverlayLayout.Place(pos, scale, p.FindMedia(o.SourceId), o);
         SetOverlayLayout(p, id, x, y, s);
     }
 
@@ -526,6 +527,45 @@ public static class TimelineOps
         to.PanY = from.PanY;
         to.Brightness = from.Brightness;
         to.Contrast = from.Contrast;
+        to.CropLeft = from.CropLeft;
+        to.CropTop = from.CropTop;
+        to.CropRight = from.CropRight;
+        to.CropBottom = from.CropBottom;
+    }
+
+    // ---------------- Crop (main clips and overlays) ----------------
+
+    /// <summary>Cut <paramref name="amount"/> (0–0.45 of the source) off one edge of a clip. Undo-able like any edit.</summary>
+    public static void SetClipCrop(Project p, Guid clipId, CropSide side, double amount)
+    {
+        if (p.FindClip(clipId) is not { } c) return;
+        var v = ClipLook.CleanCrop(amount);
+        switch (side)
+        {
+            case CropSide.Left: c.CropLeft = v; break;
+            case CropSide.Top: c.CropTop = v; break;
+            case CropSide.Right: c.CropRight = v; break;
+            default: c.CropBottom = v; break;
+        }
+    }
+
+    /// <summary>The same for an overlay: its box shrinks with the crop, keeping its centre.</summary>
+    public static void SetOverlayCrop(Project p, Guid overlayId, CropSide side, double amount)
+    {
+        if (p.FindOverlay(overlayId) is not { } o) return;
+        var v = ClipLook.CleanCrop(amount);
+        switch (side)
+        {
+            case CropSide.Left: o.CropLeft = v; break;
+            case CropSide.Top: o.CropTop = v; break;
+            case CropSide.Right: o.CropRight = v; break;
+            default: o.CropBottom = v; break;
+        }
+    }
+
+    public static void ResetOverlayCrop(Project p, Guid overlayId)
+    {
+        if (p.FindOverlay(overlayId) is { } o) o.CropLeft = o.CropTop = o.CropRight = o.CropBottom = 0;
     }
 
     // ---------------- Audio track (music / narration at fixed timeline times) ----------------

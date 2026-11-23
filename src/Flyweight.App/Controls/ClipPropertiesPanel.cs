@@ -30,11 +30,15 @@ public sealed class ClipPropertiesPanel : UserControl
     readonly Slider _panY = new(0, 100, "");
     readonly Slider _brightness = new(-100, 100, "");
     readonly Slider _contrast = new(-100, 100, "");
+    readonly Slider _cropL = new(0, (int)(ClipLook.MaxCropEach * 100), "%");
+    readonly Slider _cropR = new(0, (int)(ClipLook.MaxCropEach * 100), "%");
+    readonly Slider _cropT = new(0, (int)(ClipLook.MaxCropEach * 100), "%");
+    readonly Slider _cropB = new(0, (int)(ClipLook.MaxCropEach * 100), "%");
     readonly Theme.RoundButton _resetLook = new() { Text = "Reset picture", Width = 130, Height = 32 };
     readonly Label _lookNote = new()
     {
         ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0),
-        Text = "Zoom crops the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
+        Text = "Crop cuts edges off (the rest is fitted to the frame); zoom magnifies. Both work on the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
     };
     readonly List<Control> _pictureControls = new();
     readonly ComboBox _speed = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(40, 40, 47), ForeColor = Color.Gainsboro };
@@ -80,6 +84,11 @@ public sealed class ClipPropertiesPanel : UserControl
         Row("Up / down", _panY);
         Row("Brightness", _brightness);
         Row("Contrast", _contrast);
+        _pictureControls.Add(Section("Crop"));
+        Row("Left", _cropL);
+        Row("Right", _cropR);
+        Row("Top", _cropT);
+        Row("Bottom", _cropB);
         Span(_resetLook);
         _pictureControls.Add(_resetLook);
         Span(_lookNote);
@@ -92,6 +101,10 @@ public sealed class ClipPropertiesPanel : UserControl
         Look(_panY, LookSetting.PanY, 100);
         Look(_brightness, LookSetting.Brightness, 100);
         Look(_contrast, LookSetting.Contrast, 100);
+        Look(_cropL, LookSetting.CropLeft, 100);
+        Look(_cropR, LookSetting.CropRight, 100);
+        Look(_cropT, LookSetting.CropTop, 100);
+        Look(_cropB, LookSetting.CropBottom, 100);
         _resetLook.Click += (_, _) => LookReset?.Invoke();
 
         _volume.Changed += (v, phase) => { if (!_loading) VolumeChanged?.Invoke(v / 100.0, phase); };
@@ -116,6 +129,10 @@ public sealed class ClipPropertiesPanel : UserControl
             _panY.SetValue((int)Math.Round(c.PanY * 100));
             _brightness.SetValue((int)Math.Round(c.Brightness * 100));
             _contrast.SetValue((int)Math.Round(c.Contrast * 100));
+            _cropL.SetValue((int)Math.Round(c.CropLeft * 100));
+            _cropR.SetValue((int)Math.Round(c.CropRight * 100));
+            _cropT.SetValue((int)Math.Round(c.CropTop * 100));
+            _cropB.SetValue((int)Math.Round(c.CropBottom * 100));
             bool zoomed = ClipLook.IsZoomed(c);
             _panX.Enabled = _panY.Enabled = zoomed; // nothing to pan at 100%
             _resetLook.Enabled = !ClipLook.IsDefault(c);
@@ -193,4 +210,4 @@ public sealed class ClipPropertiesPanel : UserControl
     }
 }
 
-public enum LookSetting { Zoom, PanX, PanY, Brightness, Contrast }
+public enum LookSetting { Zoom, PanX, PanY, Brightness, Contrast, CropLeft, CropTop, CropRight, CropBottom }

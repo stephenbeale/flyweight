@@ -382,6 +382,69 @@ public class MultiTrackTests
     }
 
     [Fact]
+    public void Cropping_an_overlay_shrinks_its_box_around_its_centre()
+    {
+        var p = new Project();
+        var cam = Video("cam.mp4", 10);
+        var o = TimelineOps.AddOverlay(p, cam, S(0));
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.4);
+        var (_, _, w0, h0) = OverlayLayout.Rect(o, cam);
+
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
+
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        Assert.Equal(w0 / 2, w, 6);   // half the width kept → half as wide
+        Assert.Equal(h0, h, 6);       // height untouched
+        Assert.Equal(0.5, x + w / 2, 6); // same centre
+        Assert.Equal((0.25, 0.0, 0.5, 1.0), OverlayLayout.CropRect(o));
+
+        // Zoom then works inside what's left.
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        var (cx, cy, cw, ch) = OverlayLayout.CropRect(o);
+        Assert.Equal((0.375, 0.25, 0.25, 0.5), (Math.Round(cx, 6), Math.Round(cy, 6), Math.Round(cw, 6), Math.Round(ch, 6)));
+    }
+
+    [Fact]
+    public void Crop_is_clamped_and_full_frame_fills_with_the_cropped_picture()
+    {
+        var p = new Project();
+        var cam = Video("cam.mp4", 10);
+        var o = TimelineOps.AddOverlay(p, cam, S(0));
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Top, 0.9);
+        Assert.Equal(ClipLook.MaxCropEach, o.CropTop);
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Top, -1);
+        Assert.Equal(0, o.CropTop);
+
+        // Cut the sides to a square-ish 8:9 picture: full frame makes it as tall as the frame.
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
+        TimelineOps.PlaceOverlay(p, o.Id, OverlayPosition.FullFrame);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        Assert.Equal((0.25, 0.0, 0.5, 1.0), (Math.Round(x, 6), Math.Round(y, 6), Math.Round(w, 6), Math.Round(h, 6)));
+    }
+
+    [Fact]
+    public void Clip_crop_is_applied_before_the_fit_in_export_and_kept_by_split_and_reset_clears_it()
+    {
+        var p = new Project();
+        var clip = TimelineOps.Append(p, Video("C:/v/main.mp4", 20));
+        TimelineOps.SetClipCrop(p, clip.Id, CropSide.Bottom, 0.2);
+        Assert.True(ClipLook.IsCropped(clip));
+        Assert.False(ClipLook.IsDefault(clip));
+        Assert.Equal(16.0 / 9 / 0.8, ClipLook.CroppedAspect(16.0 / 9, 0, 0, 0, 0.2), 6);
+
+        var g = ExportPlan.Build(p, new ExportSettings { UseHardwareEncoder = false }, new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
+        Assert.Contains("crop=w='2*trunc(iw*1/2)':h='2*trunc(ih*0.8/2)':x='2*trunc(iw*0/2)':y='2*trunc(ih*0/2)',scale=1920:1080", g);
+
+        var right = TimelineOps.SplitAt(p, S(10))!;
+        Assert.Equal(0.2, right.CropBottom);
+
+        TimelineOps.ResetClipLook(p, clip.Id);
+        Assert.Equal(0, clip.CropBottom);
+    }
+
+    [Fact]
     public void Old_files_load_overlays_unzoomed()
     {
         var p = new Project();

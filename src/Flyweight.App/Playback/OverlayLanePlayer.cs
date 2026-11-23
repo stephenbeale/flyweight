@@ -235,11 +235,11 @@ public sealed class OverlayLanePlayer : IDisposable
                 var pic = layer.IsOriginal ? full : Fit(OverlayLayout.Aspect(media), full);
                 g.InterpolationMode = InterpolationMode.Bilinear;
                 g.CompositingMode = CompositingMode.SourceCopy; // opaque video: no blending needed
-                if (!OverlayLayout.IsZoomed(o))
+                if (!OverlayLayout.IsZoomed(o) && !OverlayLayout.IsCropped(o))
                     g.DrawImage(snap, dest, pic, GraphicsUnit.Pixel);
                 else
                 {
-                    // Zoom = crop: the same part of the picture the export crops (OverlayLayout.CropRect).
+                    // Crop and zoom: the same part of the picture the export crops (OverlayLayout.CropRect).
                     var (cx, cy, cw, ch) = OverlayLayout.CropRect(o);
                     var src = new RectangleF(pic.X + (float)(cx * pic.Width), pic.Y + (float)(cy * pic.Height),
                                              (float)(cw * pic.Width), (float)(ch * pic.Height));
