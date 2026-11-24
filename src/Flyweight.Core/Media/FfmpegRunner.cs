@@ -25,10 +25,14 @@ public static class FfmpegLocator
     }
 }
 
-public sealed class FfmpegException(string message, string stderrTail) : Exception(message + Environment.NewLine + stderrTail)
+public class FfmpegException(string message, string stderrTail) : Exception(message + Environment.NewLine + stderrTail)
 {
     public string StderrTail { get; } = stderrTail;
 }
+
+/// <summary>The command is over Windows' length limit even with the filter graph in a file. Retrying can't help.</summary>
+public sealed class FfmpegCommandTooLongException() : FfmpegException(
+    "This project is too big to export in one go (too many clips or annotations for Windows' command-line limit).", "");
 
 /// <summary>
 /// Runs ffmpeg/ffprobe as a separate process. Out-of-process is deliberate: a bad file can
@@ -51,18 +55,18 @@ public static class FfmpegRunner
         // Long projects (many clips/annotations) make a filter graph too long for Windows' ~32k-character command
         // line. Pass long graphs through a temp file instead (D-note "long filter graphs" in DECISIONS).
         string? scriptFile = null;
-        int fi = all.IndexOf("-filter_complex");
-        if (fi >= 0 && fi + 1 < all.Count && all[fi + 1].Length > MaxInlineFilterLength)
-        {
-            scriptFile = Path.Combine(Path.GetTempPath(), $"flyweight-filter-{Guid.NewGuid():N}.txt");
-            await File.WriteAllTextAsync(scriptFile, all[fi + 1], ct);
-            all = UseFilterScript(all, scriptFile, await SupportsSlashOptionsAsync());
-        }
-        if (all.Sum(a => a.Length + 3) > MaxCommandLineLength)
-            throw new FfmpegException("This project is too big to export in one go (too many clips or annotations for Windows' command-line limit).", "");
-
         try
         {
+            int fi = all.IndexOf("-filter_complex");
+            if (fi >= 0 && fi + 1 < all.Count && all[fi + 1].Length > MaxInlineFilterLength)
+            {
+                scriptFile = Path.Combine(Path.GetTempPath(), $"flyweight-filter-{Guid.NewGuid():N}.txt");
+                await File.WriteAllTextAsync(scriptFile, all[fi + 1], ct);
+                all = UseFilterScript(all, scriptFile, await SupportsSlashOptionsAsync());
+            }
+            if (all.Sum(a => a.Length + 3) > MaxCommandLineLength)
+                throw new FfmpegCommandTooLongException();
+
             await RunAsync(FfmpegLocator.Ffmpeg, all, line =>
             {
                 if (progress is null || expectedDuration is not { } total) return;

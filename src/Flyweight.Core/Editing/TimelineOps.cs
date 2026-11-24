@@ -61,6 +61,7 @@ public static class TimelineOps
         if (p.FindMedia(media.Id) is null) p.Media.Add(media);
         var clip = new Clip { SourceId = media.Id, In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration };
         p.Timeline.Insert(Math.Clamp(index, 0, p.Timeline.Count), clip);
+        NormaliseLinks(p); // a run split to make room must not bridge the new clip
         return clip;
     }
 
@@ -156,8 +157,10 @@ public static class TimelineOps
             a.ClipId = clip.Id;
             a.Start = TimeSpan.Zero;
             a.End = hold;
+            a.LinkId = null; // an independent copy: editing or deleting it must not touch the original run
             p.Annotations.Add(a);
         }
+        NormaliseLinks(p); // the run split at the freeze point must not bridge the freeze clip
         return clip;
     }
 
@@ -360,6 +363,7 @@ public static class TimelineOps
     /// <summary>Ripple delete: remove the clip and close the gap. Its annotations go too.</summary>
     public static void Delete(Project p, Guid clipId)
     {
+        DetachFromRuns(p, clipId); // pieces either side of a deleted middle clip are no longer one run
         p.Timeline.RemoveAll(c => c.Id == clipId);
         p.Annotations.RemoveAll(a => a.ClipId == clipId);
         p.Markers.RemoveAll(m => m.ClipId == clipId);
@@ -429,6 +433,7 @@ public static class TimelineOps
             p.Annotations.Add(a);
         }
         foreach (var link in links.Values) TidyLink(p, link); // a run cut down to one piece is a plain annotation
+        NormaliseLinks(p); // pasting into the middle of a run splits it
         return pasted;
     }
 
@@ -436,10 +441,12 @@ public static class TimelineOps
     {
         int old = p.Timeline.FindIndex(c => c.Id == clipId);
         if (old < 0) return;
+        DetachFromRuns(p, clipId); // a moved clip leaves its runs; what was either side of it splits too
         var clip = p.Timeline[old];
         p.Timeline.RemoveAt(old);
         newIndex = Math.Clamp(newIndex, 0, p.Timeline.Count);
         p.Timeline.Insert(newIndex, clip);
+        NormaliseLinks(p);
     }
 
     public static void TrimIn(Project p, Guid clipId, TimeSpan newIn)
@@ -850,7 +857,56 @@ public static class TimelineOps
         if (members.Count == 1) members[0].LinkId = null;
     }
 
+    /// <summary>
+    /// A linked run must cover NEIGHBOURING clips. After an insert, paste, delete or move, split any run whose pieces
+    /// are no longer on adjacent clips into separate runs (the first keeps its id), and turn one-piece runs back into
+    /// plain annotations. Otherwise a run silently bridges a clip it was never on, and the next drag of its bar
+    /// spreads it over that clip.
+    /// </summary>
+    /// <summary>
+    /// Before a clip is deleted or moved: cut every run it is part of at that clip. Pieces before it keep the run's
+    /// id, pieces after it get a new id, and the clip's own pieces become plain annotations. Needed because once the
+    /// clip is gone, its neighbours become adjacent and would otherwise look like one continuous run.
+    /// </summary>
+    static void DetachFromRuns(Project p, Guid clipId)
+    {
+        int idx = ClipIndex(p, clipId);
+        foreach (var link in p.Annotations.Where(a => a.ClipId == clipId && a.LinkId is not null).Select(a => a.LinkId!.Value).Distinct().ToList())
+        {
+            var after = Guid.NewGuid();
+            foreach (var a in p.Annotations.Where(a => a.LinkId == link))
+            {
+                if (a.ClipId == clipId) a.LinkId = null;
+                else if (ClipIndex(p, a.ClipId) > idx) a.LinkId = after;
+            }
+            TidyLink(p, link);
+            TidyLink(p, after);
+        }
+    }
+
+    public static void NormaliseLinks(Project p)
+    {
+        foreach (var group in p.Annotations.Where(a => a.LinkId is not null).GroupBy(a => a.LinkId!.Value).ToList())
+        {
+            var pieces = group.OrderBy(a => ClipIndex(p, a.ClipId)).ThenBy(a => a.Start).ToList();
+            var chains = new List<List<Annotation>> { new() { pieces[0] } };
+            for (int i = 1; i < pieces.Count; i++)
+            {
+                int gap = ClipIndex(p, pieces[i].ClipId) - ClipIndex(p, pieces[i - 1].ClipId);
+                if (gap <= 1) chains[^1].Add(pieces[i]); else chains.Add(new() { pieces[i] });
+            }
+            for (int c = 0; c < chains.Count; c++)
+            {
+                Guid? id = chains[c].Count == 1 ? null : c == 0 ? group.Key : Guid.NewGuid();
+                foreach (var a in chains[c]) a.LinkId = id;
+            }
+        }
+    }
+
     static int ClipIndex(Project p, Guid clipId) => p.Timeline.FindIndex(c => c.Id == clipId);
+
+    /// <summary>Store the YouTube title/description/tags entered in the export dialog (D31).</summary>
+    public static void SetYouTubeDetails(Project p, Export.YouTubeDetails details) => p.YouTube = details.Clone();
 
     /// <summary>Start of the next clip after <paramref name="t"/> (or the timeline end), for "next clip".</summary>
     public static TimeSpan NextClipBoundary(Project p, TimeSpan t) =>

@@ -392,3 +392,11 @@ zoom, crop changes the picture's SHAPE.
   crop then zoom, and the one crop filter serves both.
 - **UI:** Crop section (Left / Right / Top / Bottom sliders) in both Properties panels. Dragging crop handles in the
   preview isn't there yet.
+
+### YouTube thumbnail preset (2026-11-24)
+Right-click the preview → "Save as YouTube thumbnail": the frame under the playhead (zoom, brightness, annotations,
+same renderer as Save frame) at exactly 1280×720, saved as a JPEG next to the footage ("Trip thumbnail 1m23s.jpg")
+and added to the Media bin. JPEG, not PNG: a busy 1280×720 PNG can exceed YouTube's 2 MB thumbnail limit (random
+pixels: 2.8 MB) while the best-quality JPEG of the same frame is ~1.7 MB. `YouTubeThumbnail.SaveJpegUnderLimitAsync`
+still steps the quality down if a frame ever doesn't fit, so the file is always accepted.
+

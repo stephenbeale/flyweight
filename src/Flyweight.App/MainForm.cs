@@ -136,7 +136,7 @@ public sealed class MainForm : Form
             Btn("Chapter", "Add a chapter marker at the playhead (M): they become the 0:00 timestamps in your YouTube description", AddMarker),
             Btn("Chapters…", "See, copy or save your YouTube chapter timestamps (Ctrl+Shift+C copies)", ShowChapters),
             new ToolStripSeparator(),
-            Btn("Save frame", "Save the frame under the playhead as a PNG (with zoom, brightness and annotations) next to your footage, e.g. for a thumbnail (Ctrl+Shift+E)", () => _ = ExportFrameAsync(chooseLocation: false)),
+            Btn("Save frame", "Save the frame under the playhead as a PNG (with zoom, brightness and annotations) next to your footage (Ctrl+Shift+E). Right-click the preview for a YouTube thumbnail", () => _ = ExportFrameAsync(chooseLocation: false)),
             Btn("Export for YouTube…", "Export MP4 (Ctrl+E)", Export),
         });
 
@@ -144,6 +144,7 @@ public sealed class MainForm : Form
         var previewMenu = new ContextMenuStrip();
         previewMenu.Items.Add("Save this frame as an image (Ctrl+Shift+E)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false));
         previewMenu.Items.Add("Save this frame as…", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
+        previewMenu.Items.Add("Save as YouTube thumbnail (1280×720 JPG, under 2 MB)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false, thumbnail: true));
         previewMenu.Items.Add(new ToolStripSeparator());
         previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
         previewMenu.Items.Add("Add chapter marker here (M)", null, (_, _) => AddMarker());
@@ -916,7 +917,7 @@ public sealed class MainForm : Form
         if (_session.Project.FindMarker(id) is not { } m) return;
         using var dlg = new ChapterTitleForm(m.Title, "Rename chapter");
         if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ChapterTitle.Length == 0) return;
-        _session.Execute(p => { if (p.FindMarker(id) is { } mm) mm.Title = dlg.ChapterTitle; });
+        _session.Execute(p => MarkerOps.Rename(p, id, dlg.ChapterTitle));
     }
 
     void ShowChapters()
@@ -946,7 +947,7 @@ public sealed class MainForm : Form
         }
         if (_timeline.SelectedMarkerId is { } mid)
         {
-            _session.Execute(p => p.Markers.RemoveAll(m => m.Id == mid));
+            _session.Execute(p => MarkerOps.Delete(p, mid));
             _timeline.SelectedMarkerId = null;
             return;
         }
@@ -1026,7 +1027,8 @@ public sealed class MainForm : Form
     /// zoom and brightness, the annotations on screen (D33). Goes next to the main footage, never overwriting, and is
     /// added to the media bin (not the timeline) so it can be dragged in as a still.
     /// </summary>
-    async Task ExportFrameAsync(bool chooseLocation)
+    /// <param name="thumbnail">YouTube thumbnail: 1280×720 JPG under YouTube's 2 MB limit, instead of a full-size PNG.</param>
+    async Task ExportFrameAsync(bool chooseLocation, bool thumbnail = false)
     {
         if (_exportingFrame) return;
         _engine.Pause();
@@ -1035,25 +1037,40 @@ public sealed class MainForm : Form
         if (project.Timeline.Count == 0) { _statusText.Text = "Add a clip to the timeline first, then save a frame."; return; }
 
         var t = _engine.Position;
-        var path = FrameExport.Unique(Path.Combine(FrameExport.DefaultFolder(project), FrameExport.DefaultFileName(project, _session.FilePath, t)));
+        var name = thumbnail ? YouTubeThumbnail.DefaultFileName(project, _session.FilePath, t) : FrameExport.DefaultFileName(project, _session.FilePath, t);
+        var path = FrameExport.Unique(Path.Combine(FrameExport.DefaultFolder(project), name));
         if (chooseLocation)
         {
             using var dlg = new SaveFileDialog
             {
-                Filter = "PNG image|*.png", InitialDirectory = Path.GetDirectoryName(path), FileName = Path.GetFileName(path),
-                Title = "Save frame as",
+                Filter = thumbnail ? "JPEG image|*.jpg" : "PNG image|*.png", InitialDirectory = Path.GetDirectoryName(path), FileName = Path.GetFileName(path),
+                Title = thumbnail ? "Save YouTube thumbnail as" : "Save frame as",
             };
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
             path = dlg.FileName;
         }
 
         _exportingFrame = true;
-        _statusText.Text = "Saving frame…";
+        _statusText.Text = thumbnail ? "Saving thumbnail…" : "Saving frame…";
         try
         {
-            var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.Size;
             var snapshot = ProjectSerializer.Deserialize(ProjectSerializer.Serialize(project)); // the project may change meanwhile
-            await FrameRenderer.ExportAsync(snapshot, t, w, h, path);
+            if (thumbnail)
+            {
+                // Render at thumbnail size with the same renderer as Save frame, then a JPEG that fits YouTube's limit.
+                var png = Path.Combine(Path.GetTempPath(), $"flyweight-thumb-{Guid.NewGuid():N}.png");
+                try
+                {
+                    await FrameRenderer.ExportAsync(snapshot, t, YouTubeThumbnail.Width, YouTubeThumbnail.Height, png);
+                    await YouTubeThumbnail.SaveJpegUnderLimitAsync(png, path);
+                }
+                finally { try { File.Delete(png); } catch { } }
+            }
+            else
+            {
+                var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.Size;
+                await FrameRenderer.ExportAsync(snapshot, t, w, h, path);
+            }
 
             // Into the bin (not the timeline), selected, so it's easy to find and drag in as a still.
             var media = await _library.ProbeAsync(path);
@@ -1088,7 +1105,7 @@ public sealed class MainForm : Form
             // Remember the YouTube details in the project (one undo step), only if they changed.
             var old = _session.Project.YouTube;
             if (old.Title == details.Title && old.Description == details.Description && old.Tags == details.Tags && old.SaveTextFile == details.SaveTextFile) return;
-            _session.Execute(p => p.YouTube = details.Clone());
+            _session.Execute(p => TimelineOps.SetYouTubeDetails(p, details));
         });
         dlg.ShowDialog(this);
     }
