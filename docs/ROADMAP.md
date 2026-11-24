@@ -1,48 +1,56 @@
 # Roadmap & status
 
-_Last updated: 2026-11-24 (0.3.0-preview release)_
+_Last updated: 2026-11-24 (0.3.1-preview released; PRs #13-#16 merged)_
 
 ## Where things stand
 
-### 2026-11-24: PR #14 (`feature/ui-polish`, stacked on #13) and release 0.3.0-preview
-- Overlay crop by dragging edges (picture stays still even when zoomed: `TrimOverlayEdge`), corner resize (D37).
-- Properties as rounded collapsible cards, hand-drawn sliders, toggles, dark drop-downs; Media bin cards (D37).
-- Delete and trim keep overlay/audio tracks in sync (D38); typed speed box with finer presets.
-- Icon: the fly without gloves on yellow. Export "ready" dialog is our own, with a yellow "Buy Steve a coffee" button.
-- Testing helpers in the session scratchpad: `postclick.ps1` / `postkey.ps1` / `posttype.ps1` post input to the app's
-  window (no real cursor/keyboard), `printwin.ps1` captures it. A second instance shares `recent.json` and
-  `ui-state.json`: back them up and restore after testing.
-**Next ideas:** drag grips for main clips (resize/crop in the preview); speed changes keeping tracks in sync; an
-option to turn track sync off; re-check the audio crackle.
-
-### 2026-11-23 session close: `feature/overlay-zoom` (PR #13 open, not merged); PR #12 merged to `main` (6bcfa79)
-**Merged (PR #12, owner verified):** D34 overlay video tracks V2-V5 (Place / Size / Across / Down / Volume / Mute,
-exported and in Save frame), Separate audio, Insert at playhead. Plus the playback fix after the owner's report
-("laggy on play/pause with several videos", "play/pause doesn't work for all videos"): one repaint per timer tick
-(WM_TIMER starvation), play/pause enforced every tick on overlay players, PlayerClock drift estimate for overlays and
-the audio track, no re-seek on resume. Measured: playhead 6.00 s in 6.03 s (was 1.78 s in 4.04 s); 0 changed pixels
-while paused after rapid toggles (was 15,417). This may also fix the old **audio crackle**: owner to re-check.
-**On PR #13 (`feature/overlay-zoom`, latest 0e059ab):** D35 overlay zoom (crop-style) and S splits the selected
-overlay / audio item; clicking an overlay / audio item moves the playhead (owner verified zoom + split). D36 crop for
-all videos (Crop sliders Left/Right/Top/Bottom for main clips and overlays); after owner feedback ("going the wrong
-way... crop without sliding the image") it crops IN PLACE: main clips black out the cut edges (drawbox), overlays move
-only the cropped edge. **Owner has NOT yet verified the in-place crop.** 233 tests pass.
+### 2026-11-24 session close: PRs #13-#16 merged to `main` (c5365d3); release 0.3.1-preview is Latest
+**Merged today:** #13 overlay zoom/crop (D35, D36), #14 ui-polish (D37, D38: crop grips, collapsible Properties cards,
+Media bin cards, tracks kept in sync on delete/trim, typed speed box, new icon, export-done dialog), #15 overlay speed +
+Shift+S splits every track (D39), #16 coffee button without an amount. 262 core tests pass.
+**Releases:** `v0.3.0-preview` (e168f3e; it reused the never-published 0.2.2 draft, so there is no 0.2.2) and
+`v0.3.1-preview` (tag at c5365d3, **Latest**). Stable link:
+`https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe`.
+**Owner verified in-app:** overlay crop grips (edges crop, corners resize, the picture stays still when zoomed), trim
+keeps tracks in sync, typed speed, collapsible Properties groups, overlay speed, Shift+S. (This also settles the old
+"in-place crop" question from 2026-11-23.)
+**Smoke-tested by Claude:** the packaged 0.3.1 exe from `artifacts\` (demo project, overlay speed box, grips, export-done
+dialog). The **installer itself was NOT run**: it shares its AppId with the owner's installed 0.2.1 in
+`%LocalAppData%\Programs\Flyweight`. The owner's installed copy, desktop "Flyweight" shortcut and `.flyweight` file icons
+are therefore still 0.2.1 (the old gloved icon) until they install 0.3.1.
+**Icon cache gotcha:** the taskbar kept showing the old icon because Windows cached the "Flyweight (dev)" shortcut icon.
+Both dev shortcuts were re-saved and `ie4uinit -show` was run; relaunch from the shortcut, or sign out and in if it persists.
 
 **Next steps:**
-1. Owner verifies in-place crop in-app; then merge PR #13.
-2. The owner's open project is on the older 21:26 build: after they save and close, rebuild `Flyweight.sln` and relaunch
-   so they are on the latest build.
-3. Ideas: drag crop handles in the preview; speed / brightness for overlays; Properties labels truncated at the owner's
-   display scaling ("Left /", "Up /", "Brightnes") in `ClipPropertiesPanel` (label column is a fixed 92 px).
-4. Release 0.2.2 after PR #13 merges (ships Save frame, overlays, separate audio, insert at playhead, zoom, crop, split):
-   `pwsh packaging\package-preview.ps1 -Version 0.2.2-preview`, publish as a normal release with versioned and
-   version-free assets.
-5. Re-check the audio crackle item (below); consider a `.gitattributes` for consistent line endings (git keeps warning
-   LF to CRLF on DECISIONS.md, ClipLook.cs etc.).
-6. Testing tip: when driving the GUI with synthetic input, check the owner isn't using the desktop (a click once landed
-   in their browser); prefer the PrintWindow capture script, which needs no focus.
-Known limits: overlays have no speed/tone; the main track sets the length; audio items have no speed (so Separate audio
-needs 1x).
+1. Owner installs 0.3.1 from the stable link as the final installer check (it also switches the installed app and
+   `.flyweight` file icons to the new fly).
+2. Send the friends email (drafted in chat; it uses the stable link).
+3. Next feature ideas: resize/crop grips for main clips in the preview; speed changes keeping tracks in sync; an option
+   to turn track sync off; re-check the audio crackle (may already be fixed by the playback-timer work); add a
+   `.gitattributes` for line endings (git keeps warning LF to CRLF).
+4. Delete the stale local branches `feature/ui-polish` and `feature/overlay-zoom` (merged; `git branch -d`).
+   Remote branches `feature/annotation-fades`, `feature/frame-export`, `feature/youtube-chapters` also still exist.
+
+**Dev notes: driving and capturing the GUI without real input** (scripts in `tools/ui-testing/`):
+- `printwin.ps1 -ProcessId <pid> -Out <png>`: PrintWindow capture of the app window; needs no focus.
+- `postclick.ps1` (click or drag, window-relative pixel coords), `postkey.ps1` (key press / hover), `posttype.ps1`
+  (click into a box and type): post window messages to the control under the point. They never move the real cursor or
+  take focus. Limitation: posted messages cannot hold modifier keys, so Ctrl/Shift shortcuts (Shift+S, Ctrl+A) can't be
+  exercised this way; test those by hand or via a unit test.
+- A second instance shares `%LocalAppData%\Flyweight` (`recent.json`, `ui-state.json`, autosave). Back them up before a
+  test run and restore them afterwards. Smoke-test the exe from `artifacts\`, never the installer.
+
+### 2026-11-23: PR #12 merged to `main` (6bcfa79)
+D34 overlay video tracks V2-V5 (Place / Size / Across / Down / Volume / Mute, exported and in Save frame), Separate audio,
+Insert at playhead. Playback fixes after the owner's report ("laggy on play/pause with several videos"): one repaint per
+timer tick, play/pause enforced every tick on overlay players, PlayerClock drift estimate, no re-seek on resume
+(measured: playhead 6.00 s in 6.03 s, was 1.78 s in 4.04 s). This may also have fixed the old **audio crackle**: owner to
+re-check. PR #13 (overlay zoom D35, crop for all videos D36, S splits the selected overlay/audio item) was verified by
+the owner and merged on 2026-11-24.
+Known limits: the main track sets the length; audio items have no speed (so Separate audio needs 1x); speed changes on
+main clips do not yet keep overlay/audio tracks in sync.
+Ideas still open: speed/brightness for overlays (speed done, D39); Properties labels truncated at some display scalings
+(label column in `ClipPropertiesPanel` is a fixed 92 px; D37 made the side panels DPI-aware, so re-check).
 
 ### 2026-11-22 session close: PRs #5-#10 merged to `main` (e839f98)
 **Shipped today:** #5 clip zoom + brightness/contrast (D25), proxy fixes (D26), Remove from project, named New project
@@ -54,7 +62,7 @@ installer, single-file folder, only the first window owns the session lock/autos
 **Releases:** `v0.2.0-preview` (pre-release, zip) and `v0.2.1-preview` (Latest: Setup.exe + zip + version-free
 `Flyweight-Setup.exe` / `Flyweight-win-x64.zip`). Stable link:
 `https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe`.
-**Save frame (PR #10) is NOT in a release yet.**
+Save frame (PR #10) shipped in 0.3.0-preview.
 **Owner verified in-app:** brightness (preview + export), file-clash export prompt, clip speed, Ctrl+A select-all,
 Save frame matched the preview, the installer ran.
 
@@ -63,9 +71,9 @@ Save frame matched the preview, the installer ran.
    `%LocalAppData%\Flyweight\playback.log` (about 40 KB of real playback captured). Next step: read it.
 2. **Not yet verified by the owner in-app:** chapter markers (M), YouTube details / `.txt`, Ctrl+C / Ctrl+V, typed
    slider values, the lag-when-maximised fix, zoom.
-3. **Release 0.2.2 to ship Save frame:** run `pwsh packaging\package-preview.ps1 -Version 0.2.2-preview`, publish as a
-   normal (non-pre) release with BOTH versioned and version-free assets (`Flyweight-Setup.exe`,
-   `Flyweight-win-x64.zip`) so the stable link updates.
+3. ~~Release 0.2.2 to ship Save frame~~ done: shipped as 0.3.0-preview and 0.3.1-preview (2026-11-24). To release again:
+   `pwsh packaging\package-preview.ps1 -Version X.Y.Z-preview`, publish as a normal (non-pre) release with BOTH
+   versioned and version-free assets (`Flyweight-Setup.exe`, `Flyweight-win-x64.zip`) so the stable link updates.
 4. **Ideas queued:** dark themed dialogs (Export, New project, Freeze, Chapters); delete the remote branches
    `feature/youtube-chapters` and `feature/frame-export` (now in `main`); ~~default video exports / freeze frames next to the
    footage~~ ✅ (2026-11-23); ~~long filter graphs hitting the Windows command-line limit~~ ✅ (2026-11-23).
@@ -226,8 +234,8 @@ hurts search. They want something that says lean / light / fast / nimble.
   2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).
   3. Reverse: parked (ffmpeg `reverse` buffers the whole clip; would be short clips only).
 - Audio fades
-- **Blurred-background fill for portrait clips: NEXT after `feature/overlay-zoom` merges** (owner asked 2026-11-24).
-  Held back because that branch reworks the same fit/zoom/crop code (ExportPlan, FrameExport, ClipLook). Plan: blur
+- **Blurred-background fill for portrait clips: candidate next** (owner asked 2026-11-24). It was held back until the
+  overlay zoom/crop work merged (now done, PR #13). Plan: blur
   only un-zoomed/un-cropped clips; export via split→scale-to-fill+boxblur→overlay of the fitted picture; preview
   by drawing a downscaled-then-upscaled copy of the visible picture behind it (cheap blur) so it matches; Save frame
   and thumbnail use the export path; project-level setting, new projects default to blur, old ones keep black bars.
