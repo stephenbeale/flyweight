@@ -250,41 +250,13 @@ public sealed class ExportForm : Form
 
     void ShowDone(string output, double sizeMb, TimeSpan took, string encoder, string? detailsFile)
     {
-        var studio = new TaskDialogButton("Open YouTube Studio");
-        // Show in Explorer leaves this box open, so Open YouTube Studio is still there afterwards.
-        var explorer = new TaskDialogButton("Show in Explorer") { AllowCloseDialog = false };
-        explorer.Click += (_, _) =>
-        {
-            try { Process.Start("explorer.exe", $"/select,\"{output}\""); }
-            catch (Exception ex) { MessageBox.Show(this, $"Couldn't open Explorer:\n\n{ex.Message}", "Export complete", MessageBoxButtons.OK, MessageBoxIcon.Information); }
-        };
-        var page = new TaskDialogPage
-        {
-            Caption = "Export complete",
-            Heading = "Your video is ready",
-            Text = $"{Path.GetFileName(output)}\n{sizeMb:0} MB · {took:m\\:ss} · {encoder}\n\n" +
-                   "Open YouTube Studio to upload it: the file will be selected in Explorer so you can drag it into Studio" +
-                   (detailsFile is null ? "." : ", and your title, description and tags open in a text file to paste in."),
-            Icon = TaskDialogIcon.ShieldSuccessGreenBar,
-            Buttons = { studio, explorer, TaskDialogButton.Close },
-            DefaultButton = studio,
-            // Unobtrusive: a one-line footnote, only here, only after a successful export. Never a pop-up.
-            EnableLinks = true,
-            Footnote = new TaskDialogFootnote
-            {
-                Text = $"Enjoying Flyweight? <a href=\"{BuyMeACoffeeUrl}\">Buy Steve a coffee ☕</a>",
-                Icon = TaskDialogIcon.None,
-            },
-        };
-        page.LinkClicked += (_, e) =>
-        {
-            try { Process.Start(new ProcessStartInfo(e.LinkHref) { UseShellExecute = true }); }
-            catch { /* no browser: nothing else to do */ }
-        };
-        var choice = TaskDialog.ShowDialog(this, page);
+        string instructions = "Open YouTube Studio to upload it: the file will be selected in Explorer so you can drag it into Studio" +
+                              (detailsFile is null ? "." : ", and your title, description and tags open in a text file to paste in.");
+        using var done = new ExportDoneForm(output, $"{sizeMb:0} MB · {took:m\\:ss} · {encoder}", instructions, BuyMeACoffeeUrl);
+        done.ShowDialog(this);
         try
         {
-            if (choice == studio)
+            if (done.OpenStudio)
             {
                 Process.Start("explorer.exe", $"/select,\"{output}\"");
                 if (detailsFile is not null) Process.Start(new ProcessStartInfo(detailsFile) { UseShellExecute = true }); // title/description to paste

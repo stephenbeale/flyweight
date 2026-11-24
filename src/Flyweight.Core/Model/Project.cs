@@ -194,6 +194,9 @@ public sealed class AudioItem
     [JsonIgnore] public TimeSpan Duration => Out - In;
     [JsonIgnore] public TimeSpan End => Start + Duration;
     [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
+
+    /// <summary>A copy with the same id (for restoring a snapshot during a drag). Plain values only.</summary>
+    public AudioItem Clone() => (AudioItem)MemberwiseClone();
 }
 
 /// <summary>
@@ -254,6 +257,9 @@ public sealed class OverlayClip
     [JsonIgnore] public TimeSpan Duration => Out - In;
     [JsonIgnore] public TimeSpan End => Start + Duration;
     [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
+
+    /// <summary>A copy with the same id (for restoring a snapshot during a drag). Plain values only.</summary>
+    public OverlayClip Clone() => (OverlayClip)MemberwiseClone();
 }
 
 /// <summary>

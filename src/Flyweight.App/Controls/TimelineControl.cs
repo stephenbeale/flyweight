@@ -46,6 +46,7 @@ public sealed class TimelineControl : Control
     bool _dragMoved;
     Guid _dragId;
     TimeSpan _originA, _originB;
+    TimelineOps.TrackSnapshot? _trackSnap; // overlay/audio tracks when a clip-edge drag began, so they stay in sync
     int _dropIndex = -1;
 
     public TimelineControl()
@@ -680,6 +681,7 @@ public sealed class TimelineControl : Control
             _dragId = c.Id;
             _originA = c.In;
             _originB = c.Out;
+            _trackSnap = TimelineOps.CaptureTracks(p, c.Id);
             if (e.X <= r.Left + EdgeGrab) { _drag = Drag.TrimIn; _session.BeginEdit(); }
             else if (e.X >= r.Right - EdgeGrab) { _drag = Drag.TrimOut; _session.BeginEdit(); }
             else { _drag = Drag.ClipBody; SeekRequested?.Invoke(this, T(e.X)); }
@@ -719,10 +721,10 @@ public sealed class TimelineControl : Control
                 break;
             case Drag.TrimIn:
                 // The mouse moves in timeline time; In/Out are footage time (they differ when the clip is sped up).
-                _session.Preview(p => TimelineOps.TrimIn(p, id, _originA + (p.FindClip(id)?.SourceSpan(dt) ?? dt)));
+                _session.Preview(p => TimelineOps.TrimIn(p, id, _originA + (p.FindClip(id)?.SourceSpan(dt) ?? dt), _trackSnap));
                 break;
             case Drag.TrimOut:
-                _session.Preview(p => TimelineOps.TrimOut(p, id, _originB + (p.FindClip(id)?.SourceSpan(dt) ?? dt)));
+                _session.Preview(p => TimelineOps.TrimOut(p, id, _originB + (p.FindClip(id)?.SourceSpan(dt) ?? dt), _trackSnap));
                 break;
             case Drag.AnnoMove:
                 var len = _originB - _originA;

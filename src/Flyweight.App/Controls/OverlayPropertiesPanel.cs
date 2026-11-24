@@ -9,10 +9,9 @@ namespace Flyweight.App.Controls;
 /// Like the other panels it never touches the project: it raises <see cref="Edit"/> with a TimelineOps call and
 /// MainForm applies it to the selected overlay through ProjectSession, so every change is undoable (rule 2).
 /// </summary>
-public sealed class OverlayPropertiesPanel : UserControl
+public sealed class OverlayPropertiesPanel : PropertySheet
 {
-    static readonly Color Bg = Color.FromArgb(28, 28, 32);
-    static readonly Color Fg = Color.Gainsboro;
+    static readonly Color Fg = Theme.Text;
 
     static readonly (OverlayPosition Pos, string Label)[] Placements =
     {
@@ -21,13 +20,9 @@ public sealed class OverlayPropertiesPanel : UserControl
         (OverlayPosition.Centre, "Centre"), (OverlayPosition.FullFrame, "Full frame (cutaway)"),
     };
 
-    readonly TableLayoutPanel _table = new()
-    {
-        Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(8, 6, 8, 6), BackColor = Bg,
-    };
-    readonly Label _name = new() { ForeColor = Fg, AutoSize = true, MaximumSize = new Size(250, 0), Margin = new Padding(0, 2, 0, 4) };
-    readonly Label _timing = new() { ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(250, 0) };
-    readonly ComboBox _place = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(40, 40, 47), ForeColor = Fg };
+    readonly Label _name = new() { ForeColor = Fg, AutoSize = true, Margin = new Padding(0, 2, 0, 4) };
+    readonly Label _timing = new() { ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 0, 0, 4) };
+    readonly Theme.DarkCombo _place = new() { Width = 170 };
     readonly Slider _size = new((int)(OverlayLayout.MinScale * 100), (int)(OverlayLayout.MaxScale * 100), "%");
     readonly Slider _x = new(0, 100, "");
     readonly Slider _y = new(0, 100, "");
@@ -39,46 +34,46 @@ public sealed class OverlayPropertiesPanel : UserControl
     readonly Slider _cropT = new(0, (int)(ClipLook.MaxCropEach * 100), "%");
     readonly Slider _cropB = new(0, (int)(ClipLook.MaxCropEach * 100), "%");
     readonly Slider _volume = new(0, (int)(TimelineOps.MaxClipVolume * 100), "%");
-    readonly CheckBox _muted = new() { Text = "Muted  (Shift+M)", ForeColor = Fg, AutoSize = true };
+    readonly Theme.ToggleSwitch _muted = new() { Text = "Muted", Tip = "Mute (Shift+M)" };
     readonly Label _note = new()
     {
-        ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0),
-        Text = "Drag it in the preview to move it; scroll over it there to zoom in. Crop trims its edges (the box shrinks with it). Its sound plays over the main clips: " +
-               "mute it, or right-click it → Separate audio.",
+        ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 4, 0, 2),
+        Text = "Its sound plays over the main clips: mute it, or right-click it → Separate audio.",
+    };
+    readonly Label _cropNote = new()
+    {
+        ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 4, 0, 2),
+        Text = "Easier in the preview: drag the white bars on its edges to crop, the corners to resize, the middle to move. " +
+               "Scroll over it to zoom in.",
     };
     bool _loading;
 
     /// <summary>An edit for the selected overlay (a TimelineOps call), and how it should reach the undo stack.</summary>
     public event Action<Action<Project, Guid>, StyleEditPhase>? Edit;
 
-    public OverlayPropertiesPanel()
+    public OverlayPropertiesPanel() : base("overlay")
     {
-        BackColor = Bg;
-        ForeColor = Fg;
-        AutoScroll = true;
-        _table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
-        _table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        Section("Overlay");
+        Group("Overlay");
         Span(_name);
         Span(_timing);
-        Section("Picture");
+        Group("Position and size");
         _place.Items.Add("Place…");
         foreach (var (_, label) in Placements) _place.Items.Add(label);
         Row("Place", _place);
         Row("Size", _size);
         Row("Across", _x);
         Row("Down", _y);
-        Section("Crop");
+        Group("Crop");
         Row("Left", _cropL);
         Row("Right", _cropR);
         Row("Top", _cropT);
         Row("Bottom", _cropB);
-        Section("Zoom");
+        Span(_cropNote);
+        Group("Zoom");
         Row("Zoom", _zoom);
         Row("Pan ↔", _panX);
         Row("Pan ↕", _panY);
-        Section("Audio");
+        Group("Audio");
         Row("Volume", _volume);
         Row("", _muted);
         Span(_note);
@@ -109,7 +104,6 @@ public sealed class OverlayPropertiesPanel : UserControl
             bool on = _muted.Checked;
             Edit?.Invoke((p, id) => TimelineOps.SetOverlayMuted(p, id, on), StyleEditPhase.Single);
         };
-        Controls.Add(_table);
     }
 
     public void ShowOverlay(OverlayClip o, SourceMedia? media)
@@ -139,33 +133,5 @@ public sealed class OverlayPropertiesPanel : UserControl
             _muted.Enabled = hasAudio;
         }
         finally { _loading = false; }
-    }
-
-    void Section(string title)
-    {
-        var l = new Label
-        {
-            Text = title.ToUpperInvariant(), ForeColor = Color.Gray, AutoSize = true,
-            Font = new Font(Font.FontFamily, 7.5f, FontStyle.Bold), Margin = new Padding(0, _table.RowCount == 0 ? 2 : 12, 0, 2),
-        };
-        Span(l);
-    }
-
-    void Span(Control c)
-    {
-        _table.RowCount++;
-        _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _table.Controls.Add(c, 0, _table.RowCount - 1);
-        _table.SetColumnSpan(c, 2);
-    }
-
-    void Row(string label, Control editor)
-    {
-        _table.RowCount++;
-        _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var l = new Label { Text = label, ForeColor = Fg, AutoSize = false, Height = 28, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
-        editor.Margin = new Padding(0, 3, 0, 3);
-        _table.Controls.Add(l, 0, _table.RowCount - 1);
-        _table.Controls.Add(editor, 1, _table.RowCount - 1);
     }
 }

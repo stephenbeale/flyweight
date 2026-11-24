@@ -11,20 +11,15 @@ namespace Flyweight.App.Controls;
 /// <see cref="VolumeChanged"/> / <see cref="MutedChanged"/> and MainForm applies them to whichever is
 /// selected through ProjectSession, so every change is undoable (rule 2).
 /// </summary>
-public sealed class ClipPropertiesPanel : UserControl
+public sealed class ClipPropertiesPanel : PropertySheet
 {
-    static readonly Color Bg = Color.FromArgb(28, 28, 32);
-    static readonly Color Fg = Color.Gainsboro;
+    static readonly Color Fg = Theme.Text;
 
-    readonly TableLayoutPanel _table = new()
-    {
-        Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(8, 6, 8, 6), BackColor = Bg,
-    };
-    readonly Label _heading;
-    readonly Label _name = new() { ForeColor = Fg, AutoSize = true, MaximumSize = new Size(250, 0), Margin = new Padding(0, 2, 0, 4) }; // wraps "Changes apply to all…"
+    readonly PropertyGroup _heading, _pictureGroup, _cropGroup;
+    readonly Label _name = new() { ForeColor = Fg, AutoSize = true, Margin = new Padding(0, 2, 0, 4) }; // wraps "Changes apply to all…"
     readonly Slider _volume = new(0, (int)(TimelineOps.MaxClipVolume * 100), "%");
-    readonly CheckBox _muted = new() { Text = "Muted  (Shift+M)", ForeColor = Fg, AutoSize = true };
-    readonly Label _note = new() { ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0) };
+    readonly Theme.ToggleSwitch _muted = new() { Text = "Muted", Tip = "Mute (Shift+M)" };
+    readonly Label _note = new() { ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 2, 0, 4) };
     readonly Slider _zoom = new(100, (int)(ClipLook.MaxZoom * 100), "%");
     readonly Slider _panX = new(0, 100, "");
     readonly Slider _panY = new(0, 100, "");
@@ -37,11 +32,10 @@ public sealed class ClipPropertiesPanel : UserControl
     readonly Theme.RoundButton _resetLook = new() { Text = "Reset picture", Width = 130, Height = 32 };
     readonly Label _lookNote = new()
     {
-        ForeColor = Color.Gray, AutoSize = true, MaximumSize = new Size(240, 0),
+        ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 4, 0, 2),
         Text = "Crop cuts edges off (the rest is fitted to the frame); zoom magnifies. Both work on the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
     };
-    readonly List<Control> _pictureControls = new();
-    readonly ComboBox _speed = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(40, 40, 47), ForeColor = Color.Gainsboro };
+    readonly SpeedBox _speed = new();
     readonly List<Control> _speedControls = new();
     bool _loading;
     int _multi = 1;
@@ -57,42 +51,30 @@ public sealed class ClipPropertiesPanel : UserControl
     /// <summary>The clip's playback speed (0.25–4) was picked.</summary>
     public event Action<double>? SpeedChanged;
 
-    public ClipPropertiesPanel()
+    public ClipPropertiesPanel() : base("clip")
     {
-        BackColor = Bg;
-        ForeColor = Fg;
-        AutoScroll = true;
-        _table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
-        _table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        _heading = Section("Clip");
+        _heading = Group("Clip");
         Span(_name);
-        foreach (var sp in TimelineOps.SpeedPresets) _speed.Items.Add($"{sp:0.##}×");
         _speedControls.Add(Row("Speed", _speed));
         _speedControls.Add(_speed);
-        _speed.SelectedIndexChanged += (_, _) =>
-        {
-            if (!_loading && _speed.SelectedIndex >= 0) SpeedChanged?.Invoke(TimelineOps.SpeedPresets[_speed.SelectedIndex]);
-        };
-        Section("Audio");
+        _speed.Picked += v => { if (!_loading) SpeedChanged?.Invoke(v); };
+        Group("Audio");
         Row("Volume", _volume);
         Row("", _muted);
         Span(_note);
-        _pictureControls.Add(Section("Picture"));
+        _pictureGroup = Group("Picture");
         Row("Zoom", _zoom);
         Row("Left / right", _panX);
         Row("Up / down", _panY);
         Row("Brightness", _brightness);
         Row("Contrast", _contrast);
-        _pictureControls.Add(Section("Crop"));
+        Span(_resetLook);
+        _cropGroup = Group("Crop");
         Row("Left", _cropL);
         Row("Right", _cropR);
         Row("Top", _cropT);
         Row("Bottom", _cropB);
-        Span(_resetLook);
-        _pictureControls.Add(_resetLook);
         Span(_lookNote);
-        _pictureControls.Add(_lookNote);
 
         void Look(Slider s, LookSetting which, double scale) =>
             s.Changed += (v, phase) => { if (!_loading) LookChanged?.Invoke(which, v / scale, phase); };
@@ -109,7 +91,6 @@ public sealed class ClipPropertiesPanel : UserControl
 
         _volume.Changed += (v, phase) => { if (!_loading) VolumeChanged?.Invoke(v / 100.0, phase); };
         _muted.CheckedChanged += (_, _) => { if (!_loading) MutedChanged?.Invoke(_muted.Checked); };
-        Controls.Add(_table);
     }
 
     /// <param name="selectedCount">How many clips are selected: with more than one, edits here apply to all of them.</param>
@@ -120,9 +101,7 @@ public sealed class ClipPropertiesPanel : UserControl
         {
             SetPictureVisible(true);
             foreach (var sc in _speedControls) sc.Visible = true;
-            int si = Array.FindIndex(TimelineOps.SpeedPresets, v => Math.Abs(v - c.Speed) < 0.001);
-            if (si < 0) { _speed.Items.Add($"{c.Speed:0.##}×"); si = _speed.Items.Count - 1; } // a hand-edited file
-            _speed.SelectedIndex = si;
+            _speed.SetValue(c.Speed);
             _speed.Enabled = media is not { IsStill: true }; // stills: drag the edge to change how long they show
             _zoom.SetValue((int)Math.Round(c.Zoom * 100));
             _panX.SetValue((int)Math.Round(c.PanX * 100));
@@ -156,17 +135,14 @@ public sealed class ClipPropertiesPanel : UserControl
             "It plays over the clips' own sound: turn clips down or mute them (Shift+M) to hear only this.");
     }
 
-    void SetPictureVisible(bool on)
-    {
-        foreach (var c in _pictureControls) c.Visible = on;
-    }
+    void SetPictureVisible(bool on) => _pictureGroup.Visible = _cropGroup.Visible = on;
 
     void Show(string heading, SourceMedia? media, double volume, bool muted, bool hasAudio, string note)
     {
         _loading = true;
         try
         {
-            _heading.Text = heading.ToUpperInvariant();
+            _heading.Title = heading;
             _name.Text = _multi > 1 ? $"Changes apply to all {_multi}. Showing {media?.DisplayName ?? "(missing)"}." : media?.DisplayName ?? "(missing)";
             _name.ForeColor = _multi > 1 ? Theme.Accent : Fg;
             _volume.SetValue((int)Math.Round(volume * 100));
@@ -176,37 +152,6 @@ public sealed class ClipPropertiesPanel : UserControl
             _note.Text = note;
         }
         finally { _loading = false; }
-    }
-
-    Label Section(string title)
-    {
-        var l = new Label
-        {
-            Text = title.ToUpperInvariant(), ForeColor = Color.Gray, AutoSize = true,
-            Font = new Font(Font.FontFamily, 7.5f, FontStyle.Bold), Margin = new Padding(0, _table.RowCount == 0 ? 2 : 12, 0, 2),
-        };
-        Span(l);
-        return l;
-    }
-
-    void Span(Control c)
-    {
-        _table.RowCount++;
-        _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _table.Controls.Add(c, 0, _table.RowCount - 1);
-        _table.SetColumnSpan(c, 2);
-    }
-
-    Label Row(string label, Control editor)
-    {
-        _table.RowCount++;
-        _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var l = new Label { Text = label, ForeColor = Fg, AutoSize = false, Height = 28, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
-        editor.Margin = new Padding(0, 3, 0, 3);
-        if (_pictureControls.Count > 0) { _pictureControls.Add(l); _pictureControls.Add(editor); } // rows after the Picture heading
-        _table.Controls.Add(l, 0, _table.RowCount - 1);
-        _table.Controls.Add(editor, 1, _table.RowCount - 1);
-        return l;
     }
 }
 

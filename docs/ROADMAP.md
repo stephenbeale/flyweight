@@ -1,8 +1,19 @@
 # Roadmap & status
 
-_Last updated: 2026-11-23 (feature/overlay-zoom, PR #13 open)_
+_Last updated: 2026-11-24 (0.3.0-preview release)_
 
 ## Where things stand
+
+### 2026-11-24: PR #14 (`feature/ui-polish`, stacked on #13) and release 0.3.0-preview
+- Overlay crop by dragging edges (picture stays still even when zoomed: `TrimOverlayEdge`), corner resize (D37).
+- Properties as rounded collapsible cards, hand-drawn sliders, toggles, dark drop-downs; Media bin cards (D37).
+- Delete and trim keep overlay/audio tracks in sync (D38); typed speed box with finer presets.
+- Icon: the fly without gloves on yellow. Export "ready" dialog is our own, with a yellow £20 coffee button.
+- Testing helpers in the session scratchpad: `postclick.ps1` / `postkey.ps1` / `posttype.ps1` post input to the app's
+  window (no real cursor/keyboard), `printwin.ps1` captures it. A second instance shares `recent.json` and
+  `ui-state.json`: back them up and restore after testing.
+**Next ideas:** drag grips for main clips (resize/crop in the preview); speed changes keeping tracks in sync; an
+option to turn track sync off; re-check the audio crackle.
 
 ### 2026-11-23 session close: `feature/overlay-zoom` (PR #13 open, not merged); PR #12 merged to `main` (6bcfa79)
 **Merged (PR #12, owner verified):** D34 overlay video tracks V2-V5 (Place / Size / Across / Down / Volume / Mute,

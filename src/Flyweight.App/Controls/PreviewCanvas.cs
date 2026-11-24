@@ -32,9 +32,16 @@ public sealed class PreviewCanvas : Control
     Image? _standIn;
 
     // Drag state
-    enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21, MoveOverlay }
+    enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21, MoveOverlay, CropOverlay, ResizeOverlay }
     DragMode _drag;
     (Guid Id, double X, double Y) _overlayOrigin;
+
+    /// <summary>A grip on the selected overlay's outline: edges crop, corners resize.</summary>
+    enum Grip { None, Left, Top, Right, Bottom, TopLeft, TopRight, BottomLeft, BottomRight }
+    Grip _grip;
+    // At the start of a resize drag: the overlay's box (canvas fractions) and the kept width of its source.
+    RectangleF _gripBox;
+    double _gripCropW;
     PointF _dragStartNorm;
     Annotation? _dragOrigin;      // copy of the annotation before the drag
     Annotation? _creating;        // ghost shown while drawing a new shape
@@ -451,6 +458,87 @@ public sealed class PreviewCanvas : Control
 
     bool IsVisibleNow(Annotation a) => TimelineOps.VisibleAt(_session.Project, _engine.Position).Any(v => v.Id == a.Id);
 
+    /// <summary>The selected overlay, if it is showing now.</summary>
+    OverlayClip? SelectedOverlayNow() => SelectedOverlayId is { } id
+        ? TimelineOps.OverlaysAt(_session.Project, _engine.Position).FirstOrDefault(o => o.Id == id) : null;
+
+    /// <summary>Which grip of the selected overlay is under a point: corners (resize) win over edges (crop).</summary>
+    Grip OverlayGripAt(Point pt)
+    {
+        if (SelectedOverlayNow() is not { } o) return Grip.None;
+        var r = OverlayLanePlayer.Dest(CanvasRect, o, _session.Project.FindMedia(o.SourceId));
+        const float edge = 7;
+        bool nearL = Math.Abs(pt.X - r.Left) <= edge, nearR = Math.Abs(pt.X - r.Right) <= edge;
+        bool nearT = Math.Abs(pt.Y - r.Top) <= edge, nearB = Math.Abs(pt.Y - r.Bottom) <= edge;
+        bool inX = pt.X >= r.Left - edge && pt.X <= r.Right + edge, inY = pt.Y >= r.Top - edge && pt.Y <= r.Bottom + edge;
+        if (nearT && nearL) return Grip.TopLeft;
+        if (nearT && nearR) return Grip.TopRight;
+        if (nearB && nearL) return Grip.BottomLeft;
+        if (nearB && nearR) return Grip.BottomRight;
+        if (nearL && inY) return Grip.Left;
+        if (nearR && inY) return Grip.Right;
+        if (nearT && inX) return Grip.Top;
+        if (nearB && inX) return Grip.Bottom;
+        return Grip.None;
+    }
+
+    static Cursor GripCursor(Grip g) => g switch
+    {
+        Grip.Left or Grip.Right => Cursors.SizeWE,
+        Grip.Top or Grip.Bottom => Cursors.SizeNS,
+        Grip.TopLeft or Grip.BottomRight => Cursors.SizeNWSE,
+        _ => Cursors.SizeNESW,
+    };
+
+    /// <summary>Start cropping (edge) or resizing (corner) the selected overlay.</summary>
+    void BeginOverlayGrip(Grip grip)
+    {
+        if (SelectedOverlayNow() is not { } o) return;
+        var m = _session.Project.FindMedia(o.SourceId);
+        var (x, y, w, h) = OverlayLayout.Rect(o, m);
+        _gripBox = new RectangleF((float)x, (float)y, (float)w, (float)h);
+        _gripCropW = ClipLook.CropBox(o.CropLeft, o.CropTop, o.CropRight, o.CropBottom).W;
+        _grip = grip;
+        _overlayOrigin = (o.Id, o.X, o.Y);
+        _drag = grip is Grip.Left or Grip.Top or Grip.Right or Grip.Bottom ? DragMode.CropOverlay : DragMode.ResizeOverlay;
+        _session.BeginEdit();
+    }
+
+    /// <summary>
+    /// Crop: the dragged edge follows the pointer and the picture stays put. Resize: the opposite corner stays put,
+    /// the shape is kept, and the corner follows the pointer.
+    /// </summary>
+    void DragOverlayGrip(Point pt)
+    {
+        var c = CanvasRect;
+        double mx = (pt.X - c.X) / c.Width, my = (pt.Y - c.Y) / c.Height; // unclamped, so edges can reach the frame edge
+        var id = _overlayOrigin.Id;
+        if (_drag == DragMode.CropOverlay)
+        {
+            // The edge goes where the pointer is; the picture (even zoomed) stays put.
+            var (side, edge) = _grip switch
+            {
+                Grip.Left => (CropSide.Left, mx),
+                Grip.Right => (CropSide.Right, mx),
+                Grip.Top => (CropSide.Top, my),
+                _ => (CropSide.Bottom, my),
+            };
+            _session.Preview(p => TimelineOps.TrimOverlayEdge(p, id, side, edge));
+            return;
+        }
+
+        var box = _gripBox;
+        bool right = _grip is Grip.TopRight or Grip.BottomRight, bottom = _grip is Grip.BottomLeft or Grip.BottomRight;
+        double ax = right ? box.Left : box.Right, ay = bottom ? box.Top : box.Bottom; // the corner that stays put
+        double ratio = box.Width / box.Height;
+        double w = Math.Max(Math.Max(0, right ? mx - ax : ax - mx), Math.Max(0, bottom ? my - ay : ay - my) * ratio);
+        double scale = Math.Clamp(w / _gripCropW, OverlayLayout.MinScale, OverlayLayout.MaxScale);
+        w = scale * _gripCropW;
+        double h = w / ratio;
+        double cx = ax + (right ? w : -w) / 2, cy = ay + (bottom ? h : -h) / 2;
+        _session.Preview(p => TimelineOps.SetOverlayLayout(p, id, cx, cy, scale));
+    }
+
     // ---------------- Mouse ----------------
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -506,6 +594,14 @@ public sealed class PreviewCanvas : Control
             }
         }
 
+        // The selected overlay's grips: drag an edge to crop, a corner to resize.
+        if (OverlayGripAt(e.Location) is var grip and not Grip.None)
+        {
+            Select(null);
+            BeginOverlayGrip(grip);
+            return;
+        }
+
         var hit = TimelineOps.VisibleAt(_session.Project, _engine.Position).Reverse()
             .FirstOrDefault(a => AnnotationRenderer.HitTest(a, canvas, e.Location));
         if (hit is null && OverlayAt(e.Location) is { } ov)
@@ -538,7 +634,8 @@ public sealed class PreviewCanvas : Control
         {
             if (_tool == Tool.Select)
             {
-                Cursor = HandleCursorAt(e.Location) ?? (TimelineOps.VisibleAt(_session.Project, _engine.Position)
+                var grip = HandleCursorAt(e.Location) is null ? OverlayGripAt(e.Location) : Grip.None;
+                Cursor = HandleCursorAt(e.Location) ?? (grip != Grip.None ? GripCursor(grip) : null) ?? (TimelineOps.VisibleAt(_session.Project, _engine.Position)
                     .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location)) || OverlayAt(e.Location) is not null
                     ? Cursors.SizeAll : Cursors.Default);
             }
@@ -550,6 +647,12 @@ public sealed class PreviewCanvas : Control
             _creating.X2 = norm.X;
             _creating.Y2 = norm.Y;
             Invalidate();
+            return;
+        }
+
+        if (_drag is DragMode.CropOverlay or DragMode.ResizeOverlay)
+        {
+            DragOverlayGrip(e.Location);
             return;
         }
 

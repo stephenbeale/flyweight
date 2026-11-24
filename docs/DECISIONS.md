@@ -297,6 +297,11 @@ Owner request: a donation option via https://buymeacoffee.com/stephenbeale that 
 in exactly one place in the app: a one-line footnote link in the "Your video is ready" dialog after a successful
 export (`ExportForm.BuyMeACoffeeUrl`), plus a Support section in the README. No pop-ups, no nag timers, nothing during
 editing, no feature gating. Don't add it anywhere else without the owner asking.
+2026-11-24, owner: "make the enjoying flyweight an actual button", then "suggest a £20 donation" with "a yellow
+background". The "Your video is ready" dialog is now our own dark `ExportDoneForm` (a TaskDialog can't colour buttons):
+Open YouTube Studio (default), Show in Explorer, Close, then below a divider "Enjoying Flyweight?" and a yellow
+"☕ Buy Steve a coffee · £20" button. It opens the page and leaves the dialog open. £20 is only a suggestion in the
+label and tooltip; the URL doesn't pre-fill an amount (not confirmed that Buy Me a Coffee supports that). Same place only.
 
 ### Icon update (2026-11-23): black fly with red boxing gloves, in the film frame
 Supersedes D16's gold glove. The owner chose a black fly silhouette, vertical, on a white picture area inside the
@@ -392,6 +397,51 @@ zoom, crop changes the picture's SHAPE.
   crop then zoom, and the one crop filter serves both.
 - **UI:** Crop section (Left / Right / Top / Bottom sliders) in both Properties panels. Dragging crop handles in the
   preview isn't there yet.
+
+### D37. Drag an overlay's edges to crop, corners to resize; collapsible Properties cards (2026-11-24)
+Owner: "the crop on overlaid videos is still weird" / "sliding crop is almost the inverse of what I am doing", and
+"improve UI on sidebar and media bin... rounded edges, boxes for various properties which are collapsible by group".
+- **Why crop felt inverse:** zoom works INSIDE the crop (D35/D36), so on a zoomed overlay every crop change also
+  re-mapped the zoom and the picture slid/grew. And the Right/Bottom sliders move their edge the opposite way to the
+  slider. **Fix:** `TimelineOps.TrimOverlayEdge(side, edge)` puts one edge at a canvas position and solves crop + pan
+  together (zoom and size fixed) so what's on screen doesn't move. Past a crop limit it stops at the furthest point where
+  only that edge moves (bisection) rather than moving the other edge. The sliders still set the crop of the source.
+- **Preview grips** on the selected overlay: white bars at the edge midpoints crop (via `TrimOverlayEdge`), corner
+  squares resize with the shape kept and the opposite corner fixed, the middle still moves it. Drawn in
+  `OverlayLanePlayer.DrawGrips`, hit-tested in `PreviewCanvas.OverlayGripAt`.
+- **Properties:** `PropertySheet` + `PropertyGroup` (rounded card, click the header to collapse; collapsed groups are
+  remembered in `%LocalAppData%\Flyweight\ui-state.json`). The label column is measured from the longest label at the
+  current DPI (fixes "Brightnes" at 150%). Hand-drawn slider (thin track, accent fill, round thumb; the wheel only
+  changes it when focused, so scrolling the panel is safe), rounded value boxes, toggle switches for tick boxes,
+  rounded colour swatches, dark drop-downs (`Theme.DarkCombo` paints the closed box; Windows' theme ignores BackColor).
+- **Media bin:** owner-drawn ListView cards (rounded thumbnail, name, details, VIDEO/AUDIO/IMAGE badge, thin progress
+  bar while optimising, hover/selected states), a header with a file count, an empty-state message, and files can be
+  dropped onto the bin itself. Side panels are sized for display scaling (capped at a quarter of the window each).
+
+### Icon update (2026-11-24): the fly without gloves, on yellow
+Supersedes the 2026-11-23 icon. Owner: "change the logo to have no boxing gloves and put a yellow background on it".
+`assets/icon.svg` is now `film-fly.svg` (no gloves) with the picture area behind the fly in yellow `#ffd21f` (the wing
+veins match it); the film frame stays dark. The black fly on yellow is what keeps it readable at 16 px.
+Kept in `assets/concepts/`: `film-fly-gloves.svg` (the previous icon), `film-fly-yellow-tile.svg` (the alternative
+with the outer tile yellow instead), and `yellow-comparison.png`. Rendered with headless Edge to a 512 px PNG, then
+scaled to `assets/icon-128.png`/`icon-512.png` and a PNG-entry `flyweight.ico` (16–256 px).
+
+### D38. Deleting a clip keeps the other tracks in sync (2026-11-24)
+Owner: "when I delete, it should keep any other tracks in sync by default". Overlays and audio-track items sit at fixed
+timeline times (D23/D34), so a ripple delete on the main track used to leave everything after the cut out of step.
+`TimelineOps.Delete(p, id, keepTracksInSync = true)` now also calls `CutRangeFromTracks(from, to)`: items after the
+deleted clip slide left by its length; the part of an item inside the deleted stretch is cut out (an item spanning it
+is split in two, each half staying with its footage); slivers under `MinClipLength` are dropped. Applies to Delete,
+multi-select delete and Remove from project. `keepTracksInSync: false` keeps the old behaviour for callers that need it
+(no UI switch yet).
+- **Trims too (same day, owner):** dragging a clip's edge keeps the tracks in sync. `TimelineControl` takes a
+  `TimelineOps.CaptureTracks` snapshot when the drag starts and `TrimIn`/`TrimOut(..., syncFrom)` rebuild the tracks
+  from it on every mouse move, then cut (`CutRangeFromTracks`) or open (`InsertGapInTracks`) the difference at the
+  trimmed edge. From a snapshot, so dragging back and forth never loses an item. Speed changes don't move the tracks.
+- **Typed speed:** `SpeedBox` replaces the preset drop-down: type any value 0.25–4 ("1.08", "1.08x", "108%"),
+  ↑/↓ step through the presets, ▾ lists them.
+- **Follow-ups (same day):** speed presets now step by 0.05 near 1× (0.85–1.3) and 0.1 a little further out, since
+  "1.25 is quite fast"; slider value boxes are narrower (42 units, "100%" with no space) so the tracks keep their length.
 
 ### YouTube thumbnail preset (2026-11-24)
 Right-click the preview → "Save as YouTube thumbnail": the frame under the playhead (zoom, brightness, annotations,
