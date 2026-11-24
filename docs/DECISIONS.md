@@ -442,3 +442,11 @@ multi-select delete and Remove from project. `keepTracksInSync: false` keeps the
   ↑/↓ step through the presets, ▾ lists them.
 - **Follow-ups (same day):** speed presets now step by 0.05 near 1× (0.85–1.3) and 0.1 a little further out, since
   "1.25 is quite fast"; slider value boxes are narrower (42 units, "100%" with no space) so the tracks keep their length.
+
+### YouTube thumbnail preset (2026-11-24)
+Right-click the preview → "Save as YouTube thumbnail": the frame under the playhead (zoom, brightness, annotations,
+same renderer as Save frame) at exactly 1280×720, saved as a JPEG next to the footage ("Trip thumbnail 1m23s.jpg")
+and added to the Media bin. JPEG, not PNG: a busy 1280×720 PNG can exceed YouTube's 2 MB thumbnail limit (random
+pixels: 2.8 MB) while the best-quality JPEG of the same frame is ~1.7 MB. `YouTubeThumbnail.SaveJpegUnderLimitAsync`
+still steps the quality down if a frame ever doesn't fit, so the file is always accepted.
+

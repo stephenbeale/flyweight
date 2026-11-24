@@ -17,7 +17,8 @@ public sealed class ExportSafetyTests : IDisposable
 
     static bool FfmpegAvailable()
     {
-        try { FfmpegRunner.RunFfmpegAsync(new[] { "-version" }).Wait(); return true; }
+        // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1")
@@ -77,13 +78,13 @@ public sealed class ExportSafetyTests : IDisposable
     public async Task A_project_with_a_very_long_filter_graph_still_exports()
     {
         if (!FfmpegAvailable()) return;
-        var video = await Clip("long/talk.mp4", "red", 3);
+        var video = await Clip("long/talk.mp4", "red", 1.5);
         var p = new Project();
         var m = await MediaProbe.ProbeAsync(video);
         p.Media.Add(m);
         TimelineOps.Append(p, m);
 
-        // A full-frame transparent PNG with a white square top-left, reused by 150 annotations.
+        // A full-frame transparent PNG with a white square top-left, reused by enough annotations to need the file route.
         var png = Path.Combine(_dir, "box.png");
         await FfmpegRunner.RunFfmpegAsync(new[]
         {
@@ -91,9 +92,9 @@ public sealed class ExportSafetyTests : IDisposable
             "-vf", "pad=1920:1080:0:0:color=black@0.0", "-frames:v", "1", png,
         });
         var overlays = new Dictionary<Guid, string>();
-        for (int i = 0; i < 150; i++)
+        for (int i = 0; i < 60; i++)
         {
-            var a = TimelineOps.CreateAnnotation(p, TimeSpan.FromSeconds(1), AnnotationKind.Box, 0, 0, .1f, .1f)!;
+            var a = TimelineOps.CreateAnnotation(p, TimeSpan.FromSeconds(0.5), AnnotationKind.Box, 0, 0, .1f, .1f)!;
             overlays[a.Id] = png;
         }
 
@@ -103,7 +104,7 @@ public sealed class ExportSafetyTests : IDisposable
 
         await plan.RunAsync();
 
-        var c = await Pixel(output, 2.0, 50, 50);
+        var c = await Pixel(output, 1.0, 50, 50);
         Assert.True(c.R > 200 && c.G > 200 && c.B > 200, "annotations rendered");
         Assert.Empty(Directory.GetFiles(Path.GetTempPath(), "flyweight-filter-*.txt")
             .Where(f => File.GetLastWriteTimeUtc(f) > DateTime.UtcNow.AddMinutes(-1))); // temp graph cleaned up

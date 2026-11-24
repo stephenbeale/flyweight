@@ -261,11 +261,21 @@ public sealed class ExportPlan
             await FfmpegRunner.RunFfmpegAsync(Arguments, Duration, progress, ct);
             UsedEncoder = FallbackArguments is null ? "x264 (CPU)" : "Intel Quick Sync (graphics chip)";
         }
-        catch (FfmpegException) when (FallbackArguments is not null && !ct.IsCancellationRequested)
+        catch (FfmpegException ex) when (FallbackArguments is not null && !ct.IsCancellationRequested && CpuRetryCouldHelp(ex))
         {
             progress?.Report(0);
             await FfmpegRunner.RunFfmpegAsync(FallbackArguments, Duration, progress, ct);
             UsedEncoder = "x264 (CPU)";
         }
     }
+
+    /// <summary>
+    /// Only retry on the CPU when the failure could be the graphics-chip encoder. A command that's too long, or a
+    /// source file that's missing or unreadable, fails the same way on x264, so don't make the user wait twice.
+    /// </summary>
+    public static bool CpuRetryCouldHelp(FfmpegException ex) =>
+        ex is not FfmpegCommandTooLongException &&
+        !ex.StderrTail.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase) &&
+        !ex.StderrTail.Contains("Invalid data found when processing input", StringComparison.OrdinalIgnoreCase) &&
+        !ex.StderrTail.Contains("Permission denied", StringComparison.OrdinalIgnoreCase);
 }

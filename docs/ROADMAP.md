@@ -213,7 +213,7 @@ hurts search. They want something that says lean / light / fast / nimble.
 - Annotation fade in/out
 - Blur/redact box; numbered callouts; freehand pen
 - ~~**Chapter markers** → YouTube description timestamps~~ ✅ (D20): M to add, Ctrl+Shift+C to copy, .txt beside exports
-- Thumbnail export (current frame + annotations at 1280×720)
+- ~~Thumbnail export (current frame + annotations at 1280×720)~~ ✅ YouTube thumbnail preset (2026-11-24)
 - **NEXT after the smoke test (owner's order, 2026-11-19):**
   1. `feature/audio`:
      - ✅ Clip volume/mute (0–200%): Properties panel slider + tickbox, M key, clip right-click menu (D22).
@@ -226,7 +226,12 @@ hurts search. They want something that says lean / light / fast / nimble.
   2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).
   3. Reverse: parked (ffmpeg `reverse` buffers the whole clip; would be short clips only).
 - Audio fades
-- Blurred-background fill for portrait clips
+- **Blurred-background fill for portrait clips: NEXT after `feature/overlay-zoom` merges** (owner asked 2026-11-24).
+  Held back because that branch reworks the same fit/zoom/crop code (ExportPlan, FrameExport, ClipLook). Plan: blur
+  only un-zoomed/un-cropped clips; export via split→scale-to-fill+boxblur→overlay of the fitted picture; preview
+  by drawing a downscaled-then-upscaled copy of the visible picture behind it (cheap blur) so it matches; Save frame
+  and thumbnail use the export path; project-level setting, new projects default to blur, old ones keep black bars.
+- ~~YouTube thumbnail preset~~ ✅ (2026-11-24): right-click preview → 1280×720 JPG under 2 MB
 - Title cards
 - Captions (.srt) export
 - **Royalty-free media search** (owner request, 2026-11-19, parked until after the smoke test): an in-app "Find
@@ -244,3 +249,23 @@ hurts search. They want something that says lean / light / fast / nimble.
 
 ## Explicitly not planned (for now)
 Vertical / 9:16 output · real-time GPU effects · AI features · transitions library
+
+## Platform & distribution (owner asked 2026-11-24)
+
+**Portable / no-admin use: already supported.** Every release ships `Flyweight-win-x64.zip` (self-contained: .NET,
+LibVLC and ffmpeg inside): unzip anywhere and run, no install, no admin. The Inno Setup installer is per-user, so it
+shouldn't need admin either. The README now links the zip. Remaining gap: some managed PCs block *any* unsigned exe
+(AppLocker / Smart App Control). Only **code signing** fixes that (paid certificate, or Azure Trusted Signing);
+it also removes the "Windows protected your PC" warning. Cost/benefit to decide later.
+
+**Linux (Ubuntu / Mint): later, as a UI port.** `Flyweight.Core` is already cross-platform (CI runs all tests on
+Ubuntu). What's Windows-only: the WinForms UI and System.Drawing (GDI+) in the annotation renderer and preview.
+Plan, in an order that's useful even before Linux ships:
+1. Move `AnnotationRenderer` / `FrameRenderer` / preview drawing from System.Drawing to **SkiaSharp** (works on
+   Windows and Linux). WinForms stays; the user sees no change. Lets the renderer be unit-tested on Linux CI too.
+2. New **Avalonia** UI project (cross-platform, close to WPF) that reuses Core + the Skia renderer: preview canvas,
+   timeline, media bin, properties, dialogs. LibVLCSharp and ffmpeg both work on Linux.
+3. Package for Linux: AppImage (portable, no root) and/or a .deb; ffmpeg from the distro or bundled.
+4. Decide whether WinForms is retired (one UI for both) or kept for Windows.
+Rough size: several weeks of evenings, mostly step 2. Don't start until the Windows version is settled.
+

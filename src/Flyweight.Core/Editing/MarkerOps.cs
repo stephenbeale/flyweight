@@ -47,4 +47,11 @@ public static class MarkerOps
             .ToList();
 
     public static string NextDefaultTitle(Project p) => $"Chapter {p.Markers.Count + 1}";
+
+    public static void Rename(Project p, Guid markerId, string title)
+    {
+        if (p.FindMarker(markerId) is { } m && !string.IsNullOrWhiteSpace(title)) m.Title = title.Trim();
+    }
+
+    public static void Delete(Project p, Guid markerId) => p.Markers.RemoveAll(m => m.Id == markerId);
 }
