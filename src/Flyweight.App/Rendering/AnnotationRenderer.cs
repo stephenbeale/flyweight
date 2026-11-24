@@ -22,6 +22,28 @@ public static class AnnotationRenderer
     public static PointF ToCanvas(RectangleF canvas, float nx, float ny) =>
         new(canvas.X + nx * canvas.Width, canvas.Y + ny * canvas.Height);
 
+    /// <summary>
+    /// Draw at <paramref name="opacity"/> (0–1, from <c>TimelineOps.AnnotationOpacity</c>) for fades: the annotation is
+    /// drawn fully opaque into a layer, then the layer is blended at that opacity, so overlapping parts (outline under
+    /// stroke, text over its background) fade together instead of showing through each other.
+    /// </summary>
+    public static void Draw(Graphics g, Annotation a, RectangleF canvas, float opacity)
+    {
+        if (opacity >= 0.999f) { Draw(g, a, canvas); return; }
+        if (opacity <= 0.001f) return;
+        var bounds = Rectangle.Round(canvas);
+        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        using var layer = new Bitmap(bounds.Width, bounds.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using (var lg = Graphics.FromImage(layer))
+        {
+            lg.Clear(Color.Transparent);
+            Draw(lg, a, new RectangleF(canvas.X - bounds.X, canvas.Y - bounds.Y, canvas.Width, canvas.Height));
+        }
+        using var attrs = new System.Drawing.Imaging.ImageAttributes();
+        attrs.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = opacity });
+        g.DrawImage(layer, bounds, 0, 0, layer.Width, layer.Height, GraphicsUnit.Pixel, attrs);
+    }
+
     public static void Draw(Graphics g, Annotation a, RectangleF canvas)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;

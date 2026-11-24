@@ -370,3 +370,11 @@ and added to the Media bin. JPEG, not PNG: a busy 1280×720 PNG can exceed YouTu
 pixels: 2.8 MB) while the best-quality JPEG of the same frame is ~1.7 MB. `YouTubeThumbnail.SaveJpegUnderLimitAsync`
 still steps the quality down if a frame ever doesn't fit, so the file is always accepted.
 
+### Annotation fade in / fade out (2026-11-24)
+Arrows, boxes and text can fade in and out (Properties → Timing: Fade in / Fade out, 0–5 s, default 0 so existing
+projects are unchanged). One rule everywhere, `TimelineOps.FadeFor` / `AnnotationOpacity`: for a run across cuts the
+fade-in happens on its first piece and the fade-out on its last (no dip at the cut); fades longer than the piece are
+scaled to fit. Preview and Save frame draw the annotation into a layer and blend it at that opacity (so the outline and
+stroke fade together); the export loops the annotation PNG for its length and uses ffmpeg `fade=...:alpha=1`. The
+selected annotation is always drawn fully visible in the preview so you can see what you're editing.
+

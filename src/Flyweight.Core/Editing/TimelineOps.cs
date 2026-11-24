@@ -670,7 +670,41 @@ public static class TimelineOps
             m.StrokeWidth = src.StrokeWidth;
             m.FontSize = src.FontSize;
             m.FontFamily = src.FontFamily;
+            m.FadeIn = src.FadeIn;
+            m.FadeOut = src.FadeOut;
         }
+    }
+
+    // ---------------- Annotation fades ----------------
+
+    /// <summary>Longest fade the UI offers, in seconds.</summary>
+    public const double MaxFade = 5;
+
+    /// <summary>
+    /// The fade-in and fade-out (seconds) that actually apply to this PIECE: fade in only on the first piece of a run,
+    /// fade out only on the last, each clamped so together they never exceed the piece's on-screen length. The preview,
+    /// Save frame and the export all use this, so they match.
+    /// </summary>
+    public static (double In, double Out, TimeSpan Start, TimeSpan End)? FadeFor(Project p, Annotation a)
+    {
+        if (AnnotationRange(p, a) is not { } r) return null;
+        var pieces = LinkedPieces(p, a);
+        double fi = pieces[0].Id == a.Id ? Math.Clamp(a.FadeIn, 0, MaxFade) : 0;
+        double fo = pieces[^1].Id == a.Id ? Math.Clamp(a.FadeOut, 0, MaxFade) : 0;
+        double len = (r.End - r.Start).TotalSeconds;
+        if (fi + fo > len && fi + fo > 0) { double k = len / (fi + fo); fi *= k; fo *= k; }
+        return (fi, fo, r.Start, r.End);
+    }
+
+    /// <summary>Opacity 0–1 of the annotation at timeline time <paramref name="t"/> (1 when it has no fades).</summary>
+    public static float AnnotationOpacity(Project p, Annotation a, TimeSpan t)
+    {
+        if (FadeFor(p, a) is not { } f) return 1f;
+        double x = 1;
+        double since = (t - f.Start).TotalSeconds, until = (f.End - t).TotalSeconds;
+        if (f.In > 0) x = Math.Min(x, since / f.In);
+        if (f.Out > 0) x = Math.Min(x, until / f.Out);
+        return (float)Math.Clamp(x, 0, 1);
     }
 
     /// <summary>Delete an annotation, and the rest of its run if it's linked.</summary>

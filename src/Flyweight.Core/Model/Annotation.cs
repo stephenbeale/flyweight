@@ -47,6 +47,12 @@ public sealed class Annotation
 
     public string FontFamily { get; set; } = "Segoe UI";
 
+    /// <summary>Seconds to fade in from invisible at the start of the run (0 = pops on). Older files load as 0.</summary>
+    public double FadeIn { get; set; }
+
+    /// <summary>Seconds to fade out to invisible at the end of the run (0 = pops off).</summary>
+    public double FadeOut { get; set; }
+
     /// <summary>
     /// Shared by the pieces of one annotation that runs across a cut (each piece is anchored to its own
     /// clip). Look and position are kept in sync across pieces; deleting one deletes the run. Null = single.
