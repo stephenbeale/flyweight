@@ -12,6 +12,10 @@ on them, add music, and export a YouTube-ready MP4, without the lag and crashes 
 **[Download Flyweight for Windows](https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-Setup.exe)**
 (Windows 10 or 11, 64-bit). Everything it needs is included.
 
+**No admin rights or can't install?** Get the
+**[portable zip](https://github.com/stephenbeale/flyweight/releases/latest/download/Flyweight-win-x64.zip)** instead:
+unzip it anywhere (Documents, a USB stick) and double-click `Flyweight.exe`. Nothing is installed.
+
 It's an early preview, so expect rough edges. Windows may say "Windows protected your PC" because the app isn't
 code-signed yet: click **More info**, then **Run anyway**.
 

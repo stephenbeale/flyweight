@@ -13,7 +13,8 @@ public sealed class FrameExportTests : IDisposable
 
     static bool FfmpegAvailable()
     {
-        try { FfmpegRunner.RunFfmpegAsync(new[] { "-version" }).Wait(); return true; }
+        // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1") throw new InvalidOperationException("ffmpeg required", ex);

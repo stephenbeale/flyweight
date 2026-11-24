@@ -362,3 +362,11 @@ Owner request ("I NEED to add concurrent video tracks and separate audio from vi
   does (re-seeks went from ~10 per 4 s to none). (4) Resuming no longer counts paused time as video progress (it
   re-seeked the main video on every play). Overlays at ≤ 50% size decode at 480×270; drawing copies the frame out
   under the lock first so the decoder never waits for GDI+.
+
+### YouTube thumbnail preset (2026-11-24)
+Right-click the preview → "Save as YouTube thumbnail": the frame under the playhead (zoom, brightness, annotations,
+same renderer as Save frame) at exactly 1280×720, saved as a JPEG next to the footage ("Trip thumbnail 1m23s.jpg")
+and added to the Media bin. JPEG, not PNG: a busy 1280×720 PNG can exceed YouTube's 2 MB thumbnail limit (random
+pixels: 2.8 MB) while the best-quality JPEG of the same frame is ~1.7 MB. `YouTubeThumbnail.SaveJpegUnderLimitAsync`
+still steps the quality down if a frame ever doesn't fit, so the file is always accepted.
+
