@@ -503,16 +503,82 @@ public static class TimelineOps
         p.Timeline.Insert(newIndex, clip);
     }
 
-    public static void TrimIn(Project p, Guid clipId, TimeSpan newIn)
+    /// <summary>
+    /// Move a clip's in point (source time). Later clips ripple. With <paramref name="syncFrom"/> (tracks captured by
+    /// <see cref="CaptureTracks"/> when the drag began) the overlay and audio tracks ripple with it, from that snapshot,
+    /// so dragging back and forth never loses an item: trimming footage off the front cuts the same stretch out of
+    /// them, bringing footage back opens a gap in them (see <see cref="CutRangeFromTracks"/>, <see cref="InsertGapInTracks"/>).
+    /// </summary>
+    public static void TrimIn(Project p, Guid clipId, TimeSpan newIn, TrackSnapshot? syncFrom = null)
     {
         if (p.FindClip(clipId) is not { } c) return;
+        var start = ClipStart(p, clipId);
         c.In = Clamp(newIn, TimeSpan.Zero, c.Out - MinClipLength);
+        if (syncFrom is { } snap) SyncTracksToTrim(p, snap, clipId, start, atEnd: false);
     }
 
-    public static void TrimOut(Project p, Guid clipId, TimeSpan newOut)
+    /// <summary>Move a clip's out point (source time). Later clips ripple; tracks follow as for <see cref="TrimIn"/>.</summary>
+    public static void TrimOut(Project p, Guid clipId, TimeSpan newOut, TrackSnapshot? syncFrom = null)
     {
         if (p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is not { } m) return;
+        var start = ClipStart(p, clipId);
         c.Out = Clamp(newOut, c.In + MinClipLength, m.Duration);
+        if (syncFrom is { } snap) SyncTracksToTrim(p, snap, clipId, start, atEnd: true);
+    }
+
+    /// <summary>The overlay and audio tracks, and one clip's length, at the start of a trim drag.</summary>
+    public sealed record TrackSnapshot(IReadOnlyList<OverlayClip> Overlays, IReadOnlyList<AudioItem> Audio, Guid ClipId, TimeSpan ClipLength);
+
+    /// <summary>Snapshot the tracks before trimming <paramref name="clipId"/>, so the drag can keep them in sync.</summary>
+    public static TrackSnapshot? CaptureTracks(Project p, Guid clipId) =>
+        p.FindClip(clipId) is { } c
+            ? new TrackSnapshot(p.Overlays.Select(o => o.Clone()).ToList(), p.AudioTrack.Select(a => a.Clone()).ToList(), clipId, c.Duration)
+            : null;
+
+    /// <summary>Restore the tracks from the snapshot, then cut or open the gap the trim made, at the trimmed edge.</summary>
+    static void SyncTracksToTrim(Project p, TrackSnapshot snap, Guid clipId, TimeSpan start, bool atEnd)
+    {
+        if (snap.ClipId != clipId || p.FindClip(clipId) is not { } c) return;
+        p.Overlays.Clear();
+        p.Overlays.AddRange(snap.Overlays.Select(o => o.Clone()));
+        p.AudioTrack.Clear();
+        p.AudioTrack.AddRange(snap.Audio.Select(a => a.Clone()));
+        var change = c.Duration - snap.ClipLength; // + = longer
+        var edge = atEnd ? start + snap.ClipLength : start;
+        if (change < TimeSpan.Zero) CutRangeFromTracks(p, atEnd ? edge + change : edge, atEnd ? edge : edge - change);
+        else if (change > TimeSpan.Zero) InsertGapInTracks(p, edge, change);
+    }
+
+    /// <summary>
+    /// Open a gap of <paramref name="length"/> at timeline time <paramref name="at"/> in the overlay and audio tracks,
+    /// as inserting footage on the main track does: items from there on slide right, and an item running across
+    /// <paramref name="at"/> is split so each part stays with its footage.
+    /// </summary>
+    public static void InsertGapInTracks(Project p, TimeSpan at, TimeSpan length)
+    {
+        if (length <= TimeSpan.Zero) return;
+        foreach (var o in p.Overlays.ToList())
+        {
+            if (o.Start >= at) { o.Start += length; continue; }
+            if (o.End <= at) continue;
+            var right = o.Clone();
+            right.Id = Guid.NewGuid();
+            right.In = o.In + (at - o.Start);
+            right.Start = at + length;
+            o.Out = right.In;
+            p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right);
+        }
+        foreach (var a in p.AudioTrack.ToList())
+        {
+            if (a.Start >= at) { a.Start += length; continue; }
+            if (a.End <= at) continue;
+            var right = a.Clone();
+            right.Id = Guid.NewGuid();
+            right.In = a.In + (at - a.Start);
+            right.Start = at + length;
+            a.Out = right.In;
+            p.AudioTrack.Insert(p.AudioTrack.IndexOf(a) + 1, right);
+        }
     }
 
     /// <summary>Loudest a clip can be turned up (200%).</summary>

@@ -149,6 +149,61 @@ public class MultiTrackTests
         Assert.Equal((S(10), S(10), S(60)), (right.Start, right.In, right.Out)); // from 10 plays song 10–60
     }
 
+    // ---------------- Trimming a clip edge keeps the other tracks in sync ----------------
+
+    [Fact]
+    public void Trimming_a_clip_end_shorter_cuts_that_stretch_from_the_tracks_and_slides_later_items()
+    {
+        var p = new Project();
+        var a = TimelineOps.Append(p, Video("a.mp4", 10));         // 0–10
+        TimelineOps.Append(p, Video("b.mp4", 10));                 // 10–20
+        var over = TimelineOps.AddOverlay(p, Video("cam.mp4", 30), S(8)); // 8–12: across the cut
+        over.Out = S(4);
+        var later = TimelineOps.AddAudio(p, Song(3), S(15));       // 15–18
+
+        var snap = TimelineOps.CaptureTracks(p, a.Id);
+        TimelineOps.TrimOut(p, a.Id, S(7), snap);                  // a is now 0–7: its 7–10 is gone
+
+        // The overlay lost the 8–10 part that sat over the removed footage; its 10–12 part now starts at 7.
+        var o = Assert.Single(p.Overlays);
+        Assert.Equal((S(7), S(2), S(4)), (o.Start, o.In, o.Out));
+        Assert.Equal(S(12), p.AudioTrack[0].Start);                // slid left by 3
+
+        // Dragging back to where it was restores everything exactly (from the snapshot, nothing lost).
+        TimelineOps.TrimOut(p, a.Id, S(10), snap);
+        o = Assert.Single(p.Overlays);
+        Assert.Equal((over.Id, S(8), S(0), S(4)), (o.Id, o.Start, o.In, o.Out));
+        Assert.Equal(S(15), p.AudioTrack[0].Start);
+    }
+
+    [Fact]
+    public void Bringing_footage_back_at_a_clip_front_opens_a_gap_and_splits_items_across_the_edge()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("x.mp4", 5));                  // 0–5
+        var a = TimelineOps.Append(p, Video("a.mp4", 10));         // 5–12 after the trim below
+        TimelineOps.TrimIn(p, a.Id, S(3));
+        var over = TimelineOps.AddOverlay(p, Video("cam.mp4", 30), S(4)); // 4–8: across the start of a
+        over.Out = S(4);
+
+        TimelineOps.TrimIn(p, a.Id, S(1), TimelineOps.CaptureTracks(p, a.Id)); // 2s of a's footage back, at 5
+
+        Assert.Equal(2, p.Overlays.Count);
+        var (left, right) = (p.Overlays[0], p.Overlays[1]);
+        Assert.Equal((S(4), S(0), S(1)), (left.Start, left.In, left.Out));   // 4–5, over x as before
+        Assert.Equal((S(7), S(1), S(4)), (right.Start, right.In, right.Out)); // 7–10: still over a's footage 3–6
+    }
+
+    [Fact]
+    public void Trimming_without_a_snapshot_leaves_the_tracks_alone()
+    {
+        var p = new Project();
+        var a = TimelineOps.Append(p, Video("a.mp4", 10));
+        var music = TimelineOps.AddAudio(p, Song(5), S(12));
+        TimelineOps.TrimOut(p, a.Id, S(6));
+        Assert.Equal(S(12), music.Start);
+    }
+
     [Fact]
     public void Deleting_several_clips_keeps_tracks_in_sync_whatever_the_order()
     {

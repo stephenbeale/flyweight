@@ -35,7 +35,7 @@ public sealed class ClipPropertiesPanel : PropertySheet
         ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 4, 0, 2),
         Text = "Crop cuts edges off (the rest is fitted to the frame); zoom magnifies. Both work on the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
     };
-    readonly Theme.DarkCombo _speed = new() { Width = 90, MaxDropDownItems = 14 };
+    readonly SpeedBox _speed = new();
     readonly List<Control> _speedControls = new();
     bool _loading;
     int _multi = 1;
@@ -55,13 +55,9 @@ public sealed class ClipPropertiesPanel : PropertySheet
     {
         _heading = Group("Clip");
         Span(_name);
-        foreach (var sp in TimelineOps.SpeedPresets) _speed.Items.Add($"{sp:0.##}×");
         _speedControls.Add(Row("Speed", _speed));
         _speedControls.Add(_speed);
-        _speed.SelectedIndexChanged += (_, _) =>
-        {
-            if (!_loading && _speed.SelectedIndex >= 0) SpeedChanged?.Invoke(TimelineOps.SpeedPresets[_speed.SelectedIndex]);
-        };
+        _speed.Picked += v => { if (!_loading) SpeedChanged?.Invoke(v); };
         Group("Audio");
         Row("Volume", _volume);
         Row("", _muted);
@@ -105,9 +101,7 @@ public sealed class ClipPropertiesPanel : PropertySheet
         {
             SetPictureVisible(true);
             foreach (var sc in _speedControls) sc.Visible = true;
-            int si = Array.FindIndex(TimelineOps.SpeedPresets, v => Math.Abs(v - c.Speed) < 0.001);
-            if (si < 0) { _speed.Items.Add($"{c.Speed:0.##}×"); si = _speed.Items.Count - 1; } // a hand-edited file
-            _speed.SelectedIndex = si;
+            _speed.SetValue(c.Speed);
             _speed.Enabled = media is not { IsStill: true }; // stills: drag the edge to change how long they show
             _zoom.SetValue((int)Math.Round(c.Zoom * 100));
             _panX.SetValue((int)Math.Round(c.PanX * 100));
