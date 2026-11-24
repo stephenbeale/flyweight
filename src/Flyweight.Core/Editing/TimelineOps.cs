@@ -357,12 +357,73 @@ public static class TimelineOps
     public static List<OverlayClip> OverlaysAt(Project p, TimeSpan t) =>
         p.Overlays.Where(o => o.Start <= t && t < o.End).OrderBy(o => o.Track).ToList(); // OrderBy is stable
 
-    /// <summary>Ripple delete: remove the clip and close the gap. Its annotations go too.</summary>
-    public static void Delete(Project p, Guid clipId)
+    /// <summary>
+    /// Ripple delete: remove the clip and close the gap. Its annotations and markers go too. With
+    /// <paramref name="keepTracksInSync"/> (the default) the overlay tracks and the audio track close the same gap, so
+    /// everything after the cut stays lined up with the footage it was placed against (see <see cref="CutRangeFromTracks"/>).
+    /// </summary>
+    public static void Delete(Project p, Guid clipId, bool keepTracksInSync = true)
     {
-        p.Timeline.RemoveAll(c => c.Id == clipId);
+        int index = p.Timeline.FindIndex(c => c.Id == clipId);
+        if (index < 0) return;
+        var start = ClipStart(p, index);
+        var end = start + p.Timeline[index].Duration;
+        p.Timeline.RemoveAt(index);
         p.Annotations.RemoveAll(a => a.ClipId == clipId);
         p.Markers.RemoveAll(m => m.ClipId == clipId);
+        if (keepTracksInSync) CutRangeFromTracks(p, start, end);
+    }
+
+    /// <summary>
+    /// Take timeline range [<paramref name="from"/>, <paramref name="to"/>) out of the overlay and audio tracks, as a
+    /// ripple delete does to the main track: items after it slide left by its length, the part of any item inside it
+    /// is removed (an item spanning the whole range is cut in two, each half staying with its footage), and leftover
+    /// slivers shorter than <see cref="MinClipLength"/> are dropped.
+    /// </summary>
+    public static void CutRangeFromTracks(Project p, TimeSpan from, TimeSpan to)
+    {
+        var gap = to - from;
+        if (gap <= TimeSpan.Zero) return;
+
+        foreach (var o in p.Overlays.ToList())
+        {
+            if (o.End <= from) continue;
+            if (o.Start >= to) { o.Start -= gap; continue; }
+            if (o.Start < from && o.End > to)
+            {
+                // Spans the cut: the right half starts again at the cut point.
+                var right = new OverlayClip
+                {
+                    SourceId = o.SourceId, Track = o.Track, Start = from, In = o.In + (to - o.Start), Out = o.Out,
+                    Scale = o.Scale, X = o.X, Y = o.Y, Zoom = o.Zoom, PanX = o.PanX, PanY = o.PanY, Volume = o.Volume, Muted = o.Muted,
+                    CropLeft = o.CropLeft, CropTop = o.CropTop, CropRight = o.CropRight, CropBottom = o.CropBottom,
+                };
+                o.Out = o.In + (from - o.Start);
+                p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right);
+                if (right.Duration < MinClipLength) p.Overlays.Remove(right);
+            }
+            else if (o.Start < from) o.Out -= o.End - from;                     // ends inside the cut
+            else if (o.End > to) { o.In += to - o.Start; o.Start = from; }      // starts inside the cut
+            else { p.Overlays.Remove(o); continue; }                            // wholly inside
+            if (o.Duration < MinClipLength) p.Overlays.Remove(o);
+        }
+
+        foreach (var a in p.AudioTrack.ToList())
+        {
+            if (a.End <= from) continue;
+            if (a.Start >= to) { a.Start -= gap; continue; }
+            if (a.Start < from && a.End > to)
+            {
+                var right = new AudioItem { SourceId = a.SourceId, Start = from, In = a.In + (to - a.Start), Out = a.Out, Volume = a.Volume, Muted = a.Muted };
+                a.Out = a.In + (from - a.Start);
+                p.AudioTrack.Insert(p.AudioTrack.IndexOf(a) + 1, right);
+                if (right.Duration < MinClipLength) p.AudioTrack.Remove(right);
+            }
+            else if (a.Start < from) a.Out -= a.End - from;
+            else if (a.End > to) { a.In += to - a.Start; a.Start = from; }
+            else { p.AudioTrack.Remove(a); continue; }
+            if (a.Duration < MinClipLength) p.AudioTrack.Remove(a);
+        }
     }
 
     /// <summary>
@@ -473,8 +534,14 @@ public static class TimelineOps
 
     public const double MinSpeed = 0.25, MaxSpeed = 4.0;
 
-    /// <summary>The speeds offered in the UI.</summary>
-    public static readonly double[] SpeedPresets = { 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4 };
+    /// <summary>
+    /// The speeds offered in the UI: fine steps near normal speed (owner: "1.25 is quite fast"), coarser further out.
+    /// </summary>
+    public static readonly double[] SpeedPresets =
+    {
+        0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1,
+        1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2, 2.5, 3, 4,
+    };
 
     /// <summary>
     /// Play a clip faster or slower (clamped to 0.25–4). Its In/Out don't change, so its annotations stay on the same
@@ -566,6 +633,87 @@ public static class TimelineOps
             case CropSide.Top: o.Y += (v - ClipLook.CleanCrop(o.CropTop)) * fullH / 2; o.CropTop = v; break;
             default: o.Y -= (v - ClipLook.CleanCrop(o.CropBottom)) * fullH / 2; o.CropBottom = v; break;
         }
+    }
+
+    /// <summary>
+    /// Drag one edge of an overlay's box to <paramref name="edge"/> (a canvas fraction: across for Left/Right, down for
+    /// Top/Bottom). What's on screen stays exactly where it is, zoomed or not: the box just shows less (or more) of it.
+    /// <see cref="SetOverlayCrop"/> alone can't promise that once the overlay is zoomed, because zoom works inside the
+    /// crop, so changing the crop also re-maps the zoom; here crop and pan are solved together with zoom and size fixed.
+    /// </summary>
+    public static void TrimOverlayEdge(Project p, Guid overlayId, CropSide side, double edge)
+    {
+        if (p.FindOverlay(overlayId) is not { } o || !double.IsFinite(edge)) return;
+        var media = p.FindMedia(o.SourceId);
+        var (bx, by, bw, bh) = OverlayLayout.Rect(o, media);
+        bool across = side is CropSide.Left or CropSide.Right, fromStart = side is CropSide.Left or CropSide.Top;
+        double start = across ? bx : by, end = start + (across ? bw : bh);
+        double now = fromStart ? start : end, other = fromStart ? end : start;
+
+        // Past a crop limit the solver would have to move the OTHER edge (or slide the picture). Instead the drag
+        // stops at the furthest point where only this edge moves: try the pointer, else search back towards now.
+        var best = SolveTrim(o, media, side, now);
+        var tryEdge = SolveTrim(o, media, side, edge);
+        if (Keeps(tryEdge)) best = tryEdge;
+        else
+        {
+            double lo = now, hi = edge;
+            for (int i = 0; i < 40; i++)
+            {
+                double mid = (lo + hi) / 2;
+                var t = SolveTrim(o, media, side, mid);
+                if (Keeps(t)) { best = t; lo = mid; } else hi = mid;
+            }
+        }
+        if (best is not { } r) return;
+        if (across) { o.CropLeft = r.C0; o.CropRight = r.C1; o.PanX = r.Pan; o.X = r.Centre; }
+        else { o.CropTop = r.C0; o.CropBottom = r.C1; o.PanY = r.Pan; o.Y = r.Centre; }
+
+        bool Keeps(Trim? t) => t is { } v && Math.Abs((fromStart ? v.End : v.Start) - other) < 1e-9;
+    }
+
+    /// <summary>One axis of an overlay after a trim: start/end crop, pan, box centre and box start/end on the canvas.</summary>
+    readonly record struct Trim(double C0, double C1, double Pan, double Centre, double Start, double End);
+
+    /// <summary>
+    /// Crop and pan (zoom and size fixed) that put <paramref name="side"/> at <paramref name="edge"/> with the picture
+    /// unmoved, clamped to the crop limits. Doesn't change <paramref name="o"/>. Null if the overlay has no size.
+    /// </summary>
+    static Trim? SolveTrim(OverlayClip o, SourceMedia? media, CropSide side, double edge)
+    {
+        var (bx, by, bw, bh) = OverlayLayout.Rect(o, media);
+        var (vx, vy, vw, vh) = OverlayLayout.CropRect(o); // the part of the source on screen now
+        double z = double.IsFinite(o.Zoom) ? Math.Clamp(o.Zoom, 1, OverlayLayout.MaxZoom) : 1, s = 1 / z;
+        bool across = side is CropSide.Left or CropSide.Right, fromStart = side is CropSide.Left or CropSide.Top;
+
+        // Along the dragged axis: box start/size on the canvas, visible start/size in the source, and canvas per source.
+        double b0 = across ? bx : by, bs = across ? bw : bh, v0 = across ? vx : vy, vs = across ? vw : vh;
+        if (bs <= 0 || vs <= 0) return null;
+        double mag = bs / vs;
+        double minVisible = (1 - 2 * ClipLook.MaxCropEach) * s; // what the tightest allowed crop shows at this zoom
+
+        double nv0 = v0, nvs;
+        if (fromStart)
+        {
+            double cut = Math.Clamp((edge - b0) / mag, -v0, vs - minVisible); // negative = uncrop
+            nv0 = v0 + cut;
+            nvs = vs - cut;
+        }
+        else nvs = Math.Clamp((edge - b0) / mag, minVisible, 1 - v0);
+
+        // The crop that shows exactly that at the same zoom (pan placed to keep it where it was).
+        double pan = across ? o.PanX : o.PanY;
+        pan = double.IsFinite(pan) ? Math.Clamp(pan, 0, 1) : 0.5;
+        double cs = Math.Min(1, nvs * z);
+        double c0 = nv0 - pan * (1 - s) * cs;
+        c0 = Math.Clamp(c0, Math.Max(0, 1 - cs - ClipLook.MaxCropEach), Math.Min(ClipLook.MaxCropEach, 1 - cs));
+        double slack = (1 - s) * cs;
+        if (slack > 1e-9) pan = Math.Clamp((nv0 - c0) / slack, 0, 1);
+
+        // Where that lands on the canvas.
+        double shown0 = c0 + pan * slack, shownSize = s * cs;
+        double nb0 = b0 + (shown0 - v0) * mag, nbs = shownSize * mag;
+        return new Trim(ClipLook.CleanCrop(c0), ClipLook.CleanCrop(1 - c0 - cs), pan, nb0 + nbs / 2, nb0, nb0 + nbs);
     }
 
     public static void ResetOverlayCrop(Project p, Guid overlayId)

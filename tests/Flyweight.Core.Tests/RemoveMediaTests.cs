@@ -29,7 +29,10 @@ public class RemoveMediaTests
         Assert.DoesNotContain(a, p.Media);
         Assert.Equal(new[] { keep.Id }, p.Timeline.Select(c => c.Id));
         Assert.Equal(new[] { kept.Id }, p.Annotations.Select(x => x.Id));
-        Assert.Single(p.AudioTrack);
+        // The music keeps in sync with what's left: the stretches under the removed clips are cut out of it,
+        // leaving the part that played under "b" (song 10–20) at the start of the timeline.
+        Assert.Equal((S(0), S(10), S(20)), (p.AudioTrack[0].Start, p.AudioTrack[0].In, p.AudioTrack[0].Out));
+        Assert.All(p.AudioTrack, x => Assert.Equal(music.Id, x.SourceId));
 
         TimelineOps.RemoveMedia(p, music.Id);
         Assert.Empty(p.AudioTrack);

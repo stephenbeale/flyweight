@@ -88,9 +88,82 @@ public class MultiTrackTests
         Assert.True(clip.Muted);
         Assert.Contains(item, p.AudioTrack);
 
-        // Independent from now on: rippling the video doesn't move it.
+        // Deleting an earlier clip keeps it in sync with its video (it slides left with it)...
         TimelineOps.Delete(p, p.Timeline[0].Id);
-        Assert.Equal(S(3), item.Start);
+        Assert.Equal(S(0), item.Start);
+        // ...unless asked not to.
+        TimelineOps.Append(p, Video("c.mp4", 5));
+        TimelineOps.Delete(p, p.Timeline[0].Id, keepTracksInSync: false);
+        Assert.Equal(S(0), item.Start);
+    }
+
+    // ---------------- Delete keeps the other tracks in sync ----------------
+
+    static SourceMedia Song(double secs) => new() { OriginalPath = "song.mp3", Duration = S(secs), HasAudio = true, IsAudioOnly = true };
+
+    [Fact]
+    public void Deleting_a_clip_slides_later_overlays_and_audio_left_and_leaves_earlier_ones()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("a.mp4", 10));                 // 0–10
+        var mid = TimelineOps.Append(p, Video("b.mp4", 5));        // 10–15  ← deleted
+        TimelineOps.Append(p, Video("c.mp4", 10));                 // 15–25
+        var early = TimelineOps.AddOverlay(p, Video("cam.mp4", 30), S(2));
+        early.Out = S(5);                                          // 2–7: before the cut
+        var late = TimelineOps.AddOverlay(p, Video("cam2.mp4", 30), S(17));
+        late.Out = S(4);                                           // 17–21: after it
+        var music = TimelineOps.AddAudio(p, Song(3), S(20));       // 20–23: after it
+
+        TimelineOps.Delete(p, mid.Id);
+
+        Assert.Equal((S(2), S(5)), (early.Start, early.Duration));
+        Assert.Equal((S(12), S(4)), (late.Start, late.Duration));
+        Assert.Equal((S(15), S(3)), (music.Start, music.Duration));
+    }
+
+    [Fact]
+    public void Deleting_a_clip_cuts_the_same_stretch_out_of_overlapping_items()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("a.mp4", 10));                 // 0–10
+        var mid = TimelineOps.Append(p, Video("b.mp4", 5));        // 10–15  ← deleted
+        TimelineOps.Append(p, Video("c.mp4", 10));                 // 15–25
+        var endsInside = TimelineOps.AddOverlay(p, Video("x.mp4", 30), S(8));   // 8–12
+        endsInside.Out = S(4);
+        var startsInside = TimelineOps.AddOverlay(p, Video("y.mp4", 30), S(13)); // 13–18
+        startsInside.Out = S(5);
+        var inside = TimelineOps.AddOverlay(p, Video("z.mp4", 30), S(11));       // 11–13
+        inside.Out = S(2);
+        var song = TimelineOps.AddAudio(p, Song(60), S(5));        // 5–65: spans the whole cut
+
+        TimelineOps.Delete(p, mid.Id);
+
+        Assert.Equal((S(8), S(0), S(2)), (endsInside.Start, endsInside.In, endsInside.Out));     // 8–10
+        Assert.Equal((S(10), S(2), S(5)), (startsInside.Start, startsInside.In, startsInside.Out)); // 10–13, same footage after the cut
+        Assert.DoesNotContain(inside, p.Overlays);
+
+        // The music is cut in two: what played under the deleted clip is gone, the rest stays under its footage.
+        Assert.Equal(2, p.AudioTrack.Count);
+        var (left, right) = (p.AudioTrack[0], p.AudioTrack[1]);
+        Assert.Equal((S(5), S(0), S(5)), (left.Start, left.In, left.Out));    // 5–10 plays song 0–5
+        Assert.Equal((S(10), S(10), S(60)), (right.Start, right.In, right.Out)); // from 10 plays song 10–60
+    }
+
+    [Fact]
+    public void Deleting_several_clips_keeps_tracks_in_sync_whatever_the_order()
+    {
+        var p = new Project();
+        var c0 = TimelineOps.Append(p, Video("a.mp4", 4));   // 0–4   ← deleted
+        TimelineOps.Append(p, Video("b.mp4", 6));            // 4–10
+        var c2 = TimelineOps.Append(p, Video("c.mp4", 5));   // 10–15 ← deleted
+        TimelineOps.Append(p, Video("d.mp4", 5));            // 15–20
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 30), S(16)); // over d.mp4, 1s in
+        o.Out = S(2);
+
+        TimelineOps.Delete(p, c0.Id);
+        TimelineOps.Delete(p, c2.Id);
+
+        Assert.Equal(S(7), o.Start); // b (6s) then d: still 1s into d.mp4
     }
 
     [Fact]
@@ -412,6 +485,70 @@ public class MultiTrackTests
         TimelineOps.SetOverlayZoom(p, o.Id, 2);
         var (cx, cy, cw, ch) = OverlayLayout.CropRect(o);
         Assert.Equal((0.375, 0.25, 0.25, 0.5), (Math.Round(cx, 6), Math.Round(cy, 6), Math.Round(cw, 6), Math.Round(ch, 6)));
+    }
+
+    /// <summary>Where a source point (fractions of the source) appears on the canvas, or null if it's outside the box.</summary>
+    static (double X, double Y)? ScreenOf(OverlayClip o, SourceMedia m, double u, double v)
+    {
+        var (bx, by, bw, bh) = OverlayLayout.Rect(o, m);
+        var (vx, vy, vw, vh) = OverlayLayout.CropRect(o);
+        if (u < vx - 1e-9 || u > vx + vw + 1e-9 || v < vy - 1e-9 || v > vy + vh + 1e-9) return null;
+        return (bx + (u - vx) / vw * bw, by + (v - vy) / vh * bh);
+    }
+
+    [Theory]
+    [InlineData(CropSide.Left, 0.66)]
+    [InlineData(CropSide.Right, 0.80)]
+    [InlineData(CropSide.Top, 0.33)]
+    [InlineData(CropSide.Bottom, 0.50)]
+    [InlineData(CropSide.Right, 0.95)] // uncropping back out
+    public void Dragging_an_edge_of_a_zoomed_cropped_overlay_moves_only_that_edge_and_nothing_slides(CropSide side, double edge)
+    {
+        // Like the owner's: zoomed 311% inside an existing crop.
+        var p = new Project();
+        var cam = Video("cam.mp4", 10);
+        var o = TimelineOps.AddOverlay(p, cam, S(0));
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.77, 0.43, 0.48);
+        o.CropLeft = 0.13; o.CropTop = 0.16; o.CropRight = 0.35; o.CropBottom = 0.27;
+        TimelineOps.SetOverlayZoom(p, o.Id, 3.11);
+        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam);
+        var (vx, vy, vw, vh) = OverlayLayout.CropRect(o);
+        double zoom = o.Zoom, scale = o.Scale;
+        // A source point that stays visible (inside the box after the trim too) before the drag.
+        var probe = (u: vx + vw * 0.2, v: vy + vh * 0.2);
+        if (side is CropSide.Left) probe.u = vx + vw * 0.9;
+        if (side is CropSide.Top) probe.v = vy + vh * 0.9;
+        var before = ScreenOf(o, cam, probe.u, probe.v)!.Value;
+
+        TimelineOps.TrimOverlayEdge(p, o.Id, side, edge);
+
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        switch (side)
+        {
+            case CropSide.Left: Assert.Equal(edge, x, 6); Assert.Equal(x0 + w0, x + w, 6); Assert.Equal((y0, h0), (y, h)); break;
+            case CropSide.Right: Assert.Equal(edge, x + w, 6); Assert.Equal(x0, x, 6); Assert.Equal((y0, h0), (y, h)); break;
+            case CropSide.Top: Assert.Equal(edge, y, 6); Assert.Equal(y0 + h0, y + h, 6); Assert.Equal((x0, w0), (x, w)); break;
+            default: Assert.Equal(edge, y + h, 6); Assert.Equal(y0, y, 6); Assert.Equal((x0, w0), (x, w)); break;
+        }
+        var after = ScreenOf(o, cam, probe.u, probe.v)!.Value;
+        Assert.Equal(before.X, after.X, 6); // the picture didn't slide or grow
+        Assert.Equal(before.Y, after.Y, 6);
+        Assert.Equal((zoom, scale), (o.Zoom, o.Scale));
+    }
+
+    [Fact]
+    public void Dragging_an_edge_past_the_limit_stops_at_the_tightest_crop()
+    {
+        var p = new Project();
+        var cam = Video("cam.mp4", 10);
+        var o = TimelineOps.AddOverlay(p, cam, S(0));
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.4); // 0.3–0.7 across
+        TimelineOps.TrimOverlayEdge(p, o.Id, CropSide.Right, 0.0); // way past the left edge
+        var (x, _, w, _) = OverlayLayout.Rect(o, cam);
+        Assert.Equal(0.3, x, 6);                                   // left edge untouched
+        Assert.Equal(0.4 * (1 - ClipLook.MaxCropEach), w, 6);      // one side can take at most 45%
+        Assert.Equal(ClipLook.MaxCropEach, o.CropRight, 6);
+        Assert.Equal(0, o.CropLeft, 6);
     }
 
     [Fact]

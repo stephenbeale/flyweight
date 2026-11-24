@@ -262,6 +262,7 @@ public sealed class OverlayLanePlayer : IDisposable
             {
                 using var pen = new Pen(Color.FromArgb(0, 170, 255), 2f) { DashStyle = DashStyle.Dash };
                 g.DrawRectangle(pen, dest.X, dest.Y, dest.Width, dest.Height);
+                DrawGrips(g, dest);
             }
         }
     }
@@ -289,6 +290,38 @@ public sealed class OverlayLanePlayer : IDisposable
             layer.HasSnap = true;
         }
         return layer.Snap;
+    }
+
+    /// <summary>
+    /// Grips on the selected overlay: white bars at the edge midpoints (drag to crop) and square corners (drag to
+    /// resize). PreviewCanvas hit-tests the same spots.
+    /// </summary>
+    static void DrawGrips(Graphics g, RectangleF r)
+    {
+        var accent = Color.FromArgb(0, 170, 255);
+        var old = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var edge = new Pen(accent, 1.5f);
+        void Bar(float cx, float cy, bool horizontal)
+        {
+            float len = Math.Min(22, (horizontal ? r.Width : r.Height) / 3), th = 6;
+            var b = horizontal ? new RectangleF(cx - len / 2, cy - th / 2, len, th) : new RectangleF(cx - th / 2, cy - len / 2, th, len);
+            using var path = Controls.Theme.Rounded(b, 3);
+            g.FillPath(Brushes.White, path);
+            g.DrawPath(edge, path);
+        }
+        Bar(r.Left + r.Width / 2, r.Top, true);
+        Bar(r.Left + r.Width / 2, r.Bottom, true);
+        Bar(r.Left, r.Top + r.Height / 2, false);
+        Bar(r.Right, r.Top + r.Height / 2, false);
+        const float s = 9;
+        foreach (var (x, y) in new[] { (r.Left, r.Top), (r.Right, r.Top), (r.Left, r.Bottom), (r.Right, r.Bottom) })
+        {
+            using var b = new SolidBrush(accent);
+            g.FillRectangle(b, x - s / 2, y - s / 2, s, s);
+            g.DrawRectangle(Pens.White, x - s / 2, y - s / 2, s, s);
+        }
+        g.SmoothingMode = old;
     }
 
     /// <summary>Where an overlay lands in the preview canvas (screen pixels).</summary>
