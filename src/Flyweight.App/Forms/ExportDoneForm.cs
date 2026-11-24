@@ -68,10 +68,10 @@ public sealed class ExportDoneForm : Form
             Text = "Enjoying Flyweight?", AutoSize = true, ForeColor = Color.Silver,
             Margin = new Padding(0, LogicalToDeviceUnits(9), LogicalToDeviceUnits(12), 0),
         };
-        var coffee = Button("☕  Buy Steve a coffee · £20", 230);
+        var coffee = Button("☕  Buy Steve a coffee", 200);
         coffee.Tint = Yellow;
         coffee.Font = new Font(Font, FontStyle.Bold);
-        new ToolTip().SetToolTip(coffee, "Opens Buy Me a Coffee in your browser. £20 is a suggestion: choose any amount there.");
+        new ToolTip().SetToolTip(coffee, "Opens Buy Me a Coffee in your browser.");
         coffee.Click += (_, _) =>
         {
             try { Process.Start(new ProcessStartInfo(coffeeUrl) { UseShellExecute = true }); }

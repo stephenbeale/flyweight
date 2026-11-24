@@ -300,8 +300,8 @@ editing, no feature gating. Don't add it anywhere else without the owner asking.
 2026-11-24, owner: "make the enjoying flyweight an actual button", then "suggest a £20 donation" with "a yellow
 background". The "Your video is ready" dialog is now our own dark `ExportDoneForm` (a TaskDialog can't colour buttons):
 Open YouTube Studio (default), Show in Explorer, Close, then below a divider "Enjoying Flyweight?" and a yellow
-"☕ Buy Steve a coffee · £20" button. It opens the page and leaves the dialog open. £20 is only a suggestion in the
-label and tooltip; the URL doesn't pre-fill an amount (not confirmed that Buy Me a Coffee supports that). Same place only.
+"☕ Buy Steve a coffee" button. It opens the page and leaves the dialog open. Same place only. (Briefly labelled
+"· £20"; the owner then asked for the number to come off, so the button names no amount.)
 
 ### Icon update (2026-11-23): black fly with red boxing gloves, in the film frame
 Supersedes D16's gold glove. The owner chose a black fly silhouette, vertical, on a white picture area inside the

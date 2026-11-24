@@ -8,7 +8,7 @@ _Last updated: 2026-11-24 (0.3.0-preview release)_
 - Overlay crop by dragging edges (picture stays still even when zoomed: `TrimOverlayEdge`), corner resize (D37).
 - Properties as rounded collapsible cards, hand-drawn sliders, toggles, dark drop-downs; Media bin cards (D37).
 - Delete and trim keep overlay/audio tracks in sync (D38); typed speed box with finer presets.
-- Icon: the fly without gloves on yellow. Export "ready" dialog is our own, with a yellow £20 coffee button.
+- Icon: the fly without gloves on yellow. Export "ready" dialog is our own, with a yellow "Buy Steve a coffee" button.
 - Testing helpers in the session scratchpad: `postclick.ps1` / `postkey.ps1` / `posttype.ps1` post input to the app's
   window (no real cursor/keyboard), `printwin.ps1` captures it. A second instance shares `recent.json` and
   `ui-state.json`: back them up and restore after testing.
