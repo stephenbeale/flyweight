@@ -114,13 +114,15 @@ public sealed class ExportPlan
             if (o.Start >= total || o.Duration < TimelineOps.MinClipLength) continue; // after the video ends: never seen
             var media = p.FindMedia(o.SourceId) ?? throw new InvalidOperationException("An overlay refers to missing media.");
             if (media.IsAudioOnly) continue;
-            var d = Sec(o.Duration);
+            var d = Sec(o.Duration); // length on the TIMELINE (after speed)
             if (media.IsStill) args.AddRange(new[] { "-loop", "1", "-framerate", "1", "-t", d, "-i", media.OriginalPath });
-            else args.AddRange(new[] { "-ss", Sec(o.In), "-t", d, "-i", media.OriginalPath });
+            else args.AddRange(new[] { "-ss", Sec(o.In), "-t", Sec(o.SourceLength), "-i", media.OriginalPath });
+            double ospeed = media.IsStill ? 1 : o.Speed;
+            bool osped = Math.Abs(ospeed - 1) > 0.0005;
             var (px, py, pw, ph) = OverlayLayout.PixelRect(o, media, w, h);
             var label = $"ov{overlays.Count}";
             // Zoom crops the ORIGINAL before scaling (sharp), like a main clip's zoom.
-            graph.Append($"[{input}:v]setpts=PTS-STARTPTS,fps={fpsStr},{OverlayLayout.CropFilter(o)}scale={pw}:{ph}:flags=bicubic,setsar=1,format=yuv420p," +
+            graph.Append($"[{input}:v]{(osped ? $"setpts=(PTS-STARTPTS)/{Num(ospeed)}" : "setpts=PTS-STARTPTS")},fps={fpsStr},{OverlayLayout.CropFilter(o)}scale={pw}:{ph}:flags=bicubic,setsar=1,format=yuv420p," +
                          $"tpad=stop=-1:stop_mode=clone,trim=duration={d},setpts=PTS+{Sec(o.Start)}/TB[{label}];\n");
             var end = o.End < total ? o.End : total;
             overlays.Add((label, px, py, o.Start, end));
@@ -128,7 +130,7 @@ public sealed class ExportPlan
             {
                 var vol = Math.Abs(o.EffectiveVolume - 1) < 0.001 ? "" : $"volume={Num(Math.Round(o.EffectiveVolume, 3))},";
                 var al = $"m{mix.Count}";
-                graph.Append($"[{input}:a]{AudioIn(media)}{vol}atrim=duration={d},adelay={(long)Math.Round(o.Start.TotalMilliseconds)}:all=1[{al}];\n");
+                graph.Append($"[{input}:a]{AudioIn(media)}{(osped ? Tempo(ospeed) : "")}{vol}atrim=duration={d},adelay={(long)Math.Round(o.Start.TotalMilliseconds)}:all=1[{al}];\n");
                 mix.Add(al);
             }
             input++;

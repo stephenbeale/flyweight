@@ -545,6 +545,44 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.True(await Rms(output, 0.2, 1.8) > 0.05, "the sped-up audio is there");
     }
 
+    [Fact]
+    public async Task Export_plays_a_2x_overlay_in_half_the_time_and_save_frame_matches()
+    {
+        if (!FfmpegAvailable()) return;
+        // Overlay footage: 2 s green then 2 s magenta. At 2x from 1 s on the timeline it shows 1–3 s,
+        // green until 2 s (footage 2 s) and magenta after; the red main picture is around it.
+        var green = await MakeClip("og.mp4", 640, 360, 2, "green", audio: false);
+        var magenta = await MakeClip("om.mp4", 640, 360, 2, "magenta", audio: false);
+        var both = Path.Combine(_dir, "ogm.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-i", green, "-i", magenta, "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", both,
+        });
+        var red = await MakeClip("om-main.mp4", 1280, 720, 4, "red", audio: false);
+        var p = new Project();
+        TimelineOps.Append(p, await MediaProbe.ProbeAsync(red));
+        var o = TimelineOps.AddOverlay(p, await MediaProbe.ProbeAsync(both), TimeSpan.FromSeconds(1));
+        TimelineOps.PlaceOverlay(p, o.Id, OverlayPosition.FullFrame);
+        TimelineOps.SetOverlaySpeed(p, o.Id, 2);
+        Assert.Equal(TimeSpan.FromSeconds(3), o.End);
+
+        var output = Path.Combine(_dir, "fast-overlay.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
+
+        static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
+        static bool IsGreen((int R, int G, int B) c) => c.G > 90 && c.R < 60 && c.B < 60;
+        static bool IsMagenta((int R, int G, int B) c) => c.R > 200 && c.B > 200 && c.G < 60;
+        Assert.True(IsRed(await Pixel(output, 0.5, 960, 540)), "before the overlay");
+        Assert.True(IsGreen(await Pixel(output, 1.5, 960, 540)), "1.5 s = footage 1 s: green");
+        Assert.True(IsMagenta(await Pixel(output, 2.5, 960, 540)), "2.5 s = footage 3 s: magenta");
+        Assert.True(IsRed(await Pixel(output, 3.5, 960, 540)), "after the overlay (it ended at 3 s, not 5 s)");
+
+        var png = Path.Combine(_dir, "fast-overlay.png");
+        await FfmpegRunner.RunFfmpegAsync(FrameExport.BuildArgs(p, FrameExport.LocateFrame(p, TimeSpan.FromSeconds(2.5))!.Value, 1920, 1080, png));
+        Assert.True(IsMagenta(await Pixel(png, 0, 960, 540)), "Save frame shows the same footage as the export");
+    }
+
     sealed class SyncProgress(Action<double> a) : IProgress<double>
     {
         public void Report(double value) => a(value);

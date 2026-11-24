@@ -254,8 +254,27 @@ public sealed class OverlayClip
 
     public bool Muted { get; set; }
 
-    [JsonIgnore] public TimeSpan Duration => Out - In;
+    /// <summary>
+    /// Playback speed, like a main clip's: 1 = as shot, 0.25–4. Older project files load as 1. Stills are always 1.
+    /// In/Out stay in SOURCE time; the overlay's length on the timeline is <see cref="Duration"/>.
+    /// </summary>
+    public double Speed { get; set; } = 1.0;
+
+    /// <summary>How much of the source file it uses (Out − In).</summary>
+    [JsonIgnore] public TimeSpan SourceLength => Out - In;
+
+    /// <summary>Length ON THE TIMELINE: <see cref="SourceLength"/> ÷ <see cref="Speed"/>.</summary>
+    [JsonIgnore] public TimeSpan Duration => Speed == 1 ? Out - In : TimeSpan.FromTicks((long)Math.Round((Out - In).Ticks / SafeSpeed));
     [JsonIgnore] public TimeSpan End => Start + Duration;
+
+    /// <summary>Source time at <paramref name="offset"/> (timeline time) into the overlay.</summary>
+    public TimeSpan SourceAt(TimeSpan offset) => Speed == 1 ? In + offset : In + TimeSpan.FromTicks((long)Math.Round(offset.Ticks * SafeSpeed));
+
+    /// <summary>Source time covered by <paramref name="timelineLength"/> of this overlay on the timeline.</summary>
+    public TimeSpan SourceSpan(TimeSpan timelineLength) =>
+        Speed == 1 ? timelineLength : TimeSpan.FromTicks((long)Math.Round(timelineLength.Ticks * SafeSpeed));
+
+    double SafeSpeed => double.IsFinite(Speed) && Speed > 0 ? Speed : 1;
     [JsonIgnore] public double EffectiveVolume => Muted ? 0 : Volume;
 
     /// <summary>A copy with the same id (for restoring a snapshot during a drag). Plain values only.</summary>

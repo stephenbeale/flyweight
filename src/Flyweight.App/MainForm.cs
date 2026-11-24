@@ -128,7 +128,7 @@ public sealed class MainForm : Form
         tools.Items.AddRange(new ToolStripItem[]
         {
             new ToolStripSeparator(),
-            Btn("Split", "Split at playhead (S): the selected overlay or audio item, else the main clip", Split),
+            Btn("Split", "Split at playhead (S): the selected overlay or audio item, else the main clip. Shift+S splits every track", Split),
             Btn("Freeze", "Freeze this frame: hold it for a few seconds (F)", () => _ = FreezeFrameAsync()),
             Btn("Delete", "Delete selection (Del)", DeleteSelection),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
@@ -469,6 +469,7 @@ public sealed class MainForm : Form
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
+            case Keys.Shift | Keys.S: SplitAll(); return true;
             case Keys.M: case Keys.C: AddMarker(); return true; // M = marker (as in Premiere/Resolve/Final Cut); C kept as an alias
             case Keys.Control | Keys.Shift | Keys.C: CopyChapters(); return true;
             case Keys.Control | Keys.Shift | Keys.E: _ = ExportFrameAsync(chooseLocation: false); return true;
@@ -608,6 +609,7 @@ public sealed class MainForm : Form
         menu.Items.Add(overlay);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Split at playhead (S)", null, (_, _) => Split());
+        menu.Items.Add("Split all tracks at playhead (Shift+S)", null, (_, _) => SplitAll());
         menu.Items.Add(new ToolStripMenuItem("Copy (Ctrl+C)", null, (_, _) => CopyClips()));
         menu.Items.Add(new ToolStripMenuItem("Paste after this clip (Ctrl+V)", null, (_, _) => PasteClips()) { Enabled = _clipCopy is not null });
         menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
@@ -836,6 +838,18 @@ public sealed class MainForm : Form
             return;
         }
         _session.Execute(proj => TimelineOps.SplitAt(proj, at));
+    }
+
+    /// <summary>Shift+S: cut every track (main clip, overlays, audio) at the playhead, one undo step.</summary>
+    void SplitAll()
+    {
+        _engine.Pause();
+        var at = _engine.Position;
+        int cuts = 0;
+        _session.Execute(proj => cuts = TimelineOps.SplitAllAt(proj, at));
+        _statusText.Text = cuts == 0
+            ? "Nothing to split here: move the playhead onto a clip, overlay or audio item (not right at its ends)."
+            : $"Split {cuts} {(cuts == 1 ? "piece" : "pieces")} on every track at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
     }
 
     async Task FreezeFrameAsync()

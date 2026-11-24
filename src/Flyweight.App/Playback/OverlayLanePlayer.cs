@@ -92,7 +92,7 @@ public sealed class OverlayLanePlayer : IDisposable
 
         foreach (var o in want.Values)
         {
-            var expected = o.In + (position - o.Start);
+            var expected = o.SourceAt(position - o.Start); // footage time (differs from timeline time when sped up)
             long ms = (long)expected.TotalMilliseconds;
             if (!_layers.TryGetValue(o.Id, out var layer))
             {
@@ -102,6 +102,11 @@ public sealed class OverlayLanePlayer : IDisposable
             }
             var player = layer.Player;
             var state = player.State; // one native call per tick per overlay
+
+            // Speed: VLC plays at the overlay's rate (pitch kept), and the drift check expects that rate.
+            float rate = (float)(double.IsFinite(o.Speed) && o.Speed > 0 ? o.Speed : 1);
+            if (Math.Abs(player.Rate - rate) > 0.001f) player.SetRate(rate);
+            layer.Clock.Rate = rate;
 
             int volume = (int)Math.Round(o.EffectiveVolume * 100);
             if (layer.Volume != volume) { player.Volume = volume; layer.Volume = volume; }

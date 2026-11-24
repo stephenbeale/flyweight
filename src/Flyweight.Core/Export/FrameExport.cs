@@ -31,7 +31,7 @@ public static class FrameExport
         foreach (var o in TimelineOps.OverlaysAt(p, t))
         {
             if (p.FindMedia(o.SourceId) is not { IsAudioOnly: false } om) continue;
-            if (!om.IsStill) args.AddRange(new[] { "-ss", Sec(o.In + (t - o.Start)) });
+            if (!om.IsStill) args.AddRange(new[] { "-ss", Sec(o.SourceAt(t - o.Start)) });
             args.AddRange(new[] { "-i", om.OriginalPath });
             var (x, y, w, h) = OverlayLayout.PixelRect(o, om, width, height);
             graph += $";[{n + 1}:v]{OverlayLayout.CropFilter(o)}scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";

@@ -27,7 +27,7 @@ GETTING STARTED
   playhead. In the preview, drag it to move it, drag its corners to resize and its edges to crop.
 - Deleting or trimming a clip keeps the overlays and music after it in sync.
 - A / R / T: draw an arrow, box or text on the video.
-- S splits at the playhead, Del deletes, Ctrl+A selects all clips, Ctrl+Z undoes.
+- S splits at the playhead (Shift+S splits every track at once), Del deletes, Ctrl+A selects all clips, Ctrl+Z undoes.
 - Export for YouTube: makes the MP4 (and a text file for title, description and chapters),
   then opens YouTube Studio for the upload.
 

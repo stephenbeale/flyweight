@@ -450,3 +450,15 @@ and added to the Media bin. JPEG, not PNG: a busy 1280×720 PNG can exceed YouTu
 pixels: 2.8 MB) while the best-quality JPEG of the same frame is ~1.7 MB. `YouTubeThumbnail.SaveJpegUnderLimitAsync`
 still steps the quality down if a frame ever doesn't fit, so the file is always accepted.
 
+
+### D39. Overlay speed; Shift+S splits every track (2026-11-24)
+Owner: "there is no speed option on overlaid videos" and "make split all tracks possible on Shift+S".
+- **Overlay speed** works like a main clip's (D28): `OverlayClip.Speed` (0.25–4, old files load as 1, stills stay 1),
+  In/Out stay in source time and `Duration` = source length ÷ speed. Every timeline→footage conversion for overlays goes
+  through `OverlayClip.SourceAt` / `SourceSpan`: split, trims (front trim keeps the END fixed), the delete/trim sync
+  (D38), Save frame and the preview (VLC plays at the rate; `PlayerClock.Rate` so the drift check expects it). Export:
+  `setpts=(PTS-STARTPTS)/speed` and `atempo` (pitch kept), reading all of the source span. Split copies now use
+  `Clone()` so new fields (like Speed) can't be dropped. Separate audio refuses a sped-up overlay (audio items are 1×).
+  Speed box in the overlay's Overlay group; the timeline label shows "2× · V2 · …".
+- **Shift+S** (`TimelineOps.SplitAllAt`): cuts the main clip, every overlay and every audio item under the playhead in
+  one undo step; items within `MinClipLength` of their ends stay whole. Also in the clip right-click menu.

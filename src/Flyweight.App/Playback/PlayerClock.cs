@@ -17,6 +17,9 @@ sealed class PlayerClock
     bool _fresh;
     readonly Stopwatch _since = new();
 
+    /// <summary>Playback rate (a sped-up overlay advances faster than the wall clock).</summary>
+    public double Rate { get; set; } = 1;
+
     /// <summary>Call after seeking or (re)starting the player.</summary>
     public void Reset(long rawTimeNow)
     {
@@ -36,6 +39,6 @@ sealed class PlayerClock
         }
         if (!_fresh) return null;
         var extra = _since.Elapsed < MaxExtrapolation ? _since.Elapsed : MaxExtrapolation;
-        return _last + (long)extra.TotalMilliseconds;
+        return _last + (long)(extra.TotalMilliseconds * Rate);
     }
 }

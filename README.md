@@ -25,7 +25,8 @@ code-signed yet: click **More info**, then **Run anyway**.
 - **Edit:** trim, split, reorder and copy clips; insert a clip at the playhead; freeze a frame; change speed (any
   value from 0.25× to 4×), zoom, crop and brightness
 - **Overlays:** up to four extra video tracks for picture-in-picture or cutaways (a webcam in the corner, a screen
-  recording over your face). Drag an overlay to move it, its corners to resize it and its edges to crop it
+  recording over your face), each with its own speed. Drag an overlay to move it, its corners to resize it and its
+  edges to crop it
 - **Stays in sync:** delete or trim a clip and the overlays and music after it move with it
 - **Annotate:** arrows, boxes and text, drawn straight onto the video
 - **Sound:** clip volume and mute, a music or narration track, and "Separate audio" to edit a clip's sound on its own
@@ -38,7 +39,7 @@ code-signed yet: click **More info**, then **Run anyway**.
 
 | Key | Action | Key | Action |
 |---|---|---|---|
-| Space | Play / pause | S | Split at playhead |
+| Space | Play / pause | S | Split at playhead (Shift+S: every track) |
 | ← / → | Previous / next frame | Del | Delete selection |
 | A / R / T | Arrow / box / text | V / Esc | Select tool |
 | M | Chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
