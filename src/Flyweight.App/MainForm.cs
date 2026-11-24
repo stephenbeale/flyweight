@@ -882,7 +882,7 @@ public sealed class MainForm : Form
         if (_session.Project.FindMarker(id) is not { } m) return;
         using var dlg = new ChapterTitleForm(m.Title, "Rename chapter");
         if (dlg.ShowDialog(this) != DialogResult.OK || dlg.ChapterTitle.Length == 0) return;
-        _session.Execute(p => { if (p.FindMarker(id) is { } mm) mm.Title = dlg.ChapterTitle; });
+        _session.Execute(p => MarkerOps.Rename(p, id, dlg.ChapterTitle));
     }
 
     void ShowChapters()
@@ -912,7 +912,7 @@ public sealed class MainForm : Form
         }
         if (_timeline.SelectedMarkerId is { } mid)
         {
-            _session.Execute(p => p.Markers.RemoveAll(m => m.Id == mid));
+            _session.Execute(p => MarkerOps.Delete(p, mid));
             _timeline.SelectedMarkerId = null;
             return;
         }
@@ -1054,7 +1054,7 @@ public sealed class MainForm : Form
             // Remember the YouTube details in the project (one undo step), only if they changed.
             var old = _session.Project.YouTube;
             if (old.Title == details.Title && old.Description == details.Description && old.Tags == details.Tags && old.SaveTextFile == details.SaveTextFile) return;
-            _session.Execute(p => p.YouTube = details.Clone());
+            _session.Execute(p => TimelineOps.SetYouTubeDetails(p, details));
         });
         dlg.ShowDialog(this);
     }
