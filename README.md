@@ -1,11 +1,12 @@
-<img src="assets/icon-128.png" width="96" align="right" alt="Flyweight icon: a black fly wearing red boxing gloves, inside a film frame">
+<img src="assets/icon-128.png" width="96" align="right" alt="Flyweight icon: a black fly on yellow, inside a film frame">
 
 # Flyweight
 
 **The video editor that punches above its weight.**
 
 A simple, lightweight video editor for Windows, made for YouTube videos. Cut your clips, draw arrows, boxes and text
-on them, add music, and export a YouTube-ready MP4, without the lag and crashes of heavyweight editors.
+on them, put a webcam or a second video on top, add music, and export a YouTube-ready MP4, without the lag and
+crashes of heavyweight editors.
 
 ## Download
 
@@ -17,9 +18,13 @@ code-signed yet: click **More info**, then **Run anyway**.
 
 ## What it does
 
-- **Edit:** trim, split, reorder and copy clips; freeze a frame; change speed, zoom and brightness
+- **Edit:** trim, split, reorder and copy clips; insert a clip at the playhead; freeze a frame; change speed (any
+  value from 0.25× to 4×), zoom, crop and brightness
+- **Overlays:** up to four extra video tracks for picture-in-picture or cutaways (a webcam in the corner, a screen
+  recording over your face). Drag an overlay to move it, its corners to resize it and its edges to crop it
+- **Stays in sync:** delete or trim a clip and the overlays and music after it move with it
 - **Annotate:** arrows, boxes and text, drawn straight onto the video
-- **Sound:** clip volume and mute, plus a music or narration track
+- **Sound:** clip volume and mute, a music or narration track, and "Separate audio" to edit a clip's sound on its own
 - **YouTube:** export at 1080p, 1440p or 4K; chapter markers become description timestamps; title, description
   and tags saved ready to paste into YouTube Studio
 - **Save frame:** grab any frame as a PNG, e.g. for a thumbnail
@@ -35,6 +40,8 @@ code-signed yet: click **More info**, then **Run anyway**.
 | M | Chapter marker | Ctrl+Shift+C | Copy YouTube chapters |
 | F | Freeze frame | Ctrl+Shift+E | Save frame as image |
 | Shift+M | Mute clip | Ctrl+Z / Ctrl+Y | Undo / redo |
+| I | Insert selected file at playhead | O | Add selected file as overlay |
+| Ctrl+C / Ctrl+V | Copy / paste clips | Ctrl+A | Select all clips |
 | Ctrl+I | Import | Ctrl+E | Export for YouTube |
 
 ## Feedback

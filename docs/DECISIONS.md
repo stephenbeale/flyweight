@@ -433,6 +433,12 @@ timeline times (D23/D34), so a ripple delete on the main track used to leave eve
 deleted clip slide left by its length; the part of an item inside the deleted stretch is cut out (an item spanning it
 is split in two, each half staying with its footage); slivers under `MinClipLength` are dropped. Applies to Delete,
 multi-select delete and Remove from project. `keepTracksInSync: false` keeps the old behaviour for callers that need it
-(no UI switch yet). Ripple TRIMS (dragging a clip edge) still don't move the other tracks.
+(no UI switch yet).
+- **Trims too (same day, owner):** dragging a clip's edge keeps the tracks in sync. `TimelineControl` takes a
+  `TimelineOps.CaptureTracks` snapshot when the drag starts and `TrimIn`/`TrimOut(..., syncFrom)` rebuild the tracks
+  from it on every mouse move, then cut (`CutRangeFromTracks`) or open (`InsertGapInTracks`) the difference at the
+  trimmed edge. From a snapshot, so dragging back and forth never loses an item. Speed changes don't move the tracks.
+- **Typed speed:** `SpeedBox` replaces the preset drop-down: type any value 0.25–4 ("1.08", "1.08x", "108%"),
+  ↑/↓ step through the presets, ▾ lists them.
 - **Follow-ups (same day):** speed presets now step by 0.05 near 1× (0.85–1.3) and 0.1 a little further out, since
   "1.25 is quite fast"; slider value boxes are narrower (42 units, "100%" with no space) so the tracks keep their length.
