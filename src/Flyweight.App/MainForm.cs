@@ -179,7 +179,7 @@ public sealed class MainForm : Form
         propsPanel.Controls.Add(_clipProps);
         propsPanel.Controls.Add(_overlayProps);
         propsPanel.Controls.Add(_propsEmpty);
-        propsPanel.Controls.Add(new Label { Text = "Properties", Dock = DockStyle.Top, Height = 26, Padding = new Padding(8, 6, 0, 0), ForeColor = Color.Silver, BackColor = Color.FromArgb(38, 38, 44) });
+        propsPanel.Controls.Add(new Theme.PanelHeader("Properties"));
 
         var centreRight = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel2, SplitterWidth = 4 };
         centreRight.Panel1.Controls.Add(previewPanel);
@@ -204,8 +204,10 @@ public sealed class MainForm : Form
         Load += (_, _) =>
         {
             main.SplitterDistance = Math.Max(200, main.Height - 290); // ruler + overlay track + video + audio track + annotation lanes
-            top.SplitterDistance = 280;
-            centreRight.SplitterDistance = Math.Max(300, centreRight.Width - 290);
+            // Side panels sized for the display scaling (fixed pixels cramped them at 150%), but never more than a
+            // quarter of the window each, so the preview keeps most of the room.
+            top.SplitterDistance = Math.Min(LogicalToDeviceUnits(270), top.Width / 4);
+            centreRight.SplitterDistance = Math.Max(300, centreRight.Width - Math.Min(LogicalToDeviceUnits(330), top.Width / 4));
         };
     }
 
@@ -386,8 +388,8 @@ public sealed class MainForm : Form
         _bin.RemoveRequested += RemoveMedia;
         _timeline.ClipMenuRequested += ShowClipMenu;
 
-        DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
-        DragDrop += async (_, e) =>
+        DragEventHandler dragEnter = (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+        DragEventHandler dragDrop = async (_, e) =>
         {
             if (e.Data?.GetData(DataFormats.FileDrop) is string[] files)
             {
@@ -396,6 +398,9 @@ public sealed class MainForm : Form
                 else await ImportAsync(files.Where(IsImportable));
             }
         };
+        DragEnter += dragEnter;
+        DragDrop += dragDrop;
+        _bin.AcceptDrops(dragEnter, dragDrop); // the bin says "drop files here", so it must take them too
 
         _autosave.Tick += (_, _) => Autosave();
         _autosave.Start();

@@ -20,20 +20,14 @@ public enum StyleEditPhase
 /// It never touches the project itself: it raises <see cref="Edit"/> and MainForm routes that through
 /// ProjectSession, so every change is undoable (rule 2).
 /// </summary>
-public sealed class AnnotationStylePanel : UserControl
+public sealed class AnnotationStylePanel : PropertySheet
 {
-    static readonly Color Bg = Color.FromArgb(28, 28, 32);
-    static readonly Color Fg = Color.Gainsboro;
-    static readonly Color InputBg = Color.FromArgb(45, 45, 52);
+    static readonly Color Fg = Theme.Text;
+    static readonly Color InputBg = Color.FromArgb(46, 46, 54);
 
     // Remembered when the fill / background is switched off, so ticking it again restores them.
     static readonly Color DefaultBoxFill = Color.FromArgb(70, 255, 214, 0);
     static readonly Color DefaultTextBg = Color.FromArgb(176, 0, 0, 0);
-
-    readonly TableLayoutPanel _table = new()
-    {
-        Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(8, 6, 8, 6), BackColor = Bg,
-    };
 
     AnnotationKind? _builtFor;
     Annotation _current = new();
@@ -44,23 +38,15 @@ public sealed class AnnotationStylePanel : UserControl
     // Controls (only those for the current kind are created).
     Swatch? _colour, _fillColour;
     Slider? _thickness, _fontSize, _fillOpacity;
-    CheckBox? _filled;
+    Theme.ToggleSwitch? _filled;
     NumericUpDown? _duration;
-    TextBox? _text;
-    ComboBox? _font;
+    RoundTextBox? _text;
+    Theme.DarkCombo? _font;
 
     /// <summary>Raised with a change to apply to the selected annotation.</summary>
     public event Action<Action<Annotation>, StyleEditPhase>? Edit;
 
-    public AnnotationStylePanel()
-    {
-        BackColor = Bg;
-        ForeColor = Fg;
-        AutoScroll = true;
-        _table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
-        _table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        Controls.Add(_table);
-    }
+    public AnnotationStylePanel() : base("annotation") { }
 
     /// <summary>Show the values of <paramref name="a"/>. Cheap: rebuilds controls only when the kind changes.</summary>
     public void ShowAnnotation(Annotation a)
@@ -88,7 +74,7 @@ public sealed class AnnotationStylePanel : UserControl
             _fillOpacity?.SetValue(_fillPct);
             if (_duration is not null)
                 _duration.Value = Math.Clamp((decimal)Math.Round((a.End - a.Start).TotalSeconds, 1), _duration.Minimum, _duration.Maximum);
-            if (_text is not null && !_text.Focused) _text.Text = a.Text;
+            if (_text is not null && !_text.Box.Focused) _text.Box.Text = a.Text;
             if (_font is not null && !_font.DroppedDown)
             {
                 if (!_font.Items.Contains(a.FontFamily)) _font.Items.Insert(0, a.FontFamily);
@@ -102,11 +88,8 @@ public sealed class AnnotationStylePanel : UserControl
 
     void Build(AnnotationKind kind)
     {
-        _table.SuspendLayout();
-        foreach (Control c in _table.Controls) c.Dispose();
-        _table.Controls.Clear();
-        _table.RowStyles.Clear();
-        _table.RowCount = 0;
+        SuspendLayout();
+        ClearGroups();
         _colour = _fillColour = null;
         _thickness = _fontSize = _fillOpacity = null;
         _filled = null;
@@ -116,17 +99,14 @@ public sealed class AnnotationStylePanel : UserControl
 
         if (kind == AnnotationKind.Text)
         {
-            Section("Text");
-            _text = new TextBox { BackColor = InputBg, ForeColor = Fg, BorderStyle = BorderStyle.FixedSingle, Dock = DockStyle.Fill };
-            _text.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; CommitText(); } };
-            _text.Leave += (_, _) => CommitText();
+            Group("Text");
+            _text = new RoundTextBox { Dock = DockStyle.Fill, Height = LogicalToDeviceUnits(30) };
+            _text.Box.TextAlign = HorizontalAlignment.Left;
+            _text.Box.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; CommitText(); } };
+            _text.Box.Leave += (_, _) => CommitText();
             Row("Text", _text);
 
-            _font = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList, BackColor = InputBg, ForeColor = Fg, FlatStyle = FlatStyle.Flat,
-                Dock = DockStyle.Fill, IntegralHeight = false, MaxDropDownItems = 20,
-            };
+            _font = new Theme.DarkCombo { Dock = DockStyle.Fill, IntegralHeight = false, MaxDropDownItems = 20 };
             _font.Items.AddRange(FontFamily.Families.Select(f => (object)f.Name).ToArray());
             _font.SelectedIndexChanged += (_, _) =>
             {
@@ -142,12 +122,12 @@ public sealed class AnnotationStylePanel : UserControl
             _colour.Picked += c => Raise(a => a.StrokeColor = ColorHex.ToHex(c));
             Row("Colour", _colour);
 
-            Section("Background");
+            Group("Background");
             AddFillRows("Background");
         }
         else
         {
-            Section("Line");
+            Group("Line");
             _colour = new Swatch("Line colour");
             _colour.Picked += c => Raise(a => a.StrokeColor = ColorHex.ToHex(c));
             Row("Colour", _colour);
@@ -158,12 +138,12 @@ public sealed class AnnotationStylePanel : UserControl
 
             if (kind == AnnotationKind.Box)
             {
-                Section("Fill");
+                Group("Fill");
                 AddFillRows("Filled");
             }
         }
 
-        Section("Timing");
+        Group("Timing");
         _duration = new NumericUpDown
         {
             Minimum = 0.1m, Maximum = 3600, DecimalPlaces = 1, Increment = 0.5m,
@@ -176,13 +156,14 @@ public sealed class AnnotationStylePanel : UserControl
         };
         Row("Duration (s)", _duration);
 
-        _table.ResumeLayout();
+        ResumeLayout();
+        PerformLayout();
     }
 
     /// <summary>Fill (box) or background (text) rows. Picking a colour or opacity switches the fill on.</summary>
     void AddFillRows(string toggleLabel)
     {
-        _filled = new CheckBox { Text = "On", ForeColor = Fg, AutoSize = true };
+        _filled = new Theme.ToggleSwitch { Text = "On" };
         _filled.CheckedChanged += (_, _) =>
         {
             var on = _filled.Checked;
@@ -212,7 +193,7 @@ public sealed class AnnotationStylePanel : UserControl
     void CommitText()
     {
         if (_text is null || _loading) return;
-        var t = _text.Text;
+        var t = _text.Box.Text;
         if (!string.IsNullOrWhiteSpace(t) && t != _current.Text) Raise(a => a.Text = t);
     }
 
@@ -220,29 +201,6 @@ public sealed class AnnotationStylePanel : UserControl
     {
         if (_loading) return;
         Edit?.Invoke(edit, phase);
-    }
-
-    void Section(string title)
-    {
-        var l = new Label
-        {
-            Text = title.ToUpperInvariant(), ForeColor = Color.Gray, AutoSize = true,
-            Font = new Font(Font.FontFamily, 7.5f, FontStyle.Bold), Margin = new Padding(0, _table.RowCount == 0 ? 2 : 12, 0, 2),
-        };
-        _table.RowCount++;
-        _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _table.Controls.Add(l, 0, _table.RowCount - 1);
-        _table.SetColumnSpan(l, 2);
-    }
-
-    void Row(string label, Control editor)
-    {
-        _table.RowCount++;
-        _table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var l = new Label { Text = label, ForeColor = Fg, AutoSize = false, Height = 28, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
-        editor.Margin = new Padding(0, 3, 0, 3);
-        _table.Controls.Add(l, 0, _table.RowCount - 1);
-        _table.Controls.Add(editor, 1, _table.RowCount - 1);
     }
 
     // ---------------- Editors ----------------
@@ -257,9 +215,10 @@ public sealed class AnnotationStylePanel : UserControl
         public Swatch(string title)
         {
             _title = title;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             FlatStyle = FlatStyle.Flat;
-            FlatAppearance.BorderColor = Color.FromArgb(90, 90, 100);
-            Height = 24;
+            FlatAppearance.BorderSize = 0;
+            Height = LogicalToDeviceUnits(26);
             Dock = DockStyle.Fill;
             Cursor = Cursors.Hand;
             TextAlign = ContentAlignment.MiddleCenter;
@@ -269,11 +228,25 @@ public sealed class AnnotationStylePanel : UserControl
         public void SetColour(Color c)
         {
             _colour = Color.FromArgb(255, c);
-            BackColor = _colour;
-            FlatAppearance.MouseOverBackColor = _colour;
-            FlatAppearance.MouseDownBackColor = _colour;
             ForeColor = _colour.GetBrightness() > 0.55f ? Color.Black : Color.White;
             Text = $"#{_colour.R:X2}{_colour.G:X2}{_colour.B:X2}";
+            Invalidate();
+        }
+
+        bool _hover;
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Parent?.BackColor ?? Theme.Panel);
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            float radius = LogicalToDeviceUnits(5);
+            Theme.FillRounded(g, _colour, r, radius);
+            Theme.DrawRounded(g, _hover ? Color.White : Color.FromArgb(90, 90, 100), 1, r, radius);
+            TextRenderer.DrawText(g, Text, Font, Rectangle.Round(r), ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
 
         protected override void OnClick(EventArgs e)
