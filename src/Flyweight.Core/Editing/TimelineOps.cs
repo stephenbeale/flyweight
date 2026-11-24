@@ -219,6 +219,7 @@ public static class TimelineOps
     public static AudioItem? SeparateOverlayAudio(Project p, Guid overlayId)
     {
         if (p.FindOverlay(overlayId) is not { } o || p.FindMedia(o.SourceId) is not { HasAudio: true, IsStill: false }) return null;
+        if (Math.Abs(o.Speed - 1) > 0.0005) return null; // audio-track items play at normal speed
         var item = new AudioItem { SourceId = o.SourceId, Start = o.Start, In = o.In, Out = o.Out, Volume = o.Volume, Muted = o.Muted };
         p.AudioTrack.Add(item);
         o.Muted = true;
@@ -268,16 +269,27 @@ public static class TimelineOps
     public static void TrimOverlayIn(Project p, Guid id, TimeSpan newIn)
     {
         if (p.FindOverlay(id) is not { } o) return;
-        var lo = Max(TimeSpan.Zero, o.In - o.Start);
-        var inPoint = Clamp(newIn, lo, o.Out - MinClipLength);
-        o.Start += inPoint - o.In;
+        var end = o.End;
+        var lo = Max(TimeSpan.Zero, o.In - o.SourceSpan(o.Start)); // can't start before 0 on the timeline
+        var inPoint = Clamp(newIn, lo, o.Out - o.SourceSpan(MinClipLength));
         o.In = inPoint;
+        o.Start = Max(TimeSpan.Zero, end - o.Duration);
     }
 
     public static void TrimOverlayOut(Project p, Guid id, TimeSpan newOut)
     {
         if (p.FindOverlay(id) is not { } o || p.FindMedia(o.SourceId) is not { } m) return;
-        o.Out = Clamp(newOut, o.In + MinClipLength, m.Duration);
+        o.Out = Clamp(newOut, o.In + o.SourceSpan(MinClipLength), m.Duration);
+    }
+
+    /// <summary>
+    /// Play an overlay faster or slower (0.25–4), like a main clip: its In/Out (footage) and start don't change, its
+    /// length on the timeline does. Stills have no speed (drag the end to change how long they show).
+    /// </summary>
+    public static void SetOverlaySpeed(Project p, Guid id, double speed)
+    {
+        if (p.FindOverlay(id) is not { } o || p.FindMedia(o.SourceId) is { IsStill: true }) return;
+        o.Speed = double.IsFinite(speed) ? Math.Clamp(speed, MinSpeed, MaxSpeed) : 1;
     }
 
     /// <summary>Centre (0–1 each way) and size (fraction of the canvas width). Null leaves that value alone.</summary>
@@ -294,16 +306,29 @@ public static class TimelineOps
     /// volume) starting at <paramref name="t"/>, so each half can then be moved, trimmed, re-zoomed or deleted on its own.
     /// Returns the new right half, or null if <paramref name="t"/> isn't at least <see cref="MinClipLength"/> inside it.
     /// </summary>
+    /// <summary>
+    /// Cut EVERY track at timeline time <paramref name="t"/>: the main clip under it, and every overlay and audio-track
+    /// item running across it (one call = one undo step). Items whose ends are within <see cref="MinClipLength"/> of
+    /// <paramref name="t"/> are left whole. Returns how many pieces were cut.
+    /// </summary>
+    public static int SplitAllAt(Project p, TimeSpan t)
+    {
+        int cuts = SplitAt(p, t) is null ? 0 : 1;
+        foreach (var o in p.Overlays.Where(o => o.Start < t && t < o.End).ToList())
+            if (SplitOverlayAt(p, o.Id, t) is not null) cuts++;
+        foreach (var a in p.AudioTrack.Where(a => a.Start < t && t < a.End).ToList())
+            if (SplitAudioAt(p, a.Id, t) is not null) cuts++;
+        return cuts;
+    }
+
     public static OverlayClip? SplitOverlayAt(Project p, Guid id, TimeSpan t)
     {
         if (p.FindOverlay(id) is not { } o || t - o.Start < MinClipLength || o.End - t < MinClipLength) return null;
-        var cut = o.In + (t - o.Start);
-        var right = new OverlayClip
-        {
-            SourceId = o.SourceId, Track = o.Track, Start = t, In = cut, Out = o.Out,
-            Scale = o.Scale, X = o.X, Y = o.Y, Zoom = o.Zoom, PanX = o.PanX, PanY = o.PanY, Volume = o.Volume, Muted = o.Muted,
-            CropLeft = o.CropLeft, CropTop = o.CropTop, CropRight = o.CropRight, CropBottom = o.CropBottom,
-        };
+        var cut = o.SourceAt(t - o.Start);
+        var right = o.Clone(); // same placement, zoom, crop, volume, speed, track
+        right.Id = Guid.NewGuid();
+        right.Start = t;
+        right.In = cut;
         o.Out = cut;
         p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right); // same stacking order as the original
         return right;
@@ -396,19 +421,17 @@ public static class TimelineOps
             if (o.Start < from && o.End > to)
             {
                 // Spans the cut: the right half starts again at the cut point.
-                var right = new OverlayClip
-                {
-                    SourceId = o.SourceId, Track = o.Track, Start = from, In = o.In + (to - o.Start), Out = o.Out,
-                    Scale = o.Scale, X = o.X, Y = o.Y, Zoom = o.Zoom, PanX = o.PanX, PanY = o.PanY, Volume = o.Volume, Muted = o.Muted,
-                    CropLeft = o.CropLeft, CropTop = o.CropTop, CropRight = o.CropRight, CropBottom = o.CropBottom,
-                };
-                o.Out = o.In + (from - o.Start);
+                var right = o.Clone();
+                right.Id = Guid.NewGuid();
+                right.Start = from;
+                right.In = o.SourceAt(to - o.Start);
+                o.Out = o.SourceAt(from - o.Start);
                 p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right);
                 if (right.Duration < MinClipLength) p.Overlays.Remove(right);
             }
-            else if (o.Start < from) o.Out -= o.End - from;                     // ends inside the cut
-            else if (o.End > to) { o.In += to - o.Start; o.Start = from; }      // starts inside the cut
-            else { p.Overlays.Remove(o); continue; }                            // wholly inside
+            else if (o.Start < from) o.Out = o.SourceAt(from - o.Start);                    // ends inside the cut
+            else if (o.End > to) { o.In = o.SourceAt(to - o.Start); o.Start = from; }       // starts inside the cut
+            else { p.Overlays.Remove(o); continue; }                                       // wholly inside
             if (o.Duration < MinClipLength) p.Overlays.Remove(o);
         }
 
@@ -570,7 +593,7 @@ public static class TimelineOps
             if (o.End <= at) continue;
             var right = o.Clone();
             right.Id = Guid.NewGuid();
-            right.In = o.In + (at - o.Start);
+            right.In = o.SourceAt(at - o.Start);
             right.Start = at + length;
             o.Out = right.In;
             p.Overlays.Insert(p.Overlays.IndexOf(o) + 1, right);

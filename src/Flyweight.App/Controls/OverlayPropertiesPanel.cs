@@ -23,6 +23,7 @@ public sealed class OverlayPropertiesPanel : PropertySheet
     readonly Label _name = new() { ForeColor = Fg, AutoSize = true, Margin = new Padding(0, 2, 0, 4) };
     readonly Label _timing = new() { ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 0, 0, 4) };
     readonly Theme.DarkCombo _place = new() { Width = 170 };
+    readonly SpeedBox _speed = new();
     readonly Slider _size = new((int)(OverlayLayout.MinScale * 100), (int)(OverlayLayout.MaxScale * 100), "%");
     readonly Slider _x = new(0, 100, "");
     readonly Slider _y = new(0, 100, "");
@@ -56,6 +57,7 @@ public sealed class OverlayPropertiesPanel : PropertySheet
         Group("Overlay");
         Span(_name);
         Span(_timing);
+        Row("Speed", _speed);
         Group("Position and size");
         _place.Items.Add("Place…");
         foreach (var (_, label) in Placements) _place.Items.Add(label);
@@ -97,6 +99,7 @@ public sealed class OverlayPropertiesPanel : PropertySheet
         _zoom.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayZoom(p, id, v / 100.0), phase); };
         _panX.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayPan(p, id, v / 100.0, null), phase); };
         _panY.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayPan(p, id, null, v / 100.0), phase); };
+        _speed.Picked += v => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlaySpeed(p, id, v), StyleEditPhase.Single); };
         _volume.Changed += (v, phase) => { if (!_loading) Edit?.Invoke((p, id) => TimelineOps.SetOverlayVolume(p, id, v / 100.0), phase); };
         _muted.CheckedChanged += (_, _) =>
         {
@@ -115,6 +118,8 @@ public sealed class OverlayPropertiesPanel : PropertySheet
             _timing.Text = $"Shows {TimelineControl.FormatTime(o.Start, tenths: true)} – {TimelineControl.FormatTime(o.End, tenths: true)} " +
                            $"({o.Duration.TotalSeconds:0.0}s)";
             if (_place.SelectedIndex < 0) _place.SelectedIndex = 0;
+            _speed.SetValue(o.Speed);
+            _speed.Enabled = media is not { IsStill: true }; // stills: drag the end to change how long they show
             _size.SetValue((int)Math.Round(o.Scale * 100));
             _x.SetValue((int)Math.Round(o.X * 100));
             _y.SetValue((int)Math.Round(o.Y * 100));

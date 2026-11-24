@@ -485,6 +485,7 @@ public sealed class TimelineControl : Control
             g.Clip = region;
         }
         var label = $"V{o.Track + 1}  ·  {media?.DisplayName ?? "(missing)"}";
+        if (Math.Abs(o.Speed - 1) > 0.0005) label = $"{o.Speed:0.##}×  ·  {label}";
         if (o.Scale >= 0.99) label += "  ·  full frame";
         if (state.Status is ProxyStatus.Optimising or ProxyStatus.Queued) label += $"  ·  optimising {state.Progress:P0}";
         if (media is { HasAudio: true } && o.Muted) label += "  ·  muted";
@@ -755,10 +756,11 @@ public sealed class TimelineControl : Control
                 _session.Preview(p => TimelineOps.MoveOverlay(p, id, _originA + dt, track));
                 break;
             case Drag.OverlayIn:
-                _session.Preview(p => TimelineOps.TrimOverlayIn(p, id, _originB + dt));
+                // The mouse moves in timeline time; In/Out are footage time (they differ when the overlay is sped up).
+                _session.Preview(p => TimelineOps.TrimOverlayIn(p, id, _originB + (p.FindOverlay(id)?.SourceSpan(dt) ?? dt)));
                 break;
             case Drag.OverlayOut:
-                _session.Preview(p => TimelineOps.TrimOverlayOut(p, id, _originB + dt));
+                _session.Preview(p => TimelineOps.TrimOverlayOut(p, id, _originB + (p.FindOverlay(id)?.SourceSpan(dt) ?? dt)));
                 break;
         }
     }

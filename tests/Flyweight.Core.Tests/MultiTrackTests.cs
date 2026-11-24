@@ -204,6 +204,82 @@ public class MultiTrackTests
         Assert.Equal(S(12), music.Start);
     }
 
+    // ---------------- Overlay speed ----------------
+
+    [Fact]
+    public void Overlay_speed_changes_its_timeline_length_and_maps_timeline_to_footage()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("main.mp4", 30));
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(2)); // 2–12 at 1x
+        TimelineOps.SetOverlaySpeed(p, o.Id, 2);
+
+        Assert.Equal(S(5), o.Duration);              // 10 s of footage in 5 s
+        Assert.Equal(S(7), o.End);
+        Assert.Equal(S(4), o.SourceAt(S(2)));        // 2 s in plays footage 4 s
+        TimelineOps.SetOverlaySpeed(p, o.Id, 9);
+        Assert.Equal(TimelineOps.MaxSpeed, o.Speed); // clamped
+
+        var still = TimelineOps.AddOverlay(p, new SourceMedia { OriginalPath = "pic.png", Duration = S(8), IsStill = true, Width = 100, Height = 100 }, S(0));
+        TimelineOps.SetOverlaySpeed(p, still.Id, 2);
+        Assert.Equal(1, still.Speed);                // stills have no speed
+    }
+
+    [Fact]
+    public void Splitting_or_trimming_a_sped_up_overlay_keeps_the_same_footage_on_screen()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("main.mp4", 30));
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(2));
+        TimelineOps.SetOverlaySpeed(p, o.Id, 2);     // 2–7, footage 0–10
+
+        var right = TimelineOps.SplitOverlayAt(p, o.Id, S(4))!; // 2 s in = footage 4 s
+        Assert.Equal((S(0), S(4)), (o.In, o.Out));
+        Assert.Equal((S(4), S(4), S(10), 2.0), (right.Start, right.In, right.Out, right.Speed));
+        Assert.Equal(S(7), right.End);
+
+        // Trimming the front keeps the end where it is on the timeline.
+        TimelineOps.TrimOverlayIn(p, right.Id, S(6));
+        Assert.Equal((S(5), S(7)), (right.Start, right.End));
+    }
+
+    [Fact]
+    public void A_sped_up_overlay_is_exported_at_its_speed_and_refuses_separate_audio()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("C:/v/main.mp4", 30));
+        var o = TimelineOps.AddOverlay(p, Video("C:/v/cam.mp4", 10), S(2));
+        TimelineOps.SetOverlaySpeed(p, o.Id, 1.5);
+        var plan = ExportPlan.Build(p, new ExportSettings { UseHardwareEncoder = false }, new Dictionary<Guid, string>(), "out.mp4");
+
+        int cam = plan.Arguments.ToList().IndexOf("C:/v/cam.mp4");
+        Assert.Equal("10", plan.Arguments[cam - 2]);            // -t: all 10 s of footage are read...
+        Assert.Contains("setpts=(PTS-STARTPTS)/1.5", plan.FilterGraph); // ...and played 1.5x faster
+        Assert.Contains("atempo=1.5", plan.FilterGraph);        // its sound too, keeping pitch
+        Assert.Null(TimelineOps.SeparateOverlayAudio(p, o.Id)); // audio-track items play at 1x
+    }
+
+    // ---------------- Split every track (Shift+S) ----------------
+
+    [Fact]
+    public void SplitAllAt_cuts_the_clip_and_every_overlay_and_audio_item_under_the_playhead()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("main.mp4", 20));
+        TimelineOps.AddOverlay(p, Video("cam.mp4", 30), S(2));           // 2–32: across 10
+        var late = TimelineOps.AddOverlay(p, Video("cut.mp4", 3), S(15)); // 15–18: not at 10
+        TimelineOps.AddAudio(p, Song(60), S(0));                          // across 10
+
+        Assert.Equal(3, TimelineOps.SplitAllAt(p, S(10)));
+        Assert.Equal(2, p.Timeline.Count);
+        Assert.Equal(3, p.Overlays.Count);                                // cam in two, "late" untouched
+        Assert.Equal(S(15), late.Start);
+        Assert.Equal(2, p.AudioTrack.Count);
+        Assert.All(p.Overlays.Where(x => x.SourceId == p.Overlays[0].SourceId), x => Assert.True(x.End <= S(10) || x.Start >= S(10)));
+
+        Assert.Equal(0, TimelineOps.SplitAllAt(p, S(10)));               // already cut there: nothing to do
+    }
+
     [Fact]
     public void Deleting_several_clips_keeps_tracks_in_sync_whatever_the_order()
     {
