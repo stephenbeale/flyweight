@@ -133,6 +133,9 @@ public sealed class PreviewCanvas : Control
                 if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
                     Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
                     frame = Letterboxed(frame, pm.Width, pm.Height);
+                if (look is not null && ClipLook.IsCropped(look) &&
+                    _session.Project.FindMedia(look.SourceId) is { Width: > 0, Height: > 0 } cm)
+                    frame = Masked(frame, cm, look);
                 if (look is not null && ClipLook.HasTone(look)) frame = Toned(frame, look);
                 if (look is null || !ClipLook.IsZoomed(look))
                 {
@@ -219,6 +222,33 @@ public sealed class PreviewCanvas : Control
         g.InterpolationMode = InterpolationMode.Bilinear;
         g.DrawImage(frame, Fit(new Size(mediaW, mediaH), new RectangleF(0, 0, frame.Width, frame.Height)));
         return _boxed;
+    }
+
+    Bitmap? _masked;
+
+    /// <summary>
+    /// A cropped clip, as the export makes it (ClipLook.MaskFilter): the cut edges are blacked out IN PLACE, nothing
+    /// moves or rescales; tone and zoom then run as usual. By now the frame holds the picture fitted to 16:9 with bars
+    /// (proxy, or a letterboxed original), so find the picture first. Call while holding FrameLock.
+    /// </summary>
+    Bitmap Masked(Bitmap frame, SourceMedia media, Clip c)
+    {
+        if (_masked is null || _masked.Size != frame.Size)
+        {
+            _masked?.Dispose();
+            _masked = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
+        }
+        var full = new RectangleF(0, 0, frame.Width, frame.Height);
+        var pic = Fit(new Size(media.Width, media.Height), full);
+        double l = ClipLook.CleanCrop(c.CropLeft), t = ClipLook.CleanCrop(c.CropTop), r = ClipLook.CleanCrop(c.CropRight), b = ClipLook.CleanCrop(c.CropBottom);
+        using var g = Graphics.FromImage(_masked);
+        g.DrawImageUnscaled(frame, 0, 0);
+        using var black = new SolidBrush(Color.Black);
+        if (l > 0) g.FillRectangle(black, pic.X, pic.Y, (float)(pic.Width * l), pic.Height);
+        if (r > 0) g.FillRectangle(black, pic.Right - (float)(pic.Width * r), pic.Y, (float)(pic.Width * r) + 1, pic.Height);
+        if (t > 0) g.FillRectangle(black, pic.X, pic.Y, pic.Width, (float)(pic.Height * t));
+        if (b > 0) g.FillRectangle(black, pic.X, pic.Bottom - (float)(pic.Height * b), pic.Width, (float)(pic.Height * b) + 1);
+        return _masked;
     }
 
     Bitmap? _toned;
@@ -378,6 +408,38 @@ public sealed class PreviewCanvas : Control
     }
 
     Annotation? Selected() => SelectedAnnotationId is { } id ? _session.Project.FindAnnotation(id) : null;
+
+    // Scrolling over an overlay zooms into it (crop). A burst of wheel notches is ONE undo step: the edit stays open
+    // until the wheel has been still for a moment.
+    readonly System.Windows.Forms.Timer _wheelCommit = new() { Interval = 600 };
+    bool _wheelEditing;
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (_session is null || _drag != DragMode.None || OverlayAt(e.Location) is not { } ov) return;
+        if (ov.Id != SelectedOverlayId) OverlayClicked?.Invoke(ov.Id);
+        _engine.Pause();
+        if (!_wheelEditing)
+        {
+            _wheelEditing = true;
+            _session.BeginEdit();
+            _wheelCommit.Tick += WheelCommit;
+        }
+        var id = ov.Id;
+        double factor = Math.Pow(1.1, e.Delta / 120.0);
+        _session.Preview(p => { if (p.FindOverlay(id) is { } o) TimelineOps.SetOverlayZoom(p, id, o.Zoom * factor); });
+        _wheelCommit.Stop();
+        _wheelCommit.Start();
+    }
+
+    void WheelCommit(object? sender, EventArgs e)
+    {
+        _wheelCommit.Stop();
+        _wheelCommit.Tick -= WheelCommit;
+        _wheelEditing = false;
+        _session.CommitEdit();
+    }
 
     /// <summary>The topmost overlay showing under a point, if any.</summary>
     OverlayClip? OverlayAt(Point pt)

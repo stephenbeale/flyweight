@@ -72,7 +72,8 @@ public sealed class OverlayLanePlayer : IDisposable
 
     /// <summary>Decode size for an overlay: half size is plenty for a picture-in-picture, full size for big ones.</summary>
     static (int W, int H) DecodeSize(OverlayClip o) =>
-        o.Scale <= 0.5 ? (Canvas.ProxyWidth / 2, Canvas.ProxyHeight / 2) : (Canvas.ProxyWidth, Canvas.ProxyHeight);
+        o.Scale * Math.Max(1, o.Zoom) <= 0.5 // zoomed in, a small box shows a magnified part: decode at full size
+            ? (Canvas.ProxyWidth / 2, Canvas.ProxyHeight / 2) : (Canvas.ProxyWidth, Canvas.ProxyHeight);
 
     /// <summary>Call every tick with the timeline playhead.</summary>
     public void Update(TimeSpan position, bool playing)
@@ -231,10 +232,23 @@ public sealed class OverlayLanePlayer : IDisposable
             {
                 // The proxy is the media fitted into the buffer with bars; draw just the picture part.
                 var full = new RectangleF(0, 0, layer.W, layer.H);
-                var src = layer.IsOriginal ? full : Fit(OverlayLayout.Aspect(media), full);
+                var pic = layer.IsOriginal ? full : Fit(OverlayLayout.Aspect(media), full);
                 g.InterpolationMode = InterpolationMode.Bilinear;
                 g.CompositingMode = CompositingMode.SourceCopy; // opaque video: no blending needed
-                g.DrawImage(snap, dest, src, GraphicsUnit.Pixel);
+                if (!OverlayLayout.IsZoomed(o) && !OverlayLayout.IsCropped(o))
+                    g.DrawImage(snap, dest, pic, GraphicsUnit.Pixel);
+                else
+                {
+                    // Crop and zoom: the same part of the picture the export crops (OverlayLayout.CropRect).
+                    var (cx, cy, cw, ch) = OverlayLayout.CropRect(o);
+                    var src = new RectangleF(pic.X + (float)(cx * pic.Width), pic.Y + (float)(cy * pic.Height),
+                                             (float)(cw * pic.Width), (float)(ch * pic.Height));
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    using var attrs = new ImageAttributes();
+                    attrs.SetWrapMode(WrapMode.TileFlipXY); // edge pixels repeat instead of fading to transparent
+                    g.DrawImage(snap, Rectangle.Round(dest), src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel, attrs);
+                    g.PixelOffsetMode = PixelOffsetMode.Default;
+                }
                 g.CompositingMode = CompositingMode.SourceOver;
             }
             else

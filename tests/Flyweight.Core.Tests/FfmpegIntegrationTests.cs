@@ -194,6 +194,88 @@ public sealed class FfmpegIntegrationTests : IDisposable
         Assert.True(IsRed(await Pixel(png, 0, 400, 540)), "saved frame: main picture");
     }
 
+    [Fact]
+    public async Task Zoomed_overlay_exports_and_saves_only_the_cropped_part()
+    {
+        if (!FfmpegAvailable()) return;
+        var red = await MakeClip("main2.mp4", 1280, 720, 2, "red", audio: false);
+        // Overlay source: left half blue, right half yellow.
+        var split = Path.Combine(_dir, "split.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=2,drawbox=x=320:y=0:w=320:h=360:color=yellow:t=fill",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", split,
+        });
+
+        var p = new Project();
+        TimelineOps.Append(p, await MediaProbe.ProbeAsync(red));
+        var o = TimelineOps.AddOverlay(p, await MediaProbe.ProbeAsync(split), TimeSpan.Zero);
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.5); // box = middle of the frame, 960×540 at 1080p
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        TimelineOps.SetOverlayPan(p, o.Id, 1, 0.5);            // the right half's middle: all yellow
+
+        static bool IsYellow((int R, int G, int B) c) => c.R > 200 && c.G > 200 && c.B < 80;
+        static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
+
+        var output = Path.Combine(_dir, "zoomed.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
+        Assert.True(IsYellow(await Pixel(output, 1, 520, 540)), "box's left edge shows the crop (yellow), not the source's left (blue)");
+        Assert.True(IsYellow(await Pixel(output, 1, 1400, 540)), "box's right edge: yellow");
+        Assert.True(IsRed(await Pixel(output, 1, 300, 540)), "outside the box: main picture");
+
+        var png = Path.Combine(_dir, "zoomed.png");
+        await FfmpegRunner.RunFfmpegAsync(FrameExport.BuildArgs(p, FrameExport.LocateFrame(p, TimeSpan.FromSeconds(1))!.Value, 1920, 1080, png));
+        Assert.True(IsYellow(await Pixel(png, 0, 520, 540)), "saved frame: cropped the same way");
+    }
+
+    [Fact]
+    public async Task Cropped_clip_and_overlay_export_only_what_is_kept()
+    {
+        if (!FfmpegAvailable()) return;
+        // Main source: left half green, right half blue. Cropping off the left half leaves only blue.
+        var main = Path.Combine(_dir, "halves.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", "color=c=green:s=1280x720:r=30:d=2,drawbox=x=640:y=0:w=640:h=720:color=blue:t=fill",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", main,
+        });
+        // Overlay source: a white band down the left quarter, the rest red. Cropping the left quarter leaves only red.
+        var band = Path.Combine(_dir, "band.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=2,drawbox=x=0:y=0:w=160:h=360:color=white:t=fill",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", band,
+        });
+
+        var p = new Project();
+        var clip = TimelineOps.Append(p, await MediaProbe.ProbeAsync(main));
+        TimelineOps.SetClipCrop(p, clip.Id, CropSide.Left, 0.45); // blacks out the left 45%, in place
+        TimelineOps.SetClipCrop(p, clip.Id, CropSide.Left, 0.5);  // clamped to 45%
+        var o = TimelineOps.AddOverlay(p, await MediaProbe.ProbeAsync(band), TimeSpan.Zero);
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.25, 0.4);
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
+        var (bx, by, bw, bh) = OverlayLayout.PixelRect(o, p.FindMedia(o.SourceId), 1920, 1080);
+        Assert.Equal(576, bw); // 40% of 1920 = 768 for the whole picture; 3/4 of it kept
+
+        static bool IsBlue((int R, int G, int B) c) => c.B > 200 && c.R < 60 && c.G < 60;
+        static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
+        static bool IsBlack((int R, int G, int B) c) => c.R < 40 && c.G < 40 && c.B < 40;
+        static bool IsGreen((int R, int G, int B) c) => c.G > 90 && c.R < 60 && c.B < 60;
+
+        var output = Path.Combine(_dir, "cropped.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
+        // Blacked out in place: nothing moves, the left 45% (864 px at 1080p) is black, the right half still blue.
+        Assert.True(IsBlack(await Pixel(output, 1, 100, 800)), "main: cropped edge is black");
+        Assert.True(IsBlue(await Pixel(output, 1, 1200, 800)), "main: the kept right part (blue)");
+        Assert.True(IsGreen(await Pixel(output, 1, 900, 800)), "main: green just right of the cut, where it always was: it didn't slide");
+        Assert.True(IsRed(await Pixel(output, 1, bx + 6, by + bh / 2)), "overlay: its left edge is red, the white band was cropped off");
+
+        var png = Path.Combine(_dir, "cropped.png");
+        await FfmpegRunner.RunFfmpegAsync(FrameExport.BuildArgs(p, FrameExport.LocateFrame(p, TimeSpan.FromSeconds(1))!.Value, 1920, 1080, png));
+        Assert.True(IsBlack(await Pixel(png, 0, 100, 800)), "saved frame: same bar");
+        Assert.True(IsRed(await Pixel(png, 0, bx + 6, by + bh / 2)), "saved frame: same overlay crop");
+    }
+
     async Task<string> MakeImage(string name, int w, int h, string color)
     {
         var path = Path.Combine(_dir, name);

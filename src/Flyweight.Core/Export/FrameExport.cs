@@ -26,7 +26,7 @@ public static class FrameExport
 
         // Overlay-track video showing at this moment goes on, placed as in the export (OverlayLayout).
         var t = TimelineTimeOf(hit);
-        var graph = $"[0:v]{fit},{ClipLook.ToneFilter(clip)}format=yuv420p[b0]";
+        var graph = $"[0:v]{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=yuv420p[b0]";
         int n = 0;
         foreach (var o in TimelineOps.OverlaysAt(p, t))
         {
@@ -34,11 +34,11 @@ public static class FrameExport
             if (!om.IsStill) args.AddRange(new[] { "-ss", Sec(o.In + (t - o.Start)) });
             args.AddRange(new[] { "-i", om.OriginalPath });
             var (x, y, w, h) = OverlayLayout.PixelRect(o, om, width, height);
-            graph += $";[{n + 1}:v]scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";
+            graph += $";[{n + 1}:v]{OverlayLayout.CropFilter(o)}scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";
             n++;
         }
         if (n == 0)
-            args.AddRange(new[] { "-vf", $"{fit},{ClipLook.ToneFilter(clip)}format=rgb24" });
+            args.AddRange(new[] { "-vf", $"{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=rgb24" });
         else
             args.AddRange(new[] { "-filter_complex", graph + $";[b{n}]format=rgb24[out]", "-map", "[out]" });
         args.AddRange(new[] { "-frames:v", "1", "-f", "image2", "-update", "1", outputPng });

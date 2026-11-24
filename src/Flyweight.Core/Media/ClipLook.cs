@@ -26,7 +26,63 @@ public static class ClipLook
 
     public static bool HasTone(Clip c) => Gamma(c.Brightness) != 1 || ContrastGain(c.Contrast) != 1;
 
-    public static bool IsDefault(Clip c) => !IsZoomed(c) && !HasTone(c);
+    public static bool IsDefault(Clip c) => !IsZoomed(c) && !HasTone(c) && !IsCropped(c);
+
+    // ---------------- Crop: cut edges off the source (changes its shape) ----------------
+
+    /// <summary>Most that can be cut from one side, as a fraction of the source: at least 10% always remains each way.</summary>
+    public const double MaxCropEach = 0.45;
+
+    public static double CleanCrop(double v) => double.IsFinite(v) ? Math.Clamp(v, 0, MaxCropEach) : 0;
+
+    public static bool IsCropped(double l, double t, double r, double b) =>
+        CleanCrop(l) + CleanCrop(t) + CleanCrop(r) + CleanCrop(b) > 0.0005;
+
+    public static bool IsCropped(Clip c) => IsCropped(c.CropLeft, c.CropTop, c.CropRight, c.CropBottom);
+
+    /// <summary>The kept part of the source, as fractions of it (0–1): left, top, width, height.</summary>
+    public static (double X, double Y, double W, double H) CropBox(double l, double t, double r, double b)
+    {
+        double cl = CleanCrop(l), ct = CleanCrop(t), cr = CleanCrop(r), cb = CleanCrop(b);
+        return (cl, ct, 1 - cl - cr, 1 - ct - cb);
+    }
+
+    /// <summary>Shape (width ÷ height) of a source of shape <paramref name="aspect"/> after cropping.</summary>
+    public static double CroppedAspect(double aspect, double l, double t, double r, double b)
+    {
+        var (_, _, w, h) = CropBox(l, t, r, b);
+        return aspect * w / h;
+    }
+
+    /// <summary>
+    /// ffmpeg crop of the ORIGINAL to the source-relative rectangle (x, y, w, h), ending with a comma; "" for the whole
+    /// frame. Whole, even pixel sizes and offsets: yuv420p sources can't be cropped to odd ones.
+    /// </summary>
+    public static string CropFilter(double x, double y, double w, double h)
+    {
+        if (x < 0.0005 && y < 0.0005 && w > 0.9995 && h > 0.9995) return "";
+        static string N(double v) => Num(Math.Round(v, 6));
+        return $"crop=w='2*trunc(iw*{N(w)}/2)':h='2*trunc(ih*{N(h)}/2)':x='2*trunc(iw*{N(x)}/2)':y='2*trunc(ih*{N(y)}/2)',";
+    }
+
+    /// <summary>
+    /// A main clip's crop: the cut edges are blacked out IN PLACE on the original (nothing moves or rescales), before
+    /// it is fitted to 16:9 and zoomed. Ends with a comma; "" when uncropped. The preview does the same
+    /// (PreviewCanvas.Masked).
+    /// </summary>
+    public static string MaskFilter(Clip c)
+    {
+        if (!IsCropped(c)) return "";
+        double l = CleanCrop(c.CropLeft), t = CleanCrop(c.CropTop), r = CleanCrop(c.CropRight), b = CleanCrop(c.CropBottom);
+        static string N(double v) => Num(Math.Round(v, 6));
+        var s = "";
+        // +1 px on the far edges so rounding never leaves a hairline of picture.
+        if (l > 0) s += $"drawbox=x=0:y=0:w=iw*{N(l)}:h=ih:color=black:t=fill,";
+        if (r > 0) s += $"drawbox=x=iw*{N(1 - r)}:y=0:w=iw*{N(r)}+1:h=ih:color=black:t=fill,";
+        if (t > 0) s += $"drawbox=x=0:y=0:w=iw:h=ih*{N(t)}:color=black:t=fill,";
+        if (b > 0) s += $"drawbox=x=0:y=ih*{N(1 - b)}:w=iw:h=ih*{N(b)}+1:color=black:t=fill,";
+        return s;
+    }
 
     /// <summary>The visible part of the canvas, normalised 0–1: always 16:9 and always inside the frame.</summary>
     public static (double X, double Y, double W, double H) ViewRect(Clip c)

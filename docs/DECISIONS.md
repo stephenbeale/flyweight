@@ -363,6 +363,36 @@ Owner request ("I NEED to add concurrent video tracks and separate audio from vi
   re-seeked the main video on every play). Overlays at ≤ 50% size decode at 480×270; drawing copies the frame out
   under the lock first so the decoder never waits for GDI+.
 
+### D35. Overlay zoom (crop) and splitting overlays / audio items (2026-11-23)
+Owner: "add zoom possibility for overlaid videos, like cropping" and "split either video on the timeline".
+- **Zoom = crop.** `OverlayClip.Zoom` (1–4) + `PanX`/`PanY`, like a main clip's zoom (D25): the overlay's box keeps its
+  size and place, and less of the source fills it. `OverlayLayout.CropRect` is the one formula (source-relative,
+  same shape as the source); the export and Save frame crop the ORIGINAL with it before scaling (even-pixel `crop`
+  expressions, so yuv420p sources never get odd sizes), the preview crops the decoded proxy picture. Old files load
+  unzoomed. Properties: Zoom (crop) section; in the preview, scroll over an overlay to zoom (a burst of wheel notches
+  is one undo step). A zoomed small overlay decodes at full size so the magnified part stays sharp.
+- **Split.** S / Split cuts the SELECTED overlay (`SplitOverlayAt`) or audio item (`SplitAudioAt`) at the playhead,
+  else the main clip as before. The right half is a copy (placement, zoom, volume, track, stacking order) and becomes
+  the selection, so S again keeps cutting the same track. Clicking an overlay's or audio item's body now also moves
+  the playhead there (as clips always did), so you can click where to cut and press S. Free-shape cropping (e.g. only
+  trimming the sides of a webcam) isn't there yet: the crop keeps the source's shape.
+
+### D36. Crop for every video: main clips and overlays (2026-11-23)
+Owner: "I want to be able to crop all videos though, not just zoom or pan". `CropLeft/Top/Right/Bottom` (fraction of
+the source, 0–0.45 each so at least 10% remains) on both `Clip` and `OverlayClip`; old files load uncropped. Unlike
+zoom, crop changes the picture's SHAPE.
+- **Nothing slides (owner: "it feels like it is going the wrong way, can't it crop without sliding the image"):** a crop
+  only hides edges; the picture stays exactly where it was. (The first version re-fitted what was left, so it moved/grew.)
+- **Main clips:** the cut edges are blacked out IN PLACE on the original (`ClipLook.MaskFilter`: `drawbox` fills), then
+  the usual fit, zoom and tone. Zoom afterwards if you want it to fill the frame. Preview: `PreviewCanvas.Masked`. Split, freeze
+  frame and Reset picture carry / clear the crop (`CopyLook`).
+- **Overlays:** only the cropped EDGE of the box moves (`SetOverlayCrop` shifts the centre by half the change), so the
+  picture stays put on screen and trimming a webcam's sides gives a narrower box; `Scale` is the width the uncropped picture would have (now up to 400%, so a cropped
+  picture can fill the frame; Full frame computes that). Zoom then works inside the cropped area: `CropRect` composes
+  crop then zoom, and the one crop filter serves both.
+- **UI:** Crop section (Left / Right / Top / Bottom sliders) in both Properties panels. Dragging crop handles in the
+  preview isn't there yet.
+
 ### YouTube thumbnail preset (2026-11-24)
 Right-click the preview → "Save as YouTube thumbnail": the frame under the playhead (zoom, brightness, annotations,
 same renderer as Save frame) at exactly 1280×720, saved as a JPEG next to the footage ("Trip thumbnail 1m23s.jpg")

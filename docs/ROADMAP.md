@@ -1,19 +1,38 @@
 # Roadmap & status
 
-_Last updated: 2026-11-23 (feature/multitrack)_
+_Last updated: 2026-11-23 (feature/overlay-zoom, PR #13 open)_
 
 ## Where things stand
 
-### 2026-11-23: `feature/multitrack` (D34): overlay video tracks, Separate audio, Insert at playhead
-**Built (owner asked for them):** picture-in-picture / cutaway video on overlay tracks V2–V5 (drag in time, between
-tracks and in the preview; Place / Size / Across / Down / Volume / Mute in Properties; exported and in Save frame);
-**Separate audio** (clip or overlay right-click: its sound goes on the audio track, the clip is muted); **Insert at
-playhead** (bin / clip right-click, or I with a file selected in Media: splits the clip there). 220 tests pass incl.
-a real-ffmpeg overlay export checked by pixels. Smoke-tested in the debug build with generated footage.
-**Not yet verified by the owner in-app.** Known limits: overlays have no speed/zoom/tone; the main track sets the
-length; audio items have no speed (so Separate audio needs 1×).
-**Fixed after owner testing:** lag and overlays not pausing on play/pause with several videos (see D34). The audio-track
-re-seek fix there may also be the old **audio crackle** (item 1 below): worth re-checking.
+### 2026-11-23 session close: `feature/overlay-zoom` (PR #13 open, not merged); PR #12 merged to `main` (6bcfa79)
+**Merged (PR #12, owner verified):** D34 overlay video tracks V2-V5 (Place / Size / Across / Down / Volume / Mute,
+exported and in Save frame), Separate audio, Insert at playhead. Plus the playback fix after the owner's report
+("laggy on play/pause with several videos", "play/pause doesn't work for all videos"): one repaint per timer tick
+(WM_TIMER starvation), play/pause enforced every tick on overlay players, PlayerClock drift estimate for overlays and
+the audio track, no re-seek on resume. Measured: playhead 6.00 s in 6.03 s (was 1.78 s in 4.04 s); 0 changed pixels
+while paused after rapid toggles (was 15,417). This may also fix the old **audio crackle**: owner to re-check.
+**On PR #13 (`feature/overlay-zoom`, latest 0e059ab):** D35 overlay zoom (crop-style) and S splits the selected
+overlay / audio item; clicking an overlay / audio item moves the playhead (owner verified zoom + split). D36 crop for
+all videos (Crop sliders Left/Right/Top/Bottom for main clips and overlays); after owner feedback ("going the wrong
+way... crop without sliding the image") it crops IN PLACE: main clips black out the cut edges (drawbox), overlays move
+only the cropped edge. **Owner has NOT yet verified the in-place crop.** 233 tests pass.
+
+**Next steps:**
+1. Owner verifies in-place crop in-app; then merge PR #13.
+2. The owner's open project is on the older 21:26 build: after they save and close, rebuild `Flyweight.sln` and relaunch
+   so they are on the latest build.
+3. Ideas: drag crop handles in the preview; speed / brightness for overlays; Properties labels truncated at the owner's
+   display scaling ("Left /", "Up /", "Brightnes") in `ClipPropertiesPanel` (label column is a fixed 92 px).
+4. Release 0.2.2 after PR #13 merges (ships Save frame, overlays, separate audio, insert at playhead, zoom, crop, split):
+   `pwsh packaging\package-preview.ps1 -Version 0.2.2-preview`, publish as a normal release with versioned and
+   version-free assets.
+5. Re-check the audio crackle item (below); consider a `.gitattributes` for consistent line endings (git keeps warning
+   LF to CRLF on DECISIONS.md, ClipLook.cs etc.).
+6. Testing tip: when driving the GUI with synthetic input, check the owner isn't using the desktop (a click once landed
+   in their browser); prefer the PrintWindow capture script, which needs no focus.
+Known limits: overlays have no speed/tone; the main track sets the length; audio items have no speed (so Separate audio
+needs 1x).
+
 ### 2026-11-22 session close: PRs #5-#10 merged to `main` (e839f98)
 **Shipped today:** #5 clip zoom + brightness/contrast (D25), proxy fixes (D26), Remove from project, named New project
 (D27); #6 clip speed (D28), Quick Sync export + YouTube bitrate cap + safe overwrite + "Your video is ready" step (D29),

@@ -300,6 +300,173 @@ public class MultiTrackTests
     }
 
     [Fact]
+    public void Overlay_zoom_crops_the_source_and_keeps_the_box()
+    {
+        var p = new Project();
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(0));
+        var box = OverlayLayout.Rect(o, p.FindMedia(o.SourceId));
+        Assert.Equal((0.0, 0.0, 1.0, 1.0), OverlayLayout.CropRect(o));
+        Assert.Equal("", OverlayLayout.CropFilter(o));
+
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        Assert.Equal((0.25, 0.25, 0.5, 0.5), OverlayLayout.CropRect(o)); // centred: the middle half each way
+        TimelineOps.SetOverlayPan(p, o.Id, 1, 0);
+        Assert.Equal((0.5, 0.0, 0.5, 0.5), OverlayLayout.CropRect(o));   // top-right quarter
+        Assert.Equal(box, OverlayLayout.Rect(o, p.FindMedia(o.SourceId))); // same box on screen
+
+        TimelineOps.SetOverlayZoom(p, o.Id, 99);
+        Assert.Equal(OverlayLayout.MaxZoom, o.Zoom);
+        TimelineOps.SetOverlayZoom(p, o.Id, 0.2);
+        Assert.Equal(1, o.Zoom);
+    }
+
+    [Fact]
+    public void Zoomed_overlay_is_cropped_before_scaling_in_the_export()
+    {
+        var p = new Project();
+        TimelineOps.Append(p, Video("main.mp4", 20));
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(1));
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+
+        var g = ExportPlan.Build(p, new ExportSettings { UseHardwareEncoder = false }, new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
+
+        Assert.Contains("crop=w='2*trunc(iw*0.5/2)':h='2*trunc(ih*0.5/2)':x='2*trunc(iw*0.25/2)':y='2*trunc(ih*0.25/2)',scale=", g);
+    }
+
+    [Fact]
+    public void SplitOverlayAt_cuts_it_into_two_independent_halves()
+    {
+        var p = new Project();
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(4), track: 2);
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.3, 0.4, 0.5);
+
+        var right = TimelineOps.SplitOverlayAt(p, o.Id, S(7))!;
+
+        Assert.Equal((S(4), S(0), S(3)), (o.Start, o.In, o.Out));
+        Assert.Equal((S(7), S(3), S(10), S(14)), (right.Start, right.In, right.Out, right.End));
+        Assert.Equal((2, 0.3, 0.4, 0.5, 2.0), (right.Track, right.X, right.Y, right.Scale, right.Zoom));
+        Assert.NotEqual(o.Id, right.Id);
+        Assert.Equal(p.Overlays.IndexOf(o) + 1, p.Overlays.IndexOf(right));
+
+        // Each half is its own now.
+        TimelineOps.SetOverlayZoom(p, right.Id, 1);
+        Assert.Equal(2, o.Zoom);
+    }
+
+    [Theory]
+    [InlineData(4.0)]   // at its start
+    [InlineData(14.0)]  // at its end
+    [InlineData(20.0)]  // not on it
+    public void SplitOverlayAt_refuses_cuts_at_or_outside_its_ends(double t)
+    {
+        var p = new Project();
+        var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(4));
+        Assert.Null(TimelineOps.SplitOverlayAt(p, o.Id, S(t)));
+        Assert.Single(p.Overlays);
+    }
+
+    [Fact]
+    public void SplitAudioAt_cuts_an_audio_item_in_two()
+    {
+        var p = new Project();
+        var clip = TimelineOps.Append(p, Video("talk.mp4", 10));
+        var a = TimelineOps.SeparateAudio(p, clip.Id)!;
+        TimelineOps.SetAudioVolume(p, a.Id, 0.5);
+
+        var right = TimelineOps.SplitAudioAt(p, a.Id, S(6))!;
+
+        Assert.Equal((S(0), S(6)), (a.In, a.Out));
+        Assert.Equal((S(6), S(6), S(10), 0.5), (right.Start, right.In, right.Out, right.Volume));
+        Assert.Equal(2, p.AudioTrack.Count);
+    }
+
+    [Fact]
+    public void Cropping_an_overlay_moves_only_that_edge_and_the_picture_stays_put()
+    {
+        var p = new Project();
+        var cam = Video("cam.mp4", 10);
+        var o = TimelineOps.AddOverlay(p, cam, S(0));
+        TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.4);
+        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam); // 0.3–0.7 across
+
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        Assert.Equal(x0 + 0.1, x, 6);       // the left edge moved in by a quarter of the picture
+        Assert.Equal(x0 + w0, x + w, 6);    // the right edge stayed
+        Assert.Equal((y0, h0), (y, h));     // height untouched
+
+        // The source pixel at a given screen point is the same before and after: nothing slid.
+        double screenX = 0.55;
+        double before = (screenX - x0) / w0;                       // fraction across the uncropped picture
+        var (sx, _, sw, _) = OverlayLayout.CropRect(o);
+        double after = sx + (screenX - x) / w * sw;
+        Assert.Equal(before, after, 6);
+
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
+        (x, _, w, _) = OverlayLayout.Rect(o, cam);
+        Assert.Equal((0.4, 0.6), (Math.Round(x, 6), Math.Round(x + w, 6)));
+        Assert.Equal((0.25, 0.0, 0.5, 1.0), OverlayLayout.CropRect(o));
+
+        // Zoom then works inside what's left.
+        TimelineOps.SetOverlayZoom(p, o.Id, 2);
+        var (cx, cy, cw, ch) = OverlayLayout.CropRect(o);
+        Assert.Equal((0.375, 0.25, 0.25, 0.5), (Math.Round(cx, 6), Math.Round(cy, 6), Math.Round(cw, 6), Math.Round(ch, 6)));
+    }
+
+    [Fact]
+    public void Crop_is_clamped_and_full_frame_fills_with_the_cropped_picture()
+    {
+        var p = new Project();
+        var cam = Video("cam.mp4", 10);
+        var o = TimelineOps.AddOverlay(p, cam, S(0));
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Top, 0.9);
+        Assert.Equal(ClipLook.MaxCropEach, o.CropTop);
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Top, -1);
+        Assert.Equal(0, o.CropTop);
+
+        // Cut the sides to a square-ish 8:9 picture: full frame makes it as tall as the frame.
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
+        TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
+        TimelineOps.PlaceOverlay(p, o.Id, OverlayPosition.FullFrame);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        Assert.Equal((0.25, 0.0, 0.5, 1.0), (Math.Round(x, 6), Math.Round(y, 6), Math.Round(w, 6), Math.Round(h, 6)));
+    }
+
+    [Fact]
+    public void Clip_crop_is_applied_before_the_fit_in_export_and_kept_by_split_and_reset_clears_it()
+    {
+        var p = new Project();
+        var clip = TimelineOps.Append(p, Video("C:/v/main.mp4", 20));
+        TimelineOps.SetClipCrop(p, clip.Id, CropSide.Bottom, 0.2);
+        Assert.True(ClipLook.IsCropped(clip));
+        Assert.False(ClipLook.IsDefault(clip));
+        Assert.Equal(16.0 / 9 / 0.8, ClipLook.CroppedAspect(16.0 / 9, 0, 0, 0, 0.2), 6);
+
+        var g = ExportPlan.Build(p, new ExportSettings { UseHardwareEncoder = false }, new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
+        // Blacked out in place on the original, before the fit: the picture doesn't move or rescale.
+        Assert.Contains("drawbox=x=0:y=ih*0.8:w=iw:h=ih*0.2+1:color=black:t=fill,scale=1920:1080", g);
+        Assert.DoesNotContain("crop=", g);
+
+        var right = TimelineOps.SplitAt(p, S(10))!;
+        Assert.Equal(0.2, right.CropBottom);
+
+        TimelineOps.ResetClipLook(p, clip.Id);
+        Assert.Equal(0, clip.CropBottom);
+    }
+
+    [Fact]
+    public void Old_files_load_overlays_unzoomed()
+    {
+        var p = new Project();
+        TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(0));
+        var json = ProjectSerializer.Serialize(p).Replace("\"Zoom\": 1,", "").Replace("\"PanX\": 0.5,", "").Replace("\"PanY\": 0.5,", "");
+        Assert.DoesNotContain("PanX", json);
+        var o = ProjectSerializer.Deserialize(json).Overlays.Single();
+        Assert.Equal((1.0, 0.5, 0.5), (o.Zoom, o.PanX, o.PanY));
+    }
+
+    [Fact]
     public void Muted_overlay_is_not_heard_in_the_export()
     {
         var p = new Project();

@@ -644,6 +644,7 @@ public sealed class TimelineControl : Control
             _originA = a.Start;
             _originB = e.X <= hit.R.Left + EdgeGrab ? a.In : a.Out;
             _drag = e.X <= hit.R.Left + EdgeGrab ? Drag.AudioIn : e.X >= hit.R.Right - EdgeGrab ? Drag.AudioOut : Drag.AudioMove;
+            if (_drag == Drag.AudioMove) SeekRequested?.Invoke(this, T(e.X)); // so S splits it where you clicked
             _session.BeginEdit();
             return;
         }
@@ -657,6 +658,8 @@ public sealed class TimelineControl : Control
             _originA = o.Start;
             _originB = e.X <= ov.R.Left + EdgeGrab ? o.In : o.Out;
             _drag = e.X <= ov.R.Left + EdgeGrab ? Drag.OverlayIn : e.X >= ov.R.Right - EdgeGrab ? Drag.OverlayOut : Drag.OverlayMove;
+            // Like a clip: clicking its body also moves the playhead there, so S splits it right where you clicked.
+            if (_drag == Drag.OverlayMove) SeekRequested?.Invoke(this, T(e.X));
             _session.BeginEdit();
             return;
         }
