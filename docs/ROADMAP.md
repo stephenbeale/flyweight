@@ -24,9 +24,11 @@ export. **Owner still to try it in-app.**
 2. Owner's installed copy still reported 0.2.1 on 2026-11-25 (no Start-menu "Flyweight" entry, only "Flyweight (dev)"):
    re-run the installer from the stable link and verify the version.
 3. Consider a release (0.4.0-preview) once vertical is merged: blur fill + vertical.
-4. Housekeeping: add `.gitattributes` (git keeps warning LF→CRLF on many files); delete stale local branches
-   `feature/ui-polish` and `feature/overlay-zoom` and remote `feature/annotation-fades`, `feature/frame-export`,
-   `feature/youtube-chapters`.
+4. Housekeeping: add `.gitattributes` (git keeps warning LF→CRLF on many files). Stale branches cleaned up
+   2026-11-25 (`feature/frame-export`, `feature/youtube-chapters` deleted; their features are in `main`).
+5. **Annotation fade in / fade out**: kept on remote `feature/annotation-fades` (one unmerged commit `f206dd1`,
+   2026-11-24, ~260 lines, never in `main`). Owner chose to keep it: rebase onto `main` (expect conflicts with
+   D35–D41, e.g. AnnotationRenderer's short-side scale), finish, test in-app, PR.
 
 ## Where things stand
 
