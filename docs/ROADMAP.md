@@ -8,8 +8,14 @@ the clip (new projects; toggle in the clip right-click menu). 271 core tests pas
 Claude checked a dev-build screenshot against an ffmpeg render of the export filter; **owner still to try it in-app.**
 Installed copy check: on 2026-11-25 `%LocalAppData%\Programs\Flyweight\Flyweight.exe` still reported 0.2.1 and there
 was no Start-menu "Flyweight" entry (only "Flyweight (dev)"), so the 0.3.1 install may not have happened yet.
-Idea parked: vertical (9:16) projects. Out of scope per CLAUDE.md; would make canvas shape a project setting
-(proxies, annotations, zoom, overlays, export all assume 16:9). Owner asked 2026-11-25, not yet decided.
+PR #18 merged (d29b47e).
+
+### 2026-11-25: vertical 9:16 projects for Shorts (D41), branch `feature/vertical-canvas`
+Owner approved: shape chosen at New project, changeable later from the preview right-click menu "Frame shape" (with a
+warning if there are annotations/overlays; one undo step); YouTube thumbnail preset hidden in vertical projects.
+Export sizes 1080×1920 / 1440×2560 / 2160×3840; bitrate by the short side; Shorts hint in Export when over 3:00.
+280 core tests pass (incl. a real 1080×1920 export pixel test). Dev-build screenshot matches an ffmpeg render of the
+export. **Owner still to try it in-app.**
 
 ## Where things stand
 
@@ -262,7 +268,7 @@ hurts search. They want something that says lean / light / fast / nimble.
 - Cross-project media library / proxy-cache manager → SQLite + Dapper (DECISIONS D13)
 
 ## Explicitly not planned (for now)
-Vertical / 9:16 output · real-time GPU effects · AI features · transitions library
+Real-time GPU effects · AI features · transitions library (vertical 9:16 is now supported, D41)
 
 ## Platform & distribution (owner asked 2026-11-24)
 

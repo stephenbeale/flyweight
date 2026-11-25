@@ -10,7 +10,7 @@ public enum CropSide { Left, Top, Right, Bottom }
 public enum OverlayPosition { BottomRight, BottomLeft, TopRight, TopLeft, Centre, FullFrame }
 
 /// <summary>
-/// Where an overlay sits on the 16:9 canvas, and which part of its source fills it. One set of maths for the preview,
+/// Where an overlay sits on the canvas (16:9, or 9:16 for vertical projects: pass its aspect), and which part of its source fills it. One set of maths for the preview,
 /// the export and "Save frame", so they all agree (the overlay equivalent of rule 5).
 ///
 ///   crop   cuts edges off the source: the BOX shrinks with it (the picture keeps its size), so trimming a webcam's
@@ -35,16 +35,16 @@ public static class OverlayLayout
     public static bool IsCropped(OverlayClip o) => ClipLook.IsCropped(o.CropLeft, o.CropTop, o.CropRight, o.CropBottom);
 
     /// <summary>Box size (fractions of the canvas) for a picture of shape <paramref name="aspect"/> at <paramref name="scale"/>, after cropping.</summary>
-    static (double W, double H) BoxSize(double scale, double aspect, OverlayClip crop)
+    static (double W, double H) BoxSize(double scale, double aspect, OverlayClip crop, double canvasAspect)
     {
         var (_, _, cw, ch) = ClipLook.CropBox(crop.CropLeft, crop.CropTop, crop.CropRight, crop.CropBottom);
-        return (scale * cw, scale * (16.0 / 9) / aspect * ch);
+        return (scale * cw, scale * canvasAspect / aspect * ch);
     }
 
     /// <summary>Top-left corner and size of the box, as fractions of the canvas (they can run past 0–1 if it hangs off an edge).</summary>
-    public static (double X, double Y, double W, double H) Rect(OverlayClip o, SourceMedia? m)
+    public static (double X, double Y, double W, double H) Rect(OverlayClip o, SourceMedia? m, double canvasAspect)
     {
-        var (w, h) = BoxSize(o.Scale, Aspect(m), o);
+        var (w, h) = BoxSize(o.Scale, Aspect(m), o, canvasAspect);
         return (o.X - w / 2, o.Y - h / 2, w, h);
     }
 
@@ -53,7 +53,7 @@ public static class OverlayLayout
     /// </summary>
     public static (int X, int Y, int W, int H) PixelRect(OverlayClip o, SourceMedia? m, int canvasW, int canvasH)
     {
-        var (_, _, w, h) = Rect(o, m);
+        var (_, _, w, h) = Rect(o, m, canvasW / (double)canvasH);
         int pw = Math.Max(2, (int)Math.Round(w * canvasW / 2) * 2);
         int ph = Math.Max(2, (int)Math.Round(h * canvasH / 2) * 2);
         // From the centre, so rounding the size doesn't shift it.
@@ -87,17 +87,17 @@ public static class OverlayLayout
     /// Centre and scale for a quick placement. Corners keep the current size; Full frame makes the (cropped) picture
     /// as big as fits the frame.
     /// </summary>
-    public static (double X, double Y, double Scale) Place(OverlayPosition pos, double scale, SourceMedia? m, OverlayClip crop)
+    public static (double X, double Y, double Scale) Place(OverlayPosition pos, double scale, SourceMedia? m, OverlayClip crop, double canvasAspect)
     {
         double a = Aspect(m);
         if (pos == OverlayPosition.FullFrame)
         {
             var (_, _, cw, ch) = ClipLook.CropBox(crop.CropLeft, crop.CropTop, crop.CropRight, crop.CropBottom);
-            double fill = Math.Min(1 / cw, a * 9 / 16 / ch); // widest that still fits both ways
+            double fill = Math.Min(1 / cw, a / canvasAspect / ch); // widest that still fits both ways
             return (0.5, 0.5, Math.Clamp(Math.Round(fill, 6), MinScale, MaxScale));
         }
-        var (w, h) = BoxSize(scale, a, crop);
-        double mx = Margin, my = Margin * 16.0 / 9; // the same gap in pixels on both edges
+        var (w, h) = BoxSize(scale, a, crop, canvasAspect);
+        double mx = Margin, my = Margin * canvasAspect; // the same gap in pixels on both edges
         double left = mx + w / 2, right = 1 - mx - w / 2, top = my + h / 2, bottom = 1 - my - h / 2;
         return pos switch
         {

@@ -243,7 +243,7 @@ public static class TimelineOps
             SourceId = media.Id, Track = Math.Clamp(track, 1, MaxOverlayTracks), Start = Max(start, TimeSpan.Zero),
             In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration,
         };
-        (o.X, o.Y, o.Scale) = OverlayLayout.Place(OverlayPosition.BottomRight, DefaultOverlayScale, media, o);
+        (o.X, o.Y, o.Scale) = OverlayLayout.Place(OverlayPosition.BottomRight, DefaultOverlayScale, media, o, Canvas.Aspect(p.Shape));
         p.Overlays.Add(o);
         return o;
     }
@@ -365,7 +365,7 @@ public static class TimelineOps
         if (p.FindOverlay(id) is not { } o) return;
         // Leaving full frame for a corner: go back to the default picture-in-picture size.
         var scale = pos != OverlayPosition.FullFrame && o.Scale > 0.9 ? DefaultOverlayScale : o.Scale;
-        var (x, y, s) = OverlayLayout.Place(pos, scale, p.FindMedia(o.SourceId), o);
+        var (x, y, s) = OverlayLayout.Place(pos, scale, p.FindMedia(o.SourceId), o, Canvas.Aspect(p.Shape));
         SetOverlayLayout(p, id, x, y, s);
     }
 
@@ -652,6 +652,12 @@ public static class TimelineOps
     /// <summary>What fills the bars around clips that aren't 16:9, for the whole project (D40).</summary>
     public static void SetBackgroundFill(Project p, BackgroundFill fill) => p.Background = fill;
 
+    /// <summary>
+    /// Landscape 16:9 or vertical 9:16 (D41). Positions are normalised, so everything keeps its place as a fraction of
+    /// the frame; arrows, boxes and overlays change shape on screen and may need moving (the UI warns first).
+    /// </summary>
+    public static void SetCanvasShape(Project p, CanvasShape shape) => p.Shape = shape;
+
     // ---------------- Picture: zoom and brightness/contrast (maths in ClipLook) ----------------
 
     /// <summary>Set a clip's zoom (clamped to 1–<see cref="ClipLook.MaxZoom"/>). Keeps where it is panned to.</summary>
@@ -724,7 +730,7 @@ public static class TimelineOps
         if (p.FindOverlay(overlayId) is not { } o) return;
         var v = ClipLook.CleanCrop(amount);
         // Size of the uncropped picture on the canvas: the crop fractions are of this.
-        double fullW = o.Scale, fullH = o.Scale * (16.0 / 9) / OverlayLayout.Aspect(p.FindMedia(o.SourceId));
+        double fullW = o.Scale, fullH = o.Scale * Canvas.Aspect(p.Shape) / OverlayLayout.Aspect(p.FindMedia(o.SourceId));
         switch (side)
         {
             case CropSide.Left: o.X += (v - ClipLook.CleanCrop(o.CropLeft)) * fullW / 2; o.CropLeft = v; break;
@@ -744,15 +750,16 @@ public static class TimelineOps
     {
         if (p.FindOverlay(overlayId) is not { } o || !double.IsFinite(edge)) return;
         var media = p.FindMedia(o.SourceId);
-        var (bx, by, bw, bh) = OverlayLayout.Rect(o, media);
+        double ca = Canvas.Aspect(p.Shape);
+        var (bx, by, bw, bh) = OverlayLayout.Rect(o, media, ca);
         bool across = side is CropSide.Left or CropSide.Right, fromStart = side is CropSide.Left or CropSide.Top;
         double start = across ? bx : by, end = start + (across ? bw : bh);
         double now = fromStart ? start : end, other = fromStart ? end : start;
 
         // Past a crop limit the solver would have to move the OTHER edge (or slide the picture). Instead the drag
         // stops at the furthest point where only this edge moves: try the pointer, else search back towards now.
-        var best = SolveTrim(o, media, side, now);
-        var tryEdge = SolveTrim(o, media, side, edge);
+        var best = SolveTrim(o, media, side, now, ca);
+        var tryEdge = SolveTrim(o, media, side, edge, ca);
         if (Keeps(tryEdge)) best = tryEdge;
         else
         {
@@ -760,7 +767,7 @@ public static class TimelineOps
             for (int i = 0; i < 40; i++)
             {
                 double mid = (lo + hi) / 2;
-                var t = SolveTrim(o, media, side, mid);
+                var t = SolveTrim(o, media, side, mid, ca);
                 if (Keeps(t)) { best = t; lo = mid; } else hi = mid;
             }
         }
@@ -778,9 +785,9 @@ public static class TimelineOps
     /// Crop and pan (zoom and size fixed) that put <paramref name="side"/> at <paramref name="edge"/> with the picture
     /// unmoved, clamped to the crop limits. Doesn't change <paramref name="o"/>. Null if the overlay has no size.
     /// </summary>
-    static Trim? SolveTrim(OverlayClip o, SourceMedia? media, CropSide side, double edge)
+    static Trim? SolveTrim(OverlayClip o, SourceMedia? media, CropSide side, double edge, double canvasAspect)
     {
-        var (bx, by, bw, bh) = OverlayLayout.Rect(o, media);
+        var (bx, by, bw, bh) = OverlayLayout.Rect(o, media, canvasAspect);
         var (vx, vy, vw, vh) = OverlayLayout.CropRect(o); // the part of the source on screen now
         double z = double.IsFinite(o.Zoom) ? Math.Clamp(o.Zoom, 1, OverlayLayout.MaxZoom) : 1, s = 1 / z;
         bool across = side is CropSide.Left or CropSide.Right, fromStart = side is CropSide.Left or CropSide.Top;

@@ -9,8 +9,8 @@ Owner: product-minded C#/.NET developer. Priorities: **stability and smoothness 
 The pitch is "a simple editor with great annotations (arrows, boxes, text) that doesn't lag or crash",
 unlike Clipchamp / DaVinci Resolve.
 
-Scope is deliberately narrow. **Out of scope unless the owner asks:** vertical/9:16 output, multi-track
-compositing, real-time GPU effects, AI features, transitions.
+Scope is deliberately narrow. **Out of scope unless the owner asks:** real-time GPU effects, AI features,
+transitions. (Vertical 9:16 projects for Shorts were added at the owner's request, D41; overlay tracks, D34.)
 
 ## Layout
 
@@ -47,7 +47,8 @@ tests/Flyweight.Core.Tests/  xUnit; FfmpegIntegrationTests runs real ffmpeg (sel
 3. **Project model = pure serialisable data.** Runtime state (proxy paths, progress, thumbnails) lives in
    `MediaLibrary.MediaState`, NOT the model, because undo swaps the whole Project object.
 4. **Annotation times are SOURCE time of their clip** (`ClipId`), visibility clamped to the clip's In/Out.
-   Coordinates are normalised 0–1 on the 16:9 canvas. Sizes are "pixels at 1080p" and scaled.
+   Coordinates are normalised 0–1 on the project's canvas (16:9, or 9:16 when `Project.Shape` is Vertical; always use
+   `Canvas.Aspect(p.Shape)`, never a hard-coded 16/9). Sizes are "pixels at 1080p" of the SHORT side, and scaled.
 5. **One renderer.** Preview and export both call `AnnotationRenderer.Draw`. Any visual change goes there,
    or the export will stop matching the preview.
 6. **Preview uses proxies, export uses originals.** Proxies are 960×540, CFR, all-intra (`-g 1`), padded with

@@ -74,9 +74,10 @@ public sealed class ProjectSession
     }
 
     /// <summary>A fresh, empty project. New projects blur the bars around portrait clips by default (D40).</summary>
-    public void New(ExportResolution outputResolution = ExportResolution.P1080, BackgroundFill background = BackgroundFill.Blur)
+    public void New(ExportResolution outputResolution = ExportResolution.P1080, BackgroundFill background = BackgroundFill.Blur,
+                    CanvasShape shape = CanvasShape.Landscape)
     {
-        Load(new Project { OutputResolution = outputResolution, Background = background }, null);
+        Load(new Project { OutputResolution = outputResolution, Background = background, Shape = shape }, null);
     }
 
     public void Load(Project project, string? path)

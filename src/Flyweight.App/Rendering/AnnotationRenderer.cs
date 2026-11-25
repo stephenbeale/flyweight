@@ -17,7 +17,7 @@ public static class AnnotationRenderer
     static readonly Bitmap MeasureBitmap = new(1, 1);
     static readonly Graphics MeasureGraphics = Graphics.FromImage(MeasureBitmap);
 
-    public static float Scale(RectangleF canvas) => canvas.Height / 1080f;
+    public static float Scale(RectangleF canvas) => Math.Min(canvas.Width, canvas.Height) / 1080f; // short side: vertical 1080x1920 is "1080p" too (D41)
 
     public static PointF ToCanvas(RectangleF canvas, float nx, float ny) =>
         new(canvas.X + nx * canvas.Width, canvas.Y + ny * canvas.Height);

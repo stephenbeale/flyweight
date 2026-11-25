@@ -481,3 +481,19 @@ don't change. Toggle: clip right-click menu, "Blurred bars behind portrait clips
   ffmpeg scaling) but look the same; the sharp picture itself is untouched.
 - Proxies and thumbnails keep black bars (`Canvas.FitFilter`): the preview adds the blur at draw time, so toggling the
   setting never re-encodes anything.
+
+### D41. Vertical 9:16 projects for YouTube Shorts (2026-11-25)
+Owner: "can it also have vertical video for yt as a canvas/output option?" (previously out of scope; approved).
+- **`Project.Shape`** (`CanvasShape.Landscape` / `Vertical`), old files load as Landscape. Chosen at New project; can be
+  changed later via the preview right-click menu "Frame shape" (owner chose this over fixed-at-creation). Positions are
+  normalised, so a change keeps everything at the same fraction of the frame: arrows/boxes/overlays may need moving, so
+  the app warns first when there are any. One undo step (`TimelineOps.SetCanvasShape`).
+- **One aspect source:** `Canvas.Aspect(shape)`; `ExportSettings.SizeFor(shape)` turns 1920×1080 → 1080×1920 etc.
+  `OverlayLayout.Rect/Place` take the canvas aspect (PixelRect derives it from W×H; the preview from its canvas rect).
+  `ClipLook.BlursBars` compares the clip to the canvas shape, and the blur works in 36×64 when vertical.
+  Annotation sizes are "pixels at 1080p" of the SHORT side (landscape unchanged). Bitrate cap by the short side.
+- **Proxies stay 16:9** and shared between projects: the vertical preview cuts the picture out of the 960×540 proxy frame
+  (`PreviewCanvas.Upright`) and fits it into 540×960 before blur/crop/tone/zoom run. Nothing is re-encoded when switching.
+  A portrait clip's preview is therefore 304×540 of real pixels: fine for editing, and export uses the originals anyway.
+- **YouTube thumbnail preset is hidden** in vertical projects (Shorts don't use 16:9 custom thumbnails); Save frame
+  saves at the vertical size. Export shows a hint when a vertical video is over 3:00 (YouTube's Shorts limit).

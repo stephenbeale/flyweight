@@ -23,6 +23,12 @@ public sealed class Project
     /// </summary>
     public BackgroundFill Background { get; set; } = BackgroundFill.Black;
 
+    /// <summary>
+    /// Frame shape: landscape 16:9, or vertical 9:16 for Shorts (D41). Older project files load as Landscape.
+    /// Can be changed later (TimelineOps.SetCanvasShape); positions stay normalised, so annotations may need moving.
+    /// </summary>
+    public CanvasShape Shape { get; set; } = CanvasShape.Landscape;
+
     /// <summary>Every source file imported into the media bin.</summary>
     public List<SourceMedia> Media { get; set; } = new();
 

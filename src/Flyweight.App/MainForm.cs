@@ -144,11 +144,24 @@ public sealed class MainForm : Form
         var previewMenu = new ContextMenuStrip();
         previewMenu.Items.Add("Save this frame as an image (Ctrl+Shift+E)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false));
         previewMenu.Items.Add("Save this frame as…", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
-        previewMenu.Items.Add("Save as YouTube thumbnail (1280×720 JPG, under 2 MB)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false, thumbnail: true));
+        // Shorts don't take 16:9 custom thumbnails, so vertical projects hide this (D41); Save frame still works.
+        var thumb = new ToolStripMenuItem("Save as YouTube thumbnail (1280×720 JPG, under 2 MB)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false, thumbnail: true));
+        previewMenu.Items.Add(thumb);
         previewMenu.Items.Add(new ToolStripSeparator());
         previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
         previewMenu.Items.Add("Add chapter marker here (M)", null, (_, _) => AddMarker());
-        previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
+        previewMenu.Items.Add(new ToolStripSeparator());
+        var landscape = new ToolStripMenuItem("Landscape 16:9", null, (_, _) => ChangeShape(CanvasShape.Landscape));
+        var vertical = new ToolStripMenuItem("Vertical 9:16 (Shorts)", null, (_, _) => ChangeShape(CanvasShape.Vertical));
+        previewMenu.Items.Add(new ToolStripMenuItem("Frame shape", null, landscape, vertical));
+        previewMenu.Opening += (_, e) =>
+        {
+            e.Cancel = _session.Project.Timeline.Count == 0;
+            bool isVertical = _session.Project.Shape == CanvasShape.Vertical;
+            thumb.Visible = !isVertical;
+            landscape.Checked = !isVertical;
+            vertical.Checked = isVertical;
+        };
         _preview.ContextMenuStrip = previewMenu;
 
         // Transport bar under the preview
@@ -1095,7 +1108,7 @@ public sealed class MainForm : Form
             }
             else
             {
-                var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.Size;
+                var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.SizeFor(project.Shape);
                 await FrameRenderer.ExportAsync(snapshot, t, w, h, path);
             }
 
@@ -1112,6 +1125,28 @@ public sealed class MainForm : Form
             _statusText.Text = "Saving the frame failed.";
         }
         finally { _exportingFrame = false; }
+    }
+
+    /// <summary>
+    /// Switch the whole project between landscape and vertical (D41; one undo step). Positions are kept as fractions of
+    /// the frame, so arrows, boxes, text and overlays may land somewhere unexpected: warn first if there are any.
+    /// </summary>
+    void ChangeShape(CanvasShape shape)
+    {
+        var p = _session.Project;
+        if (p.Shape == shape) return;
+        if (p.Annotations.Count > 0 || p.Overlays.Count > 0)
+        {
+            var name = shape == CanvasShape.Vertical ? "vertical (9:16)" : "landscape (16:9)";
+            var answer = MessageBox.Show(this,
+                $"Change this project to {name}?\n\nArrows, boxes, text and overlays keep their place as a share of the frame, " +
+                "so some may end up stretched or in an odd spot and need moving. You can undo this (Ctrl+Z).",
+                "Frame shape", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+            if (answer != DialogResult.OK) return;
+        }
+        _session.Execute(proj => TimelineOps.SetCanvasShape(proj, shape));
+        _preview.Invalidate();
+        _statusText.Text = shape == CanvasShape.Vertical ? "Frame shape: vertical 9:16 (YouTube Shorts)." : "Frame shape: landscape 16:9.";
     }
 
     void StartProxy(SourceMedia media) => _ = Task.Run(async () =>
@@ -1143,7 +1178,7 @@ public sealed class MainForm : Form
         using var dlg = new NewProjectForm(NewProjectForm.DefaultFolder(_session.FilePath));
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _engine.Pause();
-        _session.New(dlg.OutputResolution, dlg.Background);
+        _session.New(dlg.OutputResolution, dlg.Background, dlg.Shape);
         _engine.Seek(TimeSpan.Zero);
         // Save it straight away, so it has its name from the start (and Ctrl+S just saves).
         try

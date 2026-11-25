@@ -14,9 +14,13 @@ public sealed class NewProjectForm : Form
     readonly TextBox _folder = new() { Width = 260 };
     readonly ComboBox _resolution = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
 
-    readonly CheckBox _blur = new() { Text = "Fill the bars around portrait clips with a blurred copy", AutoSize = true, Checked = true };
+    readonly ComboBox _shape = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
+    readonly CheckBox _blur = new() { Text = "Fill the bars around clips of another shape with a blurred copy", AutoSize = true, Checked = true };
 
     public ExportResolution OutputResolution => ExportResolutions.All[_resolution.SelectedIndex].Value;
+
+    /// <summary>Landscape 16:9, or vertical 9:16 for Shorts (D41).</summary>
+    public CanvasShape Shape => _shape.SelectedIndex == 1 ? CanvasShape.Vertical : CanvasShape.Landscape;
 
     /// <summary>What fills the bars around clips that aren't 16:9 (D40). On by default.</summary>
     public BackgroundFill Background => _blur.Checked ? BackgroundFill.Blur : BackgroundFill.Black;
@@ -44,6 +48,17 @@ public sealed class NewProjectForm : Form
         _name.Text = UnusedName(folder, "My video");
         foreach (var (_, label) in ExportResolutions.All) _resolution.Items.Add(label);
         _resolution.SelectedIndex = 0;
+        _shape.Items.AddRange(new object[] { "Landscape 16:9 (YouTube video)", "Vertical 9:16 (YouTube Shorts)" });
+        _shape.SelectedIndex = 0;
+        // The size labels follow the shape, so "1080p vertical (1080x1920)" says exactly what you'll get.
+        void Relabel()
+        {
+            int keep = _resolution.SelectedIndex;
+            _resolution.Items.Clear();
+            foreach (var label in ExportResolutions.Labels(Shape)) _resolution.Items.Add(label);
+            _resolution.SelectedIndex = Math.Max(0, keep);
+        }
+        _shape.SelectedIndexChanged += (_, _) => Relabel();
 
         var browse = new Button { Text = "Browse…", AutoSize = true };
         browse.Click += (_, _) =>
@@ -69,14 +84,15 @@ public sealed class NewProjectForm : Form
         }
         Row(0, "Name", _name);
         Row(1, "Save in", _folder, browse);
-        Row(2, "Output size", _resolution);
-        layout.Controls.Add(hint, 1, 3);
+        Row(2, "Shape", _shape);
+        Row(3, "Output size", _resolution);
+        layout.Controls.Add(hint, 1, 4);
         layout.SetColumnSpan(hint, 2);
-        layout.Controls.Add(_blur, 1, 4);
+        layout.Controls.Add(_blur, 1, 5);
         layout.SetColumnSpan(_blur, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         buttons.Controls.AddRange(new Control[] { cancel, ok });
-        layout.Controls.Add(buttons, 0, 5);
+        layout.Controls.Add(buttons, 0, 6);
         layout.SetColumnSpan(buttons, 3);
         Controls.Add(layout);
 
