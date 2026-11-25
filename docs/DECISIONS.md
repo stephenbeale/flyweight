@@ -462,3 +462,22 @@ Owner: "there is no speed option on overlaid videos" and "make split all tracks 
   Speed box in the overlay's Overlay group; the timeline label shows "2× · V2 · …".
 - **Shift+S** (`TimelineOps.SplitAllAt`): cuts the main clip, every overlay and every audio item under the playhead in
   one undo step; items within `MinClipLength` of their ends stay whole. Also in the clip right-click menu.
+
+### D40. Blurred bars behind portrait clips (2026-11-25)
+Owner asked (2026-11-24) for the black bars around portrait phone clips to be filled with a blurred copy, like TV
+news / YouTube. `Project.Background` (`BackgroundFill.Black` / `Blur`) is project-wide: `ProjectSession.New` starts new
+projects on Blur (New project dialog tickbox, on by default); files without the field load as Black, so old projects
+don't change. Toggle: clip right-click menu, "Blurred bars behind portrait clips (whole project)" (one undo step).
+- **Applies when** `ClipLook.BlursBars`: the clip isn't zoomed or cropped (those keep their own framing, and a crop
+  blacks out edges in place) and its picture isn't already 16:9 (within 1%). 4:3 and portrait photos count too.
+  Overlays are unaffected.
+- **Cheap blur, the same recipe both sides:** scale the picture to FILL a tiny 64×36 frame (centre crop), blur it
+  there, dim to 60%, scale back up, then fit the sharp picture on top exactly where the black-bar fit puts it (so
+  annotations and overlays don't move). Export/Save frame/thumbnail: `ClipLook.BlurFitFilter` (split → area scale +
+  crop → `gblur=sigma=2` → `colorchannelmixer` → bicubic upscale, overlaid by the normal fit), labels prefixed per
+  clip (`bf0`, `bf1`…). Preview: `PreviewCanvas.Blurred` draws the proxy's picture region into 64×36, runs
+  `ClipLook.BlurSmall` (two 5-wide box passes each way ≈ sigma 2, plus the dim) and upscales. Blurring ~2,300 pixels
+  instead of 8 million keeps 4K exports fast and playback smooth. Preview and export aren't bit-identical (GDI+ vs
+  ffmpeg scaling) but look the same; the sharp picture itself is untouched.
+- Proxies and thumbnails keep black bars (`Canvas.FitFilter`): the preview adds the blur at draw time, so toggling the
+  setting never re-encodes anything.

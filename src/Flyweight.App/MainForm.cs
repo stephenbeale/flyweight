@@ -627,6 +627,14 @@ public sealed class MainForm : Form
             Enabled = why is null,
             ToolTipText = why ?? "Puts this clip's sound on the audio track, where you can move or trim it on its own. The clip is muted.",
         });
+        menu.Items.Add(new ToolStripSeparator());
+        bool blur = _session.Project.Background == BackgroundFill.Blur;
+        menu.Items.Add(new ToolStripMenuItem("Blurred bars behind portrait clips (whole project)", null, (_, _) =>
+            _session.Execute(p => TimelineOps.SetBackgroundFill(p, blur ? BackgroundFill.Black : BackgroundFill.Blur)))
+        {
+            Checked = blur,
+            ToolTipText = "Fills the black bars around clips that aren't 16:9 with a blurred copy of the clip. Zoomed or cropped clips keep their own framing.",
+        });
         menu.Show(screen);
     }
 
@@ -1135,7 +1143,7 @@ public sealed class MainForm : Form
         using var dlg = new NewProjectForm(NewProjectForm.DefaultFolder(_session.FilePath));
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _engine.Pause();
-        _session.New(dlg.OutputResolution);
+        _session.New(dlg.OutputResolution, dlg.Background);
         _engine.Seek(TimeSpan.Zero);
         // Save it straight away, so it has its name from the start (and Ctrl+S just saves).
         try

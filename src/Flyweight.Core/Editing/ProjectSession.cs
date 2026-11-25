@@ -73,9 +73,10 @@ public sealed class ProjectSession
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public void New(ExportResolution outputResolution = ExportResolution.P1080)
+    /// <summary>A fresh, empty project. New projects blur the bars around portrait clips by default (D40).</summary>
+    public void New(ExportResolution outputResolution = ExportResolution.P1080, BackgroundFill background = BackgroundFill.Blur)
     {
-        Load(new Project { OutputResolution = outputResolution }, null);
+        Load(new Project { OutputResolution = outputResolution, Background = background }, null);
     }
 
     public void Load(Project project, string? path)

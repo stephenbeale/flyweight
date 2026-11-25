@@ -18,7 +18,9 @@ public static class FrameExport
     {
         var media = p.FindMedia(hit.Clip.SourceId) ?? throw new InvalidOperationException("The clip's media is missing.");
         var clip = hit.Clip;
-        var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, width, height) : Canvas.FitFilter(width, height);
+        var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, width, height)
+                : ClipLook.BlursBars(p, clip, media) ? ClipLook.BlurFitFilter(width, height, "bf")
+                : Canvas.FitFilter(width, height);
 
         var args = new List<string>();
         if (!media.IsStill) args.AddRange(new[] { "-ss", Sec(hit.SourceTime) }); // input seek: fast, and exact when decoding

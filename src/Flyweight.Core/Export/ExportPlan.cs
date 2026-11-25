@@ -74,7 +74,9 @@ public sealed class ExportPlan
             bool sped = Math.Abs(speed - 1) > 0.0005;
 
             // Zoom crops the original before scaling (sharp), and the tone curve runs at the output size (cheap).
-            var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, w, h) : Canvas.FitFilter(w, h);
+            var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, w, h)
+                    : ClipLook.BlursBars(p, clip, media) ? ClipLook.BlurFitFilter(w, h, $"bf{i}")
+                    : Canvas.FitFilter(w, h);
             var pts = sped ? $"setpts=(PTS-STARTPTS)/{Num(speed)}" : "setpts=PTS-STARTPTS";
             graph.Append($"[{input}:v]{pts},fps={fpsStr},{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=yuv420p,tpad=stop=-1:stop_mode=clone,trim=duration={d}[v{i}];\n");
             // A muted clip is treated like one with no audio: silence, and its track isn't decoded at all.
