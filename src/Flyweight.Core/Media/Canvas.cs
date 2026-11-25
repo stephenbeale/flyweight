@@ -16,6 +16,12 @@ public static class Canvas
         $"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1";
 }
 
+/// <summary>
+/// What fills the bars around a clip that isn't 16:9 (a portrait phone clip, a 4:3 photo): plain black, or a
+/// blurred, darkened, zoomed-to-fill copy of the clip itself (D40). A project-wide setting.
+/// </summary>
+public enum BackgroundFill { Black, Blur }
+
 public enum ExportResolution { P1080, P1440, P2160 }
 
 public static class ExportResolutions

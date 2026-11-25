@@ -649,6 +649,9 @@ public static class TimelineOps
         c.Speed = double.IsFinite(speed) ? Math.Clamp(speed, MinSpeed, MaxSpeed) : 1;
     }
 
+    /// <summary>What fills the bars around clips that aren't 16:9, for the whole project (D40).</summary>
+    public static void SetBackgroundFill(Project p, BackgroundFill fill) => p.Background = fill;
+
     // ---------------- Picture: zoom and brightness/contrast (maths in ClipLook) ----------------
 
     /// <summary>Set a clip's zoom (clamped to 1–<see cref="ClipLook.MaxZoom"/>). Keeps where it is panned to.</summary>

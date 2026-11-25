@@ -140,6 +140,8 @@ public sealed class PreviewCanvas : Control
                 if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
                     Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
                     frame = Letterboxed(frame, pm.Width, pm.Height);
+                if (look is not null && _session.Project.FindMedia(look.SourceId) is { } bm && ClipLook.BlursBars(_session.Project, look, bm))
+                    frame = Blurred(frame, bm);
                 if (look is not null && ClipLook.IsCropped(look) &&
                     _session.Project.FindMedia(look.SourceId) is { Width: > 0, Height: > 0 } cm)
                     frame = Masked(frame, cm, look);
@@ -229,6 +231,75 @@ public sealed class PreviewCanvas : Control
         g.InterpolationMode = InterpolationMode.Bilinear;
         g.DrawImage(frame, Fit(new Size(mediaW, mediaH), new RectangleF(0, 0, frame.Width, frame.Height)));
         return _boxed;
+    }
+
+    Bitmap? _blurred, _blurSmall;
+    byte[]? _blurPixels;
+
+    /// <summary>
+    /// The bars filled with a blurred copy of the picture, as the export makes them (ClipLook.BlurFitFilter, D40):
+    /// the picture scaled to fill 64×36, blurred and dimmed there (ClipLook.BlurSmall), scaled back up, and the sharp
+    /// picture put back where it was. About 2 ms at 960×540. Call while holding FrameLock.
+    /// </summary>
+    Bitmap Blurred(Bitmap frame, SourceMedia media)
+    {
+        if (_blurred is null || _blurred.Size != frame.Size)
+        {
+            _blurred?.Dispose();
+            _blurred = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
+        }
+        _blurSmall ??= new Bitmap(ClipLook.BlurWidth, ClipLook.BlurHeight, PixelFormat.Format32bppRgb);
+
+        // The picture inside the barred frame, and the centred 16:9 part of it that fills the background.
+        var pic = Fit(new Size(media.Width, media.Height), new RectangleF(0, 0, frame.Width, frame.Height));
+        float fillW = Math.Min(pic.Width, pic.Height * 16f / 9f), fillH = fillW * 9f / 16f;
+        var fill = new RectangleF(pic.X + (pic.Width - fillW) / 2, pic.Y + (pic.Height - fillH) / 2, fillW, fillH);
+
+        using (var g = Graphics.FromImage(_blurSmall))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic; // averages, like ffmpeg's area scale
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            using var attrs = new ImageAttributes();
+            attrs.SetWrapMode(WrapMode.TileFlipXY);
+            g.DrawImage(frame, new Rectangle(0, 0, ClipLook.BlurWidth, ClipLook.BlurHeight), fill.X, fill.Y, fill.Width, fill.Height, GraphicsUnit.Pixel, attrs);
+        }
+        var rect = new Rectangle(0, 0, ClipLook.BlurWidth, ClipLook.BlurHeight);
+        var data = _blurSmall.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb);
+        try
+        {
+            int bytes = data.Stride * data.Height;
+            if (_blurPixels?.Length != bytes) _blurPixels = new byte[bytes];
+            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, _blurPixels, 0, bytes);
+            ClipLook.BlurSmall(_blurPixels, ClipLook.BlurWidth, ClipLook.BlurHeight, data.Stride);
+            System.Runtime.InteropServices.Marshal.Copy(_blurPixels, 0, data.Scan0, bytes);
+        }
+        finally { _blurSmall.UnlockBits(data); }
+
+        using (var g = Graphics.FromImage(_blurred))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            using (var attrs = new ImageAttributes())
+            {
+                attrs.SetWrapMode(WrapMode.TileFlipXY); // edges repeat instead of fading to black
+                g.DrawImage(_blurSmall, new Rectangle(Point.Empty, frame.Size), 0, 0, ClipLook.BlurWidth, ClipLook.BlurHeight, GraphicsUnit.Pixel, attrs);
+            }
+            // The sharp picture back on top, pixel for pixel. Inset 1 px from any padded edge so the proxy's black
+            // padding never shows as a hairline; edges that touch the frame stay put.
+            int W = frame.Width, H = frame.Height;
+            var keep = Rectangle.FromLTRB(
+                pic.Left > 0.5f ? (int)Math.Ceiling(pic.Left) + 1 : 0,
+                pic.Top > 0.5f ? (int)Math.Ceiling(pic.Top) + 1 : 0,
+                pic.Right < W - 0.5f ? (int)Math.Floor(pic.Right) - 1 : W,
+                pic.Bottom < H - 0.5f ? (int)Math.Floor(pic.Bottom) - 1 : H);
+            if (keep.Width > 0 && keep.Height > 0)
+            {
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Default;
+                g.DrawImage(frame, keep, keep, GraphicsUnit.Pixel);
+            }
+        }
+        return _blurred;
     }
 
     Bitmap? _masked;

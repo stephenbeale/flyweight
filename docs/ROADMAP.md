@@ -1,6 +1,15 @@
 # Roadmap & status
 
-_Last updated: 2026-11-24 (0.3.1-preview released; PRs #13-#16 merged)_
+_Last updated: 2026-11-25 (blur fill on `feature/blur-fill`)_
+
+### 2026-11-25: blurred bars behind portrait clips (D40), branch `feature/blur-fill`
+Preview, export, Save frame and the YouTube thumbnail all fill the bars around non-16:9 clips with a dimmed blur of
+the clip (new projects; toggle in the clip right-click menu). 271 core tests pass, incl. a real-ffmpeg pixel test.
+Claude checked a dev-build screenshot against an ffmpeg render of the export filter; **owner still to try it in-app.**
+Installed copy check: on 2026-11-25 `%LocalAppData%\Programs\Flyweight\Flyweight.exe` still reported 0.2.1 and there
+was no Start-menu "Flyweight" entry (only "Flyweight (dev)"), so the 0.3.1 install may not have happened yet.
+Idea parked: vertical (9:16) projects. Out of scope per CLAUDE.md; would make canvas shape a project setting
+(proxies, annotations, zoom, overlays, export all assume 16:9). Owner asked 2026-11-25, not yet decided.
 
 ## Where things stand
 
@@ -234,11 +243,8 @@ hurts search. They want something that says lean / light / fast / nimble.
   2. Clip speed (e.g. 0.25×–4×; setpts/atempo; timeline/annotation maths must respect speed).
   3. Reverse: parked (ffmpeg `reverse` buffers the whole clip; would be short clips only).
 - Audio fades
-- **Blurred-background fill for portrait clips: candidate next** (owner asked 2026-11-24). It was held back until the
-  overlay zoom/crop work merged (now done, PR #13). Plan: blur
-  only un-zoomed/un-cropped clips; export via split→scale-to-fill+boxblur→overlay of the fitted picture; preview
-  by drawing a downscaled-then-upscaled copy of the visible picture behind it (cheap blur) so it matches; Save frame
-  and thumbnail use the export path; project-level setting, new projects default to blur, old ones keep black bars.
+- ~~Blurred-background fill for portrait clips~~ ✅ (D40, `feature/blur-fill`, 2026-11-25): project-level, new projects
+  default to blur, old ones keep black bars; toggle in the clip right-click menu.
 - ~~YouTube thumbnail preset~~ ✅ (2026-11-24): right-click preview → 1280×720 JPG under 2 MB
 - Title cards
 - Captions (.srt) export

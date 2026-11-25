@@ -17,6 +17,12 @@ public sealed class Project
     /// </summary>
     public ExportResolution OutputResolution { get; set; } = ExportResolution.P1080;
 
+    /// <summary>
+    /// What fills the bars around clips that aren't 16:9 (D40). Older project files load as Black so they don't
+    /// change; <see cref="Editing.ProjectSession.New"/> starts new projects on Blur.
+    /// </summary>
+    public BackgroundFill Background { get; set; } = BackgroundFill.Black;
+
     /// <summary>Every source file imported into the media bin.</summary>
     public List<SourceMedia> Media { get; set; } = new();
 

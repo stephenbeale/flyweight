@@ -142,5 +142,79 @@ public static class ClipLook
                $"scale={w}:{h}:flags=bicubic,setsar=1";
     }
 
+    // ---------------- Blurred bars (D40) ----------------
+    //
+    // Both the preview and the export build the background the same cheap way: the picture scaled to FILL a tiny
+    // 64×36 frame (centre-cropped), blurred there (a Gaussian of sigma 2, which two 5-wide box passes match),
+    // darkened so the real picture stands out, then scaled up to full size. Blurring 2,304 pixels instead of
+    // 8 million keeps a 4K export fast and the preview smooth. The sharp picture is then fitted on top, exactly
+    // where the black-bar fit would put it, so annotations land in the same place either way.
+
+    public const int BlurWidth = 64;
+    public const int BlurHeight = 36;
+
+    /// <summary>How bright the blurred background is kept (0.6 = 40% darker), so the real picture stands out.</summary>
+    public const double BlurDim = 0.6;
+
+    /// <summary>
+    /// True when this clip's bars are filled with blur: the project asks for it, the clip isn't zoomed or cropped
+    /// (those show their own framing), and its picture isn't already 16:9 (no bars to fill).
+    /// </summary>
+    public static bool BlursBars(Project p, Clip c, SourceMedia? m) =>
+        p.Background == BackgroundFill.Blur && m is { IsAudioOnly: false, Width: > 0, Height: > 0 } &&
+        !IsZoomed(c) && !IsCropped(c) && Math.Abs(m.Width / (double)m.Height - 16.0 / 9) > 0.01;
+
+    /// <summary>
+    /// Replaces <see cref="Canvas.FitFilter"/> when <see cref="BlursBars"/>: the blurred fill behind the fitted
+    /// picture. It splits the stream, so it needs labels unique within the graph: <paramref name="id"/> prefixes them.
+    /// Like FitFilter it takes one input and leaves one W×H output, so it drops into a linear chain.
+    /// </summary>
+    public static string BlurFitFilter(int w, int h, string id) =>
+        $"split=2[{id}b][{id}f];" +
+        $"[{id}b]scale={BlurWidth}:{BlurHeight}:force_original_aspect_ratio=increase:flags=area,crop={BlurWidth}:{BlurHeight}," +
+        $"gblur=sigma=2,colorchannelmixer=rr={Num(BlurDim)}:gg={Num(BlurDim)}:bb={Num(BlurDim)}," +
+        $"scale={w}:{h}:flags=bicubic,setsar=1[{id}bg];" +
+        $"[{id}f]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=bicubic,setsar=1[{id}fg];" +
+        $"[{id}bg][{id}fg]overlay=x=(W-w)/2:y=(H-h)/2,setsar=1";
+
+    /// <summary>
+    /// The preview's half of the blur, on the tiny frame (32-bit BGRA/BGRX rows, <paramref name="stride"/> bytes each):
+    /// two 5-wide box passes each way (≈ the export's sigma-2 Gaussian; edges repeat) and the <see cref="BlurDim"/>.
+    /// </summary>
+    public static void BlurSmall(byte[] px, int width, int height, int stride)
+    {
+        var tmp = new byte[px.Length];
+        for (int pass = 0; pass < 2; pass++)
+        {
+            BoxPass(px, tmp, width, height, stride, horizontal: true);
+            BoxPass(tmp, px, width, height, stride, horizontal: false);
+        }
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+            {
+                int i = y * stride + x * 4;
+                for (int ch = 0; ch < 3; ch++) px[i + ch] = (byte)Math.Round(px[i + ch] * BlurDim);
+                px[i + 3] = 255;
+            }
+    }
+
+    static void BoxPass(byte[] src, byte[] dst, int width, int height, int stride, bool horizontal)
+    {
+        const int r = 2;
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    int sum = 0;
+                    for (int k = -r; k <= r; k++)
+                    {
+                        int sx = horizontal ? Math.Clamp(x + k, 0, width - 1) : x;
+                        int sy = horizontal ? y : Math.Clamp(y + k, 0, height - 1);
+                        sum += src[sy * stride + sx * 4 + ch];
+                    }
+                    dst[y * stride + x * 4 + ch] = (byte)((sum + r) / (2 * r + 1));
+                }
+    }
+
     static double Clamp1(double v) => double.IsFinite(v) ? Math.Clamp(v, -1, 1) : 0;
 }

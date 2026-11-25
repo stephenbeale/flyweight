@@ -4,7 +4,7 @@ using Flyweight.Core.Model;
 namespace Flyweight.App.Forms;
 
 /// <summary>
-/// "New project": name, folder and output size. Create saves the empty project there straight away,
+/// "New project": name, folder, output size and whether portrait clips get blurred bars. Create saves the empty project there straight away,
 /// so New always does something visible (the title shows the new name), even when the current
 /// project was already empty. The output size becomes the export dialog's default.
 /// </summary>
@@ -14,7 +14,12 @@ public sealed class NewProjectForm : Form
     readonly TextBox _folder = new() { Width = 260 };
     readonly ComboBox _resolution = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
 
+    readonly CheckBox _blur = new() { Text = "Fill the bars around portrait clips with a blurred copy", AutoSize = true, Checked = true };
+
     public ExportResolution OutputResolution => ExportResolutions.All[_resolution.SelectedIndex].Value;
+
+    /// <summary>What fills the bars around clips that aren't 16:9 (D40). On by default.</summary>
+    public BackgroundFill Background => _blur.Checked ? BackgroundFill.Blur : BackgroundFill.Black;
 
     /// <summary>Full path of the project file to create (valid once the dialog returns OK).</summary>
     public string ProjectPath => Path.Combine(_folder.Text.Trim(), _name.Text.Trim() + ProjectSerializer.FileExtension);
@@ -67,9 +72,11 @@ public sealed class NewProjectForm : Form
         Row(2, "Output size", _resolution);
         layout.Controls.Add(hint, 1, 3);
         layout.SetColumnSpan(hint, 2);
+        layout.Controls.Add(_blur, 1, 4);
+        layout.SetColumnSpan(_blur, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         buttons.Controls.AddRange(new Control[] { cancel, ok });
-        layout.Controls.Add(buttons, 0, 4);
+        layout.Controls.Add(buttons, 0, 5);
         layout.SetColumnSpan(buttons, 3);
         Controls.Add(layout);
 
