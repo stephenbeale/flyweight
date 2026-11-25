@@ -498,6 +498,24 @@ Owner: "can it also have vertical video for yt as a canvas/output option?" (prev
 - **YouTube thumbnail preset is hidden** in vertical projects (Shorts don't use 16:9 custom thumbnails); Save frame
   saves at the vertical size. Export shows a hint when a vertical video is over 3:00 (YouTube's Shorts limit).
 
+### Annotation fade in / fade out (2026-11-24)
+Arrows, boxes and text can fade in and out (Properties → Timing: Fade in / Fade out, 0–5 s, default 0 so existing
+projects are unchanged). One rule everywhere, `TimelineOps.FadeFor` / `AnnotationOpacity`: for a run across cuts the
+fade-in happens on its first piece and the fade-out on its last (no dip at the cut); fades longer than the piece are
+scaled to fit. Preview and Save frame draw the annotation into a layer and blend it at that opacity (so the outline and
+stroke fade together); the export loops the annotation PNG for its length and uses ffmpeg `fade=...:alpha=1`. The
+selected annotation is always drawn fully visible in the preview so you can see what you're editing.
+
+### Tracks stay with their footage for every ripple edit (2026-11-25)
+Delete and trim already moved the overlay and audio tracks with the footage (D37/D38). Now insert at playhead, freeze
+frame, paste and clip speed changes do too (`InsertGapInTracks` / `CutRangeFromTracks`), so a webcam overlay or a music
+cue placed against a moment stays on that moment whatever you add or change before it. Speed: the clip's END moves, so
+items after it move; items inside the sped-up clip keep their timeline time. Reorder (drag a clip elsewhere) still
+leaves the tracks alone. Opening a gap never leaves slivers: an item within MinClipLength of the gap moves whole.
+Also from the review: an edit left open by a wheel-zoom is committed before Undo/Redo (so Ctrl+Z straight after
+scrolling undoes the zoom and keeps redo), and "Separate audio" on a sped-up overlay is disabled with the reason shown.
+Removing a file from the Media bin still ripple-deletes its clips with the tracks in sync, like deleting them by hand.
+
 ### D42. Timeline layout: annotations on top, video + audio pinned at the bottom (2026-11-25)
 Owner: text boxes "dont show on timeline, at least when there are 4 other items in view" and "keep video files at bottom
 as they are core". The panel was a fixed ~290 px and annotation lanes stacked downwards under the audio track, so the 5th

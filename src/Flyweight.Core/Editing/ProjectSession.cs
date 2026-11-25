@@ -56,6 +56,9 @@ public sealed class ProjectSession
 
     public void Undo()
     {
+        // An edit still open (e.g. a wheel-zoom that commits on a timer) becomes its own step first, so this undoes
+        // it instead of leaving a stale snapshot to be pushed later (which would wipe redo).
+        if (_pendingSnapshot is not null) CommitEdit();
         if (_undo.Count == 0) return;
         _redo.Push(ProjectSerializer.Serialize(Project));
         Project = ProjectSerializer.Deserialize(_undo.Last!.Value);
@@ -66,6 +69,7 @@ public sealed class ProjectSession
 
     public void Redo()
     {
+        if (_pendingSnapshot is not null) CommitEdit();
         if (_redo.Count == 0) return;
         _undo.AddLast(ProjectSerializer.Serialize(Project));
         Project = ProjectSerializer.Deserialize(_redo.Pop());

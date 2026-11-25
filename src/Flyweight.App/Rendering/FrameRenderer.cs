@@ -29,7 +29,7 @@ public static class FrameRenderer
             {
                 var canvas = new RectangleF(0, 0, width, height);
                 foreach (var a in TimelineOps.VisibleAt(project, t))
-                    AnnotationRenderer.Draw(g, a, canvas);
+                    AnnotationRenderer.Draw(g, a, canvas, TimelineOps.AnnotationOpacity(project, a, t)); // mid-fade = part-faded
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPng))!);
             bmp.Save(outputPng, ImageFormat.Png);

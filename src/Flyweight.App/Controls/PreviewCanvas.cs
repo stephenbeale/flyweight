@@ -191,7 +191,9 @@ public sealed class PreviewCanvas : Control
         foreach (var a in TimelineOps.VisibleAt(_session.Project, _engine.Position))
         {
             if (a.Id == _editingId) continue; // the inline editor is showing it
-            AnnotationRenderer.Draw(g, a, canvas);
+            // Fades: the selected one is drawn fully visible so you can see what you're editing.
+            float opacity = a.Id == SelectedAnnotationId ? 1f : TimelineOps.AnnotationOpacity(_session.Project, a, _engine.Position);
+            AnnotationRenderer.Draw(g, a, canvas, opacity);
         }
         if (_creating is not null) AnnotationRenderer.Draw(g, _creating, canvas);
         g.ResetClip();

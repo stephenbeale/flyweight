@@ -164,9 +164,22 @@ public sealed class ExportPlan
             if (!overlayPngs.TryGetValue(a.Id, out var png)) continue;
             if (TimelineOps.AnnotationRange(p, a) is not { } range) continue;
 
-            args.AddRange(new[] { "-i", png });
             var next = $"o{k++}";
-            graph.Append($";\n[{last}][{input}:v]overlay=0:0:format=auto:enable='between(t,{Sec(range.Start)},{Sec(range.End)})'[{next}]");
+            if (TimelineOps.FadeFor(p, a) is { } fade && (fade.In > 0 || fade.Out > 0))
+            {
+                // Fading: loop the PNG for the piece's length, fade its alpha in/out, then shift it to its start time.
+                var len = range.End - range.Start;
+                args.AddRange(new[] { "-loop", "1", "-framerate", fpsStr, "-t", Sec(len), "-i", png });
+                var fades = (fade.In > 0 ? $",fade=t=in:st=0:d={Num(fade.In)}:alpha=1" : "") +
+                            (fade.Out > 0 ? $",fade=t=out:st={Num(len.TotalSeconds - fade.Out)}:d={Num(fade.Out)}:alpha=1" : "");
+                graph.Append($";\n[{input}:v]format=rgba{fades},setpts=PTS-STARTPTS+{Sec(range.Start)}/TB[af{k}]");
+                graph.Append($";\n[{last}][af{k}]overlay=0:0:format=auto:eof_action=pass:enable='between(t,{Sec(range.Start)},{Sec(range.End)})'[{next}]");
+            }
+            else
+            {
+                args.AddRange(new[] { "-i", png });
+                graph.Append($";\n[{last}][{input}:v]overlay=0:0:format=auto:enable='between(t,{Sec(range.Start)},{Sec(range.End)})'[{next}]");
+            }
             last = next;
             input++;
         }
