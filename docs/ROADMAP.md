@@ -53,7 +53,7 @@ Both dev shortcuts were re-saved and `ie4uinit -show` was run; relaunch from the
 1. Owner installs 0.3.1 from the stable link as the final installer check (it also switches the installed app and
    `.flyweight` file icons to the new fly).
 2. Send the friends email (drafted in chat; it uses the stable link).
-3. Next feature ideas: resize/crop grips for main clips in the preview; speed changes keeping tracks in sync; an option
+3. Next feature ideas: resize/crop grips for main clips in the preview; ~~speed changes keeping tracks in sync~~ ✅ (2026-11-25, also insert/freeze/paste); an option
    to turn track sync off; re-check the audio crackle (may already be fixed by the playback-timer work); add a
    `.gitattributes` for line endings (git keeps warning LF to CRLF).
 4. Delete the stale local branches `feature/ui-polish` and `feature/overlay-zoom` (merged; `git branch -d`).
@@ -246,7 +246,7 @@ hurts search. They want something that says lean / light / fast / nimble.
 - Thumbnails/bitmaps: watch for GDI handle leaks over long sessions.
 
 ## v0.2 candidates (owner to prioritise)
-- Annotation fade in/out
+- ~~Annotation fade in/out~~ ✅ (2026-11-24, merged 2026-11-25)
 - Blur/redact box; numbered callouts; freehand pen
 - ~~**Chapter markers** → YouTube description timestamps~~ ✅ (D20): M to add, Ctrl+Shift+C to copy, .txt beside exports
 - ~~Thumbnail export (current frame + annotations at 1280×720)~~ ✅ YouTube thumbnail preset (2026-11-24)

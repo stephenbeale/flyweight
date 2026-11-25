@@ -1,4 +1,5 @@
 using Flyweight.App.Rendering;
+using Flyweight.Core.Editing;
 using Flyweight.Core.Model;
 
 namespace Flyweight.App.Controls;
@@ -39,7 +40,7 @@ public sealed class AnnotationStylePanel : PropertySheet
     Swatch? _colour, _fillColour;
     Slider? _thickness, _fontSize, _fillOpacity;
     Theme.ToggleSwitch? _filled;
-    NumericUpDown? _duration;
+    NumericUpDown? _duration, _fadeIn, _fadeOut;
     RoundTextBox? _text;
     Theme.DarkCombo? _font;
 
@@ -74,6 +75,8 @@ public sealed class AnnotationStylePanel : PropertySheet
             _fillOpacity?.SetValue(_fillPct);
             if (_duration is not null)
                 _duration.Value = Math.Clamp((decimal)Math.Round((a.End - a.Start).TotalSeconds, 1), _duration.Minimum, _duration.Maximum);
+            if (_fadeIn is not null) _fadeIn.Value = Math.Clamp((decimal)Math.Round(a.FadeIn, 2), _fadeIn.Minimum, _fadeIn.Maximum);
+            if (_fadeOut is not null) _fadeOut.Value = Math.Clamp((decimal)Math.Round(a.FadeOut, 2), _fadeOut.Minimum, _fadeOut.Maximum);
             if (_text is not null && !_text.Box.Focused) _text.Box.Text = a.Text;
             if (_font is not null && !_font.DroppedDown)
             {
@@ -93,7 +96,7 @@ public sealed class AnnotationStylePanel : PropertySheet
         _colour = _fillColour = null;
         _thickness = _fontSize = _fillOpacity = null;
         _filled = null;
-        _duration = null;
+        _duration = _fadeIn = _fadeOut = null;
         _text = null;
         _font = null;
 
@@ -155,6 +158,21 @@ public sealed class AnnotationStylePanel : PropertySheet
             Raise(a => a.End = a.Start + TimeSpan.FromSeconds(secs)); // TimelineOps clamps to the clip on display
         };
         Row("Duration (s)", _duration);
+
+        NumericUpDown FadeBox(Action<Annotation, double> set)
+        {
+            var box = new NumericUpDown
+            {
+                Minimum = 0, Maximum = (decimal)TimelineOps.MaxFade, DecimalPlaces = 2, Increment = 0.25m,
+                BackColor = InputBg, ForeColor = Fg, BorderStyle = BorderStyle.FixedSingle, Width = 80,
+            };
+            box.ValueChanged += (_, _) => { var v = (double)box.Value; Raise(a => set(a, v)); };
+            return box;
+        }
+        _fadeIn = FadeBox((a, v) => a.FadeIn = v);
+        _fadeOut = FadeBox((a, v) => a.FadeOut = v);
+        Row("Fade in (s)", _fadeIn);
+        Row("Fade out (s)", _fadeOut);
 
         ResumeLayout();
         PerformLayout();

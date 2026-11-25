@@ -60,8 +60,10 @@ public static class TimelineOps
             throw new ArgumentException("Audio files go on the audio track (AddAudio), not the video timeline.", nameof(media));
         if (p.FindMedia(media.Id) is null) p.Media.Add(media);
         var clip = new Clip { SourceId = media.Id, In = TimeSpan.Zero, Out = media.IsStill ? DefaultStillLength : media.Duration };
-        p.Timeline.Insert(Math.Clamp(index, 0, p.Timeline.Count), clip);
+        index = Math.Clamp(index, 0, p.Timeline.Count);
+        p.Timeline.Insert(index, clip);
         NormaliseLinks(p); // a run split to make room must not bridge the new clip
+        InsertGapInTracks(p, ClipStart(p, index), clip.Duration); // overlays and music stay with their footage
         return clip;
     }
 
@@ -149,6 +151,7 @@ public static class TimelineOps
         var clip = new Clip { SourceId = still.Id, In = TimeSpan.Zero, Out = hold };
         CopyLook(hit.Clip, clip); // the grabbed frame is unzoomed and as shot: freeze it as it looked
         p.Timeline.Insert(insertAt, clip);
+        InsertGapInTracks(p, ClipStart(p, insertAt), clip.Duration); // overlays and music after it wait for the freeze
 
         // Copies (not burned in) so they stay editable; they hold for the whole freeze.
         foreach (var a in onScreen)
@@ -179,8 +182,8 @@ public static class TimelineOps
 
     /// <summary>
     /// Insert the whole of <paramref name="media"/> at the playhead: the clip under <paramref name="t"/> is split there
-    /// and the rest of the timeline ripples right. Past the end it is appended. The audio track and overlays stay at
-    /// their timeline times, as for every other ripple edit.
+    /// and the rest of the timeline ripples right. Past the end it is appended. The audio track and overlays after the
+    /// insert point move right with their footage, as for every other ripple edit (InsertMedia opens the gap).
     /// </summary>
     public static Clip InsertMediaAt(Project p, SourceMedia media, TimeSpan t)
     {
@@ -216,6 +219,13 @@ public static class TimelineOps
     }
 
     /// <summary>The same for an overlay: its sound goes onto the audio track and the overlay is muted.</summary>
+    /// <summary>Why <see cref="SeparateOverlayAudio"/> would refuse this overlay, or null if it can be done.</summary>
+    public static string? CannotSeparateOverlayAudio(Project p, Guid overlayId) =>
+        p.FindOverlay(overlayId) is not { } o || p.FindMedia(o.SourceId) is not { } m ? "That overlay no longer exists."
+        : m.IsStill || !m.HasAudio ? "This overlay has no sound to separate."
+        : Math.Abs(o.Speed - 1) > 0.0005 ? "Set the overlay back to 1× speed first: audio-track items play at normal speed."
+        : null;
+
     public static AudioItem? SeparateOverlayAudio(Project p, Guid overlayId)
     {
         if (p.FindOverlay(overlayId) is not { } o || p.FindMedia(o.SourceId) is not { HasAudio: true, IsStill: false }) return null;
@@ -518,6 +528,8 @@ public static class TimelineOps
         }
         foreach (var link in links.Values) TidyLink(p, link); // a run cut down to one piece is a plain annotation
         NormaliseLinks(p); // pasting into the middle of a run splits it
+        if (pasted.Count > 0)
+            InsertGapInTracks(p, ClipStart(p, index), pasted.Aggregate(TimeSpan.Zero, (sum, c) => sum + c.Duration));
         return pasted;
     }
 
@@ -589,8 +601,9 @@ public static class TimelineOps
         if (length <= TimeSpan.Zero) return;
         foreach (var o in p.Overlays.ToList())
         {
-            if (o.Start >= at) { o.Start += length; continue; }
-            if (o.End <= at) continue;
+            // Within MinClipLength of an end, don't leave a sliver: move the whole item, or leave it whole.
+            if (o.Start >= at || at - o.Start < MinClipLength) { o.Start += length; continue; }
+            if (o.End <= at || o.End - at < MinClipLength) continue;
             var right = o.Clone();
             right.Id = Guid.NewGuid();
             right.In = o.SourceAt(at - o.Start);
@@ -600,8 +613,8 @@ public static class TimelineOps
         }
         foreach (var a in p.AudioTrack.ToList())
         {
-            if (a.Start >= at) { a.Start += length; continue; }
-            if (a.End <= at) continue;
+            if (a.Start >= at || at - a.Start < MinClipLength) { a.Start += length; continue; }
+            if (a.End <= at || a.End - at < MinClipLength) continue;
             var right = a.Clone();
             right.Id = Guid.NewGuid();
             right.In = a.In + (at - a.Start);
@@ -646,7 +659,14 @@ public static class TimelineOps
     public static void SetClipSpeed(Project p, Guid clipId, double speed)
     {
         if (p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is { IsStill: true }) return;
+        var start = ClipStart(p, clipId);
+        var before = c.Duration;
         c.Speed = double.IsFinite(speed) ? Math.Clamp(speed, MinSpeed, MaxSpeed) : 1;
+        // The clip's END moves; overlays and music after it move with the footage that follows (as for a trim).
+        var change = c.Duration - before;
+        var oldEnd = start + before;
+        if (change < TimeSpan.Zero) CutRangeFromTracks(p, oldEnd + change, oldEnd);
+        else if (change > TimeSpan.Zero) InsertGapInTracks(p, oldEnd, change);
     }
 
     /// <summary>What fills the bars around clips that aren't 16:9, for the whole project (D40).</summary>
@@ -1006,7 +1026,41 @@ public static class TimelineOps
             m.StrokeWidth = src.StrokeWidth;
             m.FontSize = src.FontSize;
             m.FontFamily = src.FontFamily;
+            m.FadeIn = src.FadeIn;
+            m.FadeOut = src.FadeOut;
         }
+    }
+
+    // ---------------- Annotation fades ----------------
+
+    /// <summary>Longest fade the UI offers, in seconds.</summary>
+    public const double MaxFade = 5;
+
+    /// <summary>
+    /// The fade-in and fade-out (seconds) that actually apply to this PIECE: fade in only on the first piece of a run,
+    /// fade out only on the last, each clamped so together they never exceed the piece's on-screen length. The preview,
+    /// Save frame and the export all use this, so they match.
+    /// </summary>
+    public static (double In, double Out, TimeSpan Start, TimeSpan End)? FadeFor(Project p, Annotation a)
+    {
+        if (AnnotationRange(p, a) is not { } r) return null;
+        var pieces = LinkedPieces(p, a);
+        double fi = pieces[0].Id == a.Id ? Math.Clamp(a.FadeIn, 0, MaxFade) : 0;
+        double fo = pieces[^1].Id == a.Id ? Math.Clamp(a.FadeOut, 0, MaxFade) : 0;
+        double len = (r.End - r.Start).TotalSeconds;
+        if (fi + fo > len && fi + fo > 0) { double k = len / (fi + fo); fi *= k; fo *= k; }
+        return (fi, fo, r.Start, r.End);
+    }
+
+    /// <summary>Opacity 0–1 of the annotation at timeline time <paramref name="t"/> (1 when it has no fades).</summary>
+    public static float AnnotationOpacity(Project p, Annotation a, TimeSpan t)
+    {
+        if (FadeFor(p, a) is not { } f) return 1f;
+        double x = 1;
+        double since = (t - f.Start).TotalSeconds, until = (f.End - t).TotalSeconds;
+        if (f.In > 0) x = Math.Min(x, since / f.In);
+        if (f.Out > 0) x = Math.Min(x, until / f.Out);
+        return (float)Math.Clamp(x, 0, 1);
     }
 
     /// <summary>Delete an annotation, and the rest of its run if it's linked.</summary>
