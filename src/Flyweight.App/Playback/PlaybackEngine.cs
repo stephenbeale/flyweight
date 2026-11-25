@@ -48,6 +48,11 @@ public sealed class PlaybackEngine : IDisposable
     long _lastVlcTime = -1;
     readonly Stopwatch _sinceVlcTime = new();
     long _ignoreVlcTimeBelowMs;
+    /// <summary>
+    /// After a seek in place, VLC can still report the OLD position for a moment; after a backward seek that's
+    /// above the floor. Until the first reading near the target is accepted, ignore times above this too.
+    /// </summary>
+    long _ignoreVlcTimeAboveMs = long.MaxValue;
 
     /// <summary>Lock this while reading <see cref="Frame"/>.</summary>
     public object FrameLock { get; } = new();
@@ -191,6 +196,7 @@ public sealed class PlaybackEngine : IDisposable
             // spent paused counted as progress and every resume began with a needless re-seek (a visible hitch).
             ResetClock((long)(Locate(Position)?.SourceTime.TotalMilliseconds ?? _player.Time));
             _ignoreVlcTimeBelowMs = _lastVlcTime;
+            _ignoreVlcTimeAboveMs = long.MaxValue;
             _sinceLastSeek.Restart();
         }
         else ApplySeek(Position, force: true);
@@ -273,6 +279,7 @@ public sealed class PlaybackEngine : IDisposable
             // footage of the same file (e.g. clip 2 = 0–20 s after starting at 17 s) had every VLC time ignored:
             // the drift check saw the video frozen and resynced every ~1 s forever (a crackle each time).
             _ignoreVlcTimeBelowMs = ms - 500;
+            _ignoreVlcTimeAboveMs = ms + 2000;
             if (_playing && _player.State == VLCState.Paused) _player.SetPause(false);
             else if (!_playing && _player.State == VLCState.Playing) _player.SetPause(true);
         }
@@ -293,6 +300,7 @@ public sealed class PlaybackEngine : IDisposable
         _pauseOnFirstFrame = !_playing;
         _player.Mute = !_playing; // don't blip audio when we only want a still frame
         _ignoreVlcTimeBelowMs = (long)sourceTime.TotalMilliseconds - 500;
+        _ignoreVlcTimeAboveMs = long.MaxValue; // a fresh load has no old position to report
         _player.Play(media);
     }
 
@@ -413,7 +421,11 @@ public sealed class PlaybackEngine : IDisposable
     {
         if (_player.State != VLCState.Playing || _sinceLastSeek.Elapsed < VideoSettle) return;
         long vt = _player.Time;
-        if (vt >= _ignoreVlcTimeBelowMs && vt != _lastVlcTime) ResetClock(vt);
+        if (vt >= _ignoreVlcTimeBelowMs && vt <= _ignoreVlcTimeAboveMs && vt != _lastVlcTime)
+        {
+            ResetClock(vt);
+            _ignoreVlcTimeAboveMs = long.MaxValue; // a reading near the target: VLC has caught up with the seek
+        }
         if (_lastVlcTime < 0) return;
         var extra = _sinceVlcTime.Elapsed;
         if (extra > TimeSpan.FromMilliseconds(500)) extra = TimeSpan.FromMilliseconds(500);
@@ -425,6 +437,7 @@ public sealed class PlaybackEngine : IDisposable
         PlaybackLog.Write($"drift resync: video ~{video.TotalMilliseconds:0} ms, clock {ms} ms");
         _player.Time = ms;
         _ignoreVlcTimeBelowMs = ms - 500; // follow the seek (see ApplySeek)
+        _ignoreVlcTimeAboveMs = ms + 2000;
         _sinceLastSeek.Restart();
         ResetClock(ms);
     }

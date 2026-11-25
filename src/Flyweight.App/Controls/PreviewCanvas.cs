@@ -818,11 +818,8 @@ public sealed class PreviewCanvas : Control
             if (pxW + pxH > 8) // ignore accidental clicks
             {
                 Annotation? created = null;
-                _session.Execute(p =>
-                {
-                    created = TimelineOps.CreateAnnotation(p, _engine.Position, c.Kind, c.X1, c.Y1, c.X2, c.Y2);
-                    if (created is { Kind: AnnotationKind.Box }) created.StrokeColor = "#FFFFD600"; // yellow highlight box by default
-                });
+                // Default look (e.g. yellow box) is set in Core, so every piece of a run across a cut gets it.
+                _session.Execute(p => created = TimelineOps.CreateAnnotation(p, _engine.Position, c.Kind, c.X1, c.Y1, c.X2, c.Y2));
                 if (created is not null) Select(created.Id);
             }
             Tool = Tool.Select;

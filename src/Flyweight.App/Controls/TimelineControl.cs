@@ -65,7 +65,8 @@ public sealed class TimelineControl : Control
     double _pps = 40;       // pixels per second
     float _scrollX;         // pixels
     int _scrollY;           // pixels scrolled UP from the bottom of the scroll region (0 = overlays and lowest lanes showing)
-    readonly VScrollBar _vScroll = new() { Dock = DockStyle.Right, Visible = false, SmallChange = 20 };
+    // Placed over the scroll region only (not docked), so it never covers the ruler or the pinned tracks' trim grips.
+    readonly VScrollBar _vScroll = new() { Visible = false, SmallChange = 20 };
 
     /// <summary>Top of the overlay tracks: bottom-anchored in the scroll region, moved down as you scroll up.</summary>
     int OverlayTop => RegionBottom - OverlayBlockH + LaneSpacing + _scrollY;
@@ -98,9 +99,14 @@ public sealed class TimelineControl : Control
     /// <summary>Height that shows everything without scrolling. The form grows the panel towards it (up to a limit).</summary>
     public int PreferredHeight => RegionTop + ContentH() + 4 + BottomH;
 
-    /// <summary>Raised (after painting) when <see cref="PreferredHeight"/> changes, e.g. a new annotation lane or overlay track.</summary>
+    /// <summary>
+    /// Raised when a timeline drag ends, since the form doesn't refit the panel mid-drag (<see cref="IsDragging"/>).
+    /// Edits refit straight away through the session's Changed event.
+    /// </summary>
     public event EventHandler? PreferredHeightChanged;
-    int _lastPreferred = -1;
+
+    /// <summary>A mouse drag on the timeline is in progress: hold the panel's size until it ends.</summary>
+    public bool IsDragging => _drag != Drag.None;
 
     void SetScrollY(int y)
     {
@@ -111,17 +117,15 @@ public sealed class TimelineControl : Control
     /// <summary>Show the scrollbar only when the lanes overflow, and keep the scroll in range as content shrinks.</summary>
     void SyncVScroll()
     {
-        int pref = PreferredHeight;
-        if (pref != _lastPreferred && IsHandleCreated)
-            BeginInvoke(() => PreferredHeightChanged?.Invoke(this, EventArgs.Empty)); // not while painting
-        _lastPreferred = pref;
-
         int max = MaxScrollY();
         if (_scrollY > max) _scrollY = max;
         bool show = max > 0;
         if (_vScroll.Visible != show) _vScroll.Visible = show;
         if (!show) return;
         int page = Math.Max(1, RegionBottom - RegionTop);
+        int w = SystemInformation.VerticalScrollBarWidth;
+        var bounds = new Rectangle(ClientSize.Width - w, RegionTop, w, page);
+        if (_vScroll.Bounds != bounds) _vScroll.Bounds = bounds;
         _vScroll.Minimum = 0;
         _vScroll.LargeChange = page;
         _vScroll.Maximum = max + page - 1; // WinForms: the reachable value is Maximum - LargeChange + 1
@@ -142,8 +146,8 @@ public sealed class TimelineControl : Control
             // Scrolling UP (bigger _scrollY) moves content down, bringing higher lanes into view.
             if (r.Top < RegionTop) SetScrollY(_scrollY + (int)Math.Ceiling(RegionTop - r.Top) + 4);
             else if (r.Bottom > RegionBottom) SetScrollY(_scrollY - (int)Math.Ceiling(r.Bottom - RegionBottom) - 4);
-            float x = r.X;
-            if (x < 0 || x > ClientSize.Width - 40) _scrollX = Math.Max(0, _scrollX + x - ClientSize.Width * 0.2f);
+            // Only scroll sideways when the bar is entirely off screen (a long bar partly in view stays put).
+            if (r.Right < 0 || r.Left > ClientSize.Width - 20) _scrollX = Math.Max(0, _scrollX + r.X - ClientSize.Width * 0.2f);
             Invalidate();
             return;
         }
@@ -303,7 +307,14 @@ public sealed class TimelineControl : Control
     int AudioTop => TrackTop + TrackH + AudioGap;
 
     /// <summary>Audio items with a row each, so overlapping items don't hide each other.</summary>
-    List<(AudioItem A, int Row)> AudioRows()
+    // Layout lists reused for the duration of ONE paint (geometry asks for them per bar/clip/overlay; without this a
+    // repaint re-sorted the audio track and rebuilt the annotation runs dozens of times, ~60×/s while playing).
+    List<(AudioItem A, int Row)>? _audioRowsCache;
+    List<(Annotation A, TimeSpan S, TimeSpan E, int Lane)>? _barsCache;
+
+    List<(AudioItem A, int Row)> AudioRows() => _audioRowsCache ?? ComputeAudioRows();
+
+    List<(AudioItem A, int Row)> ComputeAudioRows()
     {
         var rowEnds = new List<TimeSpan>();
         var result = new List<(AudioItem, int)>();
@@ -338,7 +349,9 @@ public sealed class TimelineControl : Control
     /// One bar per annotation (a run across cuts is ONE bar, represented by its first piece), with its
     /// timeline range and a lane assigned so bars don't overlap.
     /// </summary>
-    List<(Annotation A, TimeSpan S, TimeSpan E, int Lane)> AnnotationBars()
+    List<(Annotation A, TimeSpan S, TimeSpan E, int Lane)> AnnotationBars() => _barsCache ?? ComputeAnnotationBars();
+
+    List<(Annotation A, TimeSpan S, TimeSpan E, int Lane)> ComputeAnnotationBars()
     {
         var p = _session.Project;
         var bars = p.Annotations
@@ -411,7 +424,14 @@ public sealed class TimelineControl : Control
         var g = e.Graphics;
         g.Clear(BackColor);
         if (_session is null) return;
-        var p = _session.Project;
+        _audioRowsCache = ComputeAudioRows();
+        _barsCache = ComputeAnnotationBars();
+        try { PaintTimeline(g, _session.Project); }
+        finally { _audioRowsCache = null; _barsCache = null; } // hit-testing between paints computes fresh
+    }
+
+    void PaintTimeline(Graphics g, Project p)
+    {
         SyncVScroll();
 
         // Scroll region (annotation lanes + overlay tracks), clipped between the ruler and the pinned video track.
@@ -898,10 +918,12 @@ public sealed class TimelineControl : Control
             if (_drag == Drag.Marker && !_dragMoved) SeekRequested?.Invoke(this, _originA); // click = jump to the chapter
             _session.CommitEdit();
         }
+        bool wasDragging = _drag != Drag.None;
         _dragTrack = 0;
         _drag = Drag.None;
         _dropIndex = -1;
         Invalidate();
+        if (wasDragging) PreferredHeightChanged?.Invoke(this, EventArgs.Empty); // the form held the size during the drag
     }
 
     int DropIndex(int x)

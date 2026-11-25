@@ -134,6 +134,12 @@ public class ClipSpeedTests
         Assert.Equal("Text", piece.Text);
         Assert.Equal(text.LinkId, piece.LinkId);
 
+        // Every piece of a new run gets the default look (a box used to turn red after the cut).
+        var box = TimelineOps.CreateAnnotation(p, S(9.5), AnnotationKind.Box, 0, 0, .5f, .5f)!;
+        var boxPieces = TimelineOps.LinkedPieces(p, box);
+        Assert.Equal(2, boxPieces.Count);
+        Assert.All(boxPieces, x => Assert.Equal("#FFFFD600", x.StrokeColor));
+
         // At the very end of the timeline it can only run to the end.
         var last = TimelineOps.CreateAnnotation(p, S(13), AnnotationKind.Box, 0, 0, .5f, .5f)!;
         Assert.Equal((S(13), S(14)), TimelineOps.RunRange(p, last)!.Value);

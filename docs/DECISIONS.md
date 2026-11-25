@@ -526,9 +526,15 @@ overlapping annotation was drawn off the bottom with no way to reach it.
 - **Fits itself:** `TimelineControl.PreferredHeight` / `PreferredHeightChanged`; `MainForm` grows the panel to fit, up to
   half the window, and shrinks it back as lanes go, never below the height the user last dragged the splitter to.
   Past the cap a vertical scrollbar appears (also Shift+wheel). Selecting an annotation in the preview scrolls its bar
-  into view (`RevealAnnotation`). Items scrolled out of the region aren't hit-testable.
+  into view (`RevealAnnotation`; not when the click came from the timeline itself, and sideways only when the bar is
+  fully off screen). Items scrolled out of the region aren't hit-testable.
+- **When it refits:** synchronously on `ProjectSession.Changed` (so a new text box's inline editor opens on the final
+  layout), on window resize, and on mouse-up after a timeline drag, never mid-drag (`IsDragging`). The scrollbar
+  covers only the scroll region. Annotation bars and audio rows are computed once per paint.
 - **New annotations always get the full default length** (`CreateAnnotation`): near a cut they continue onto the next
   clip(s) as a linked run, instead of being clamped to what was left of the clip (looked random to the owner).
+  Default looks (white text on black, yellow box) are set in `CreateAnnotation` BEFORE the run is built, so every
+  piece gets them (the App used to recolour only the first piece of a box).
 
 ### D43. The VLC-time floor follows every seek (2026-11-25)
 Owner heard a crackle about every second after a cut. `playback.log` showed `drift resync` every ~1.1 s with the video
@@ -536,5 +542,7 @@ estimate stuck at exactly seek target + 500 ms (the interpolation cap): every VL
 `_ignoreVlcTimeBelowMs` to where playback started (to skip stale times after a resume), and only `Load` ever moved it.
 A cut onto EARLIER footage of the same file (seek in place, e.g. clip 2 = 0–20 s after playing from 17 s) therefore
 fell under the floor, `KeepVideoInStep` saw a frozen video, and resynced forever; each seek restarts the audio (the
-crackle). Now seek-in-place and drift resync set the floor to the seek target − 500 ms, like `Load` does. The 250 ms
+crackle). Now seek-in-place and drift resync set the floor to the seek target − 500 ms, like `Load` does, plus a
+ceiling of target + 2 s until the first reading inside that window is accepted (after a BACKWARD seek, VLC's stale old
+position is above the floor). The 250 ms
 drift limit (D24) is unchanged: a wider limit was tried first and only hid the symptom.
