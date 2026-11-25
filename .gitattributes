@@ -1,0 +1,19 @@
+# Line endings: stop git's "LF will be replaced by CRLF" warnings on Windows.
+# Text is stored as LF in the repo. Source files stay LF in every checkout (Visual Studio and VS Code handle LF fine);
+# Windows-only files get CRLF in the working tree.
+* text=auto eol=lf
+
+*.sln  text eol=crlf
+*.ps1  text eol=crlf
+*.iss  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary assets: never touch.
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.dmp  binary
+*.mp4  binary
+*.zip  binary
+*.exe  binary
