@@ -269,6 +269,10 @@ public sealed class PlaybackEngine : IDisposable
         {
             PlaybackLog.Write($"seek in place to {ms} ms (playing={_playing})");
             _player.Time = ms;
+            // The floor must follow the seek. Play() sets it to where playback started, so a cut onto EARLIER
+            // footage of the same file (e.g. clip 2 = 0–20 s after starting at 17 s) had every VLC time ignored:
+            // the drift check saw the video frozen and resynced every ~1 s forever (a crackle each time).
+            _ignoreVlcTimeBelowMs = ms - 500;
             if (_playing && _player.State == VLCState.Paused) _player.SetPause(false);
             else if (!_playing && _player.State == VLCState.Playing) _player.SetPause(true);
         }
@@ -420,6 +424,7 @@ public sealed class PlaybackEngine : IDisposable
         long ms = (long)hit.SourceTime.TotalMilliseconds;
         PlaybackLog.Write($"drift resync: video ~{video.TotalMilliseconds:0} ms, clock {ms} ms");
         _player.Time = ms;
+        _ignoreVlcTimeBelowMs = ms - 500; // follow the seek (see ApplySeek)
         _sinceLastSeek.Restart();
         ResetClock(ms);
     }
