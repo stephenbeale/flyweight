@@ -149,4 +149,39 @@ public sealed class AnnotationFadeTests : IDisposable
         Assert.InRange(fadingOut.G, 90, 165);
         Assert.True((await Pixel(output, 2.5, 500, 300)).G < 40, "outside the box stays red");
     }
+
+    [Fact]
+    public async Task Fades_and_output_size_work_in_a_vertical_project()
+    {
+        if (!FfmpegAvailable()) return;
+        var video = Path.Combine(_dir, "portrait.mp4");
+        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", "color=c=red:s=360x640:r=30:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", video });
+
+        var p = new Project { Shape = CanvasShape.Vertical };
+        var m = await MediaProbe.ProbeAsync(video);
+        p.Media.Add(m);
+        TimelineOps.Append(p, m);
+        var box = TimelineOps.CreateAnnotation(p, S(0), AnnotationKind.Box, 0, 0, .2f, .1f)!;
+        box.End = S(3);
+        box.FadeIn = 2;
+
+        var settings = new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false };
+        var (w, h) = settings.SizeFor(p.Shape);
+        Assert.Equal((1080, 1920), (w, h));
+        var png = Path.Combine(_dir, "vbox.png");
+        await FfmpegRunner.RunFfmpegAsync(new[]
+        {
+            "-f", "lavfi", "-i", "color=c=white@1.0:s=300x300,format=rgba",
+            "-vf", $"pad={w}:{h}:0:0:color=black@0.0", "-frames:v", "1", png,
+        });
+
+        var output = Path.Combine(_dir, "vertical.mp4");
+        await ExportPlan.Build(p, settings, new Dictionary<Guid, string> { [box.Id] = png }, output).RunAsync();
+
+        var info = await MediaProbe.ProbeAsync(output);
+        Assert.Equal((1080, 1920), (info.Width, info.Height));
+        Assert.InRange((await Pixel(output, 1.0, 100, 100)).G, 90, 165);   // halfway through the fade-in
+        Assert.True((await Pixel(output, 2.5, 100, 100)).G > 230);         // fully visible
+        Assert.True((await Pixel(output, 2.5, 540, 1000)).G < 40);         // the red clip fills the tall frame
+    }
 }
