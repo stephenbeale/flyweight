@@ -943,7 +943,16 @@ public static class TimelineOps
             a.StrokeColor = "#FFFFFFFF";
             a.FillColor = "#B0000000";
         }
+        else if (kind == AnnotationKind.Box)
+        {
+            a.StrokeColor = "#FFFFD600"; // yellow highlight box by default
+        }
+        // Defaults are set BEFORE the run is built below, so every piece across a cut gets the same look.
         p.Annotations.Add(a);
+        // Always the default length on the timeline: near a cut it continues onto the next clip(s) as a
+        // linked run instead of being cut short to whatever was left of this clip (which looked random).
+        var startTl = hit.ClipStart + hit.Clip.TimelineOffset(a.Start);
+        ExtendAnnotationEnd(p, a.Id, Min(startTl + DefaultAnnotationLength, TotalDuration(p)));
         return a;
     }
 

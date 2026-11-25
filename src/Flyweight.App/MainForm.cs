@@ -21,6 +21,8 @@ public sealed class MainForm : Form
     static readonly string[] AudioExtensions = { ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma" };
 
     readonly ProjectSession _session = new();
+    Action _fitTimeline = () => { }; // set in the constructor once the split container exists
+    bool _selectingFromTimeline;
     readonly MediaLibrary _library = new();
     readonly PlaybackEngine _engine;
 
@@ -214,10 +216,41 @@ public sealed class MainForm : Form
         Controls.Add(tools);
         Controls.Add(status);
 
+        // The timeline panel grows to fit more annotation lanes / overlay tracks (up to half the window; past that it
+        // scrolls) and shrinks back as they go, but never below the height the user last dragged it to.
+        // Refits run synchronously right after each edit (so a text box's inline editor opens on the final layout),
+        // never mid-drag on the timeline (the preview would jump around under the drag), and on window resize.
+        int timelineBaseH = 290;
+        bool sizingTimeline = false;
+        void FitTimeline()
+        {
+            if (_timeline.IsDragging) return; // refits on mouse-up (PreferredHeightChanged)
+            // Too small to split (minimised / tiny window): setting SplitterDistance would throw.
+            if (main.Height < main.Panel1MinSize + main.Panel2MinSize + main.SplitterWidth + 200) return;
+            int cap = Math.Max(timelineBaseH, main.Height / 2);
+            int want = Math.Clamp(_timeline.PreferredHeight, timelineBaseH, cap);
+            int distance = Math.Max(200, main.Height - main.SplitterWidth - want);
+            if (distance == main.SplitterDistance) return;
+            sizingTimeline = true;
+            try { main.SplitterDistance = distance; }
+            catch (InvalidOperationException) { } // a layout we can't apply right now; the next edit retries
+            finally { sizingTimeline = false; }
+        }
+        _fitTimeline = FitTimeline;
+        _timeline.PreferredHeightChanged += (_, _) => FitTimeline();
+        main.Resize += (_, _) => FitTimeline();
+        main.SplitterMoved += (_, _) =>
+        {
+            if (!sizingTimeline) timelineBaseH = Math.Max(120, main.Height - main.SplitterWidth - main.SplitterDistance);
+        };
+
         // SplitContainer distances can only be set once the controls have a size.
         Load += (_, _) =>
         {
+            sizingTimeline = true;
             main.SplitterDistance = Math.Max(200, main.Height - 290); // ruler + overlay track + video + audio track + annotation lanes
+            sizingTimeline = false;
+            FitTimeline();
             // Side panels sized for the display scaling (fixed pixels cramped them at 150%), but never more than a
             // quarter of the window each, so the preview keeps most of the room.
             top.SplitterDistance = Math.Min(LogicalToDeviceUnits(270), top.Width / 4);
@@ -241,6 +274,7 @@ public sealed class MainForm : Form
             // re-seeking on every mouse move of an annotation drag queued dozens of VLC seeks (laggy play after).
             var sig = TimelineSignature(_session.Project);
             if (sig != _timelineSig) { _timelineSig = sig; _engine.Refresh(); }
+            _fitTimeline(); // new lane / track: grow the timeline now, before e.g. a text editor is placed
             UpdateUi();
         };
         _library.StateChanged += (_, id) => { if (IsHandleCreated) BeginInvoke(() => OnMediaStateChanged(id)); };
@@ -255,7 +289,12 @@ public sealed class MainForm : Form
         _engine.PlayingChanged += (_, _) => UpdateTimecode(); // flips the ▶ / ❚❚ button
 
         _timeline.SeekRequested += (_, t) => { _engine.Pause(); _engine.Seek(t); };
-        _timeline.AnnotationSelected += (_, _) => _preview.Select(_timeline.SelectedAnnotationId);
+        _timeline.AnnotationSelected += (_, _) =>
+        {
+            // Clicked on the timeline: it's already in view, so don't scroll it (that yanked a long bar from under the drag).
+            _selectingFromTimeline = true;
+            try { _preview.Select(_timeline.SelectedAnnotationId); } finally { _selectingFromTimeline = false; }
+        };
         _timeline.ClipSelected += (_, _) =>
         {
             if (_timeline.SelectedClipId is not null) _preview.Select(null);
@@ -266,7 +305,11 @@ public sealed class MainForm : Form
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
-            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
+            if (_preview.SelectedAnnotationId is { } sel)
+            {
+                _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
+                if (!_selectingFromTimeline) _timeline.RevealAnnotation(sel); // a new text box may land in a lane out of view
+            }
             _timeline.Invalidate();
             UpdatePropertyGrid();
         };
