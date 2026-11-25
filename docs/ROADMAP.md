@@ -1,6 +1,6 @@
 # Roadmap & status
 
-_Last updated: 2026-11-25 (blur fill on `feature/blur-fill`)_
+_Last updated: 2026-11-25 (blur fill merged; vertical 9:16 on `feature/vertical-canvas`, awaiting owner test)_
 
 ### 2026-11-25: blurred bars behind portrait clips (D40), branch `feature/blur-fill`
 Preview, export, Save frame and the YouTube thumbnail all fill the bars around non-16:9 clips with a dimmed blur of
@@ -16,6 +16,17 @@ warning if there are annotations/overlays; one undo step); YouTube thumbnail pre
 Export sizes 1080×1920 / 1440×2560 / 2160×3840; bitrate by the short side; Shorts hint in Export when over 3:00.
 280 core tests pass (incl. a real 1080×1920 export pixel test). Dev-build screenshot matches an ffmpeg render of the
 export. **Owner still to try it in-app.**
+
+**Next steps:**
+1. Owner tries vertical in-app (dev build 07:20): New → Vertical 9:16; portrait fills, landscape gets blurred top/bottom
+   bars; annotations/overlay; preview right-click → Frame shape (warning + Ctrl+Z); export + Save frame are tall. Then
+   push `feature/vertical-canvas` and open the PR.
+2. Owner's installed copy still reported 0.2.1 on 2026-11-25 (no Start-menu "Flyweight" entry, only "Flyweight (dev)"):
+   re-run the installer from the stable link and verify the version.
+3. Consider a release (0.4.0-preview) once vertical is merged: blur fill + vertical.
+4. Housekeeping: add `.gitattributes` (git keeps warning LF→CRLF on many files); delete stale local branches
+   `feature/ui-polish` and `feature/overlay-zoom` and remote `feature/annotation-fades`, `feature/frame-export`,
+   `feature/youtube-chapters`.
 
 ## Where things stand
 
