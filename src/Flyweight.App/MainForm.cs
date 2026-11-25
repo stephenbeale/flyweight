@@ -214,10 +214,33 @@ public sealed class MainForm : Form
         Controls.Add(tools);
         Controls.Add(status);
 
+        // The timeline panel grows to fit more annotation lanes / overlay tracks (up to half the window; past that it
+        // scrolls) and shrinks back as they go, but never below the height the user last dragged it to.
+        int timelineBaseH = 290;
+        bool sizingTimeline = false;
+        void FitTimeline()
+        {
+            if (main.Height <= 0) return;
+            int cap = Math.Max(timelineBaseH, main.Height / 2);
+            int want = Math.Clamp(_timeline.PreferredHeight, timelineBaseH, cap);
+            int distance = Math.Max(200, main.Height - main.SplitterWidth - want);
+            if (distance == main.SplitterDistance) return;
+            sizingTimeline = true;
+            try { main.SplitterDistance = distance; } finally { sizingTimeline = false; }
+        }
+        _timeline.PreferredHeightChanged += (_, _) => FitTimeline();
+        main.SplitterMoved += (_, _) =>
+        {
+            if (!sizingTimeline) timelineBaseH = Math.Max(120, main.Height - main.SplitterWidth - main.SplitterDistance);
+        };
+
         // SplitContainer distances can only be set once the controls have a size.
         Load += (_, _) =>
         {
+            sizingTimeline = true;
             main.SplitterDistance = Math.Max(200, main.Height - 290); // ruler + overlay track + video + audio track + annotation lanes
+            sizingTimeline = false;
+            FitTimeline();
             // Side panels sized for the display scaling (fixed pixels cramped them at 150%), but never more than a
             // quarter of the window each, so the preview keeps most of the room.
             top.SplitterDistance = Math.Min(LogicalToDeviceUnits(270), top.Width / 4);
@@ -266,7 +289,11 @@ public sealed class MainForm : Form
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
-            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
+            if (_preview.SelectedAnnotationId is { } sel)
+            {
+                _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
+                _timeline.RevealAnnotation(sel); // a new text box may land in a lane below the visible area
+            }
             _timeline.Invalidate();
             UpdatePropertyGrid();
         };

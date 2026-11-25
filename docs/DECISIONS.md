@@ -497,3 +497,26 @@ Owner: "can it also have vertical video for yt as a canvas/output option?" (prev
   A portrait clip's preview is therefore 304×540 of real pixels: fine for editing, and export uses the originals anyway.
 - **YouTube thumbnail preset is hidden** in vertical projects (Shorts don't use 16:9 custom thumbnails); Save frame
   saves at the vertical size. Export shows a hint when a vertical video is over 3:00 (YouTube's Shorts limit).
+
+### D42. Timeline layout: annotations on top, video + audio pinned at the bottom (2026-11-25)
+Owner: text boxes "dont show on timeline, at least when there are 4 other items in view" and "keep video files at bottom
+as they are core". The panel was a fixed ~290 px and annotation lanes stacked downwards under the audio track, so the 5th
+overlapping annotation was drawn off the bottom with no way to reach it.
+- **Layout, top to bottom:** ruler · annotation lanes (lane 0 lowest, stacking UP) · overlay tracks (V2 lowest) · main
+  video · audio. Lanes + overlays are one scroll region, bottom-anchored so V2 always sits right above the video; the
+  video and audio tracks are pinned and never scroll away (owner picked this over the other two layouts offered).
+- **Fits itself:** `TimelineControl.PreferredHeight` / `PreferredHeightChanged`; `MainForm` grows the panel to fit, up to
+  half the window, and shrinks it back as lanes go, never below the height the user last dragged the splitter to.
+  Past the cap a vertical scrollbar appears (also Shift+wheel). Selecting an annotation in the preview scrolls its bar
+  into view (`RevealAnnotation`). Items scrolled out of the region aren't hit-testable.
+- **New annotations always get the full default length** (`CreateAnnotation`): near a cut they continue onto the next
+  clip(s) as a linked run, instead of being clamped to what was left of the clip (looked random to the owner).
+
+### D43. The VLC-time floor follows every seek (2026-11-25)
+Owner heard a crackle about every second after a cut. `playback.log` showed `drift resync` every ~1.1 s with the video
+estimate stuck at exactly seek target + 500 ms (the interpolation cap): every VLC time was being ignored. `Play()` sets
+`_ignoreVlcTimeBelowMs` to where playback started (to skip stale times after a resume), and only `Load` ever moved it.
+A cut onto EARLIER footage of the same file (seek in place, e.g. clip 2 = 0–20 s after playing from 17 s) therefore
+fell under the floor, `KeepVideoInStep` saw a frozen video, and resynced forever; each seek restarts the audio (the
+crackle). Now seek-in-place and drift resync set the floor to the seek target − 500 ms, like `Load` does. The 250 ms
+drift limit (D24) is unchanged: a wider limit was tried first and only hid the symptom.

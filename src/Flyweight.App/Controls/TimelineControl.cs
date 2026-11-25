@@ -6,7 +6,8 @@ using Flyweight.Core.Model;
 namespace Flyweight.App.Controls;
 
 /// <summary>
-/// Owner-drawn timeline: overlay tracks (V2, V3…) above the main clip track, the audio track and annotation lanes underneath.
+/// Owner-drawn timeline: annotation lanes and overlay tracks (V2, V3…) in a scrollable area at the top, the main
+/// clip track and audio track pinned at the bottom (they're the core of the edit, so they never scroll away).
 ///
 ///   ruler       click/drag to scrub
 ///   overlays    drag to move in time and between tracks, drag ends to trim (they stay at their timeline time)
@@ -17,15 +18,40 @@ namespace Flyweight.App.Controls;
 /// </summary>
 public sealed class TimelineControl : Control
 {
-    const int RulerH = 24, OverlayTop = 30, TrackH = 64, LaneGap = 8, LaneH = 18, LaneSpacing = 3, EdgeGrab = 7;
+    const int RulerH = 24, TrackH = 64, LaneGap = 8, LaneH = 18, LaneSpacing = 3, EdgeGrab = 7;
     const int AudioGap = 6;
 
     /// <summary>Scales with Windows display scaling, like the text in the other lanes.</summary>
     int AudioRowH => Math.Max(30, (int)(Font.Height * 1.8));
     int OverlayRowH => AudioRowH + 4;
 
-    /// <summary>The main video track sits under the overlay tracks (V2 just above it, V3 above that…).</summary>
-    int TrackTop => OverlayTop + OverlayRows() * (OverlayRowH + LaneSpacing) + 3;
+    // Layout, top to bottom:
+    //   ruler                                   fixed
+    //   annotation lanes (lane 0 lowest)        ┐ scroll region: scrolls vertically when it doesn't fit,
+    //   overlay tracks (V2 lowest, V3 above…)   ┘ bottom-anchored so V2 always sits right above the video
+    //   main video track                        ┐ pinned to the bottom: the core of the edit never scrolls away
+    //   audio track                             ┘
+
+    int RegionTop => RulerH + 2;
+
+    /// <summary>Height of the pinned video + audio area at the bottom.</summary>
+    int BottomH => TrackH + AudioGap + AudioSectionH() + 2;
+
+    /// <summary>The main video track, pinned near the bottom of the control.</summary>
+    int TrackTop => Math.Max(RegionTop + 4, ClientSize.Height - BottomH);
+
+    int RegionBottom => TrackTop - 4;
+
+    int OverlayBlockH => OverlayRows() * (OverlayRowH + LaneSpacing);
+
+    /// <summary>Unscrolled height of the scroll region's content: annotation lanes + overlay tracks.</summary>
+    int ContentH()
+    {
+        int lanes = AnnotationBars().Select(b => b.Lane + 1).DefaultIfEmpty(0).Max();
+        return lanes * (LaneH + LaneSpacing) + (lanes > 0 ? LaneGap : 0) + OverlayBlockH;
+    }
+
+    bool InRegion(Point pt) => pt.Y >= RegionTop && pt.Y <= RegionBottom;
     static readonly Color ClipColor = Color.FromArgb(52, 99, 160);
     static readonly Color AudioColor = Color.FromArgb(36, 104, 80);
     static readonly Color OverlayColor = Color.FromArgb(112, 72, 160);
@@ -38,6 +64,11 @@ public sealed class TimelineControl : Control
 
     double _pps = 40;       // pixels per second
     float _scrollX;         // pixels
+    int _scrollY;           // pixels scrolled UP from the bottom of the scroll region (0 = overlays and lowest lanes showing)
+    readonly VScrollBar _vScroll = new() { Dock = DockStyle.Right, Visible = false, SmallChange = 20 };
+
+    /// <summary>Top of the overlay tracks: bottom-anchored in the scroll region, moved down as you scroll up.</summary>
+    int OverlayTop => RegionBottom - OverlayBlockH + LaneSpacing + _scrollY;
 
     enum Drag { None, Scrub, ClipBody, TrimIn, TrimOut, AnnoMove, AnnoStart, AnnoEnd, AudioMove, AudioIn, AudioOut, Marker, OverlayMove, OverlayIn, OverlayOut }
     static readonly Color MarkerColor = Color.FromArgb(255, 196, 0);
@@ -55,6 +86,67 @@ public sealed class TimelineControl : Control
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         BackColor = Color.FromArgb(28, 28, 32);
         ForeColor = Color.Gainsboro;
+        // The bar's top is the top of the content, so its value counts DOWN from the top (our scroll counts up).
+        _vScroll.Scroll += (_, _) => { _scrollY = MaxScrollY() - _vScroll.Value; Invalidate(); };
+        Controls.Add(_vScroll);
+    }
+
+    // ---------------- Vertical scroll / preferred height ----------------
+
+    int MaxScrollY() => Math.Max(0, ContentH() - (RegionBottom - RegionTop));
+
+    /// <summary>Height that shows everything without scrolling. The form grows the panel towards it (up to a limit).</summary>
+    public int PreferredHeight => RegionTop + ContentH() + 4 + BottomH;
+
+    /// <summary>Raised (after painting) when <see cref="PreferredHeight"/> changes, e.g. a new annotation lane or overlay track.</summary>
+    public event EventHandler? PreferredHeightChanged;
+    int _lastPreferred = -1;
+
+    void SetScrollY(int y)
+    {
+        _scrollY = Math.Clamp(y, 0, MaxScrollY());
+        Invalidate();
+    }
+
+    /// <summary>Show the scrollbar only when the lanes overflow, and keep the scroll in range as content shrinks.</summary>
+    void SyncVScroll()
+    {
+        int pref = PreferredHeight;
+        if (pref != _lastPreferred && IsHandleCreated)
+            BeginInvoke(() => PreferredHeightChanged?.Invoke(this, EventArgs.Empty)); // not while painting
+        _lastPreferred = pref;
+
+        int max = MaxScrollY();
+        if (_scrollY > max) _scrollY = max;
+        bool show = max > 0;
+        if (_vScroll.Visible != show) _vScroll.Visible = show;
+        if (!show) return;
+        int page = Math.Max(1, RegionBottom - RegionTop);
+        _vScroll.Minimum = 0;
+        _vScroll.LargeChange = page;
+        _vScroll.Maximum = max + page - 1; // WinForms: the reachable value is Maximum - LargeChange + 1
+        _vScroll.Value = Math.Clamp(max - _scrollY, 0, max);
+    }
+
+    /// <summary>Scroll so an annotation's bar is on screen (e.g. one just added in the preview).</summary>
+    public void RevealAnnotation(Guid id)
+    {
+        if (_session is null) return;
+        var a = _session.Project.FindAnnotation(id);
+        if (a is null) return;
+        var first = TimelineOps.LinkedPieces(_session.Project, a)[0].Id;
+        foreach (var (bar, s, e, lane) in AnnotationBars())
+        {
+            if (bar.Id != first) continue;
+            var r = BarRect(s, e, lane);
+            // Scrolling UP (bigger _scrollY) moves content down, bringing higher lanes into view.
+            if (r.Top < RegionTop) SetScrollY(_scrollY + (int)Math.Ceiling(RegionTop - r.Top) + 4);
+            else if (r.Bottom > RegionBottom) SetScrollY(_scrollY - (int)Math.Ceiling(r.Bottom - RegionBottom) - 4);
+            float x = r.X;
+            if (x < 0 || x > ClientSize.Width - 40) _scrollX = Math.Max(0, _scrollX + x - ClientSize.Width * 0.2f);
+            Invalidate();
+            return;
+        }
     }
 
     Guid? _primaryClip;
@@ -162,7 +254,8 @@ public sealed class TimelineControl : Control
 
     float X(TimeSpan t) => (float)(t.TotalSeconds * _pps) - _scrollX;
     TimeSpan T(float x) => TimeSpan.FromSeconds(Math.Max(0, (x + _scrollX) / _pps));
-    int LaneTop(int lane) => AudioTop + AudioSectionH() + LaneGap + lane * (LaneH + LaneSpacing);
+    /// <summary>Annotation lanes stack UPWARDS above the overlay tracks: lane 0 is just above V2.</summary>
+    int LaneTop(int lane) => OverlayTop - LaneGap - (lane + 1) * (LaneH + LaneSpacing) + LaneSpacing;
 
     // ---- Overlay tracks: one row per track above the main track, the highest track at the top ----
 
@@ -196,6 +289,7 @@ public sealed class TimelineControl : Control
 
     (OverlayClip O, RectangleF R)? OverlayHit(Point pt)
     {
+        if (!InRegion(pt)) return null; // scrolled out of view
         foreach (var o in Enumerable.Reverse(_session.Project.Overlays))
         {
             var r = OverlayRect(o);
@@ -298,6 +392,11 @@ public sealed class TimelineControl : Control
             _pps = Math.Clamp(_pps * (e.Delta > 0 ? 1.25 : 0.8), 0.5, 400);
             _scrollX = Math.Max(0, (float)(at.TotalSeconds * _pps) - e.X);
         }
+        else if ((ModifierKeys & Keys.Shift) != 0)
+        {
+            SetScrollY(_scrollY + e.Delta / 3); // Shift+wheel: wheel up shows the higher annotation lanes
+            return;
+        }
         else
         {
             _scrollX = Math.Max(0, _scrollX - e.Delta);
@@ -313,10 +412,17 @@ public sealed class TimelineControl : Control
         g.Clear(BackColor);
         if (_session is null) return;
         var p = _session.Project;
+        SyncVScroll();
 
-        DrawRuler(g);
+        // Scroll region (annotation lanes + overlay tracks), clipped between the ruler and the pinned video track.
+        g.SetClip(new Rectangle(0, RulerH, Width, Math.Max(0, RegionBottom + 1 - RulerH)));
         DrawOverlayTracks(g, p);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        foreach (var (a, s, en, lane) in AnnotationBars()) DrawBar(g, a, BarRect(s, en, lane));
+        g.SmoothingMode = SmoothingMode.Default;
+        g.ResetClip();
 
+        // Pinned: main video track and audio track.
         for (int i = 0; i < p.Timeline.Count; i++) DrawClip(g, p, i);
 
         if (_drag == Drag.ClipBody && _dragMoved && _dropIndex >= 0)
@@ -328,9 +434,8 @@ public sealed class TimelineControl : Control
 
         DrawAudioTrack(g, p);
 
+        DrawRuler(g);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        foreach (var (a, s, en, lane) in AnnotationBars()) DrawBar(g, a, BarRect(s, en, lane));
-
         foreach (var (m, t) in MarkerOps.Visible(p)) DrawMarker(g, m, t);
 
         // Playhead
@@ -338,6 +443,12 @@ public sealed class TimelineControl : Control
         using (var pen = new Pen(Color.FromArgb(255, 70, 70), 2)) g.DrawLine(pen, px, 0, px, Height);
         using (var b = new SolidBrush(Color.FromArgb(255, 70, 70)))
             g.FillPolygon(b, new[] { new PointF(px - 6, 0), new PointF(px + 6, 0), new PointF(px, 9) });
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (_session is not null) SetScrollY(_scrollY); // re-clamp: a taller panel may need less scroll
     }
 
     /// <summary>Chapter marker: a flag on the ruler with its title, and a thin line down through the track.</summary>
@@ -585,6 +696,7 @@ public sealed class TimelineControl : Control
         Focus();
         if (e.Button == MouseButtons.Right && _session is not null)
         {
+            if (e.Y < RulerH) return; // items scrolled up under the ruler can't be hit
             if (AudioHit(e.Location) is { } hitAudio)
             {
                 SelectAudio(hitAudio.A.Id);
@@ -623,11 +735,14 @@ public sealed class TimelineControl : Control
             return;
         }
 
+        // Items scrolled up under the ruler can't be hit: a click there scrubs.
+        if (e.Y < RulerH) goto Scrub;
+
         // Annotation bars
         foreach (var (a, s, en, lane) in AnnotationBars())
         {
             var r = BarRect(s, en, lane);
-            if (!r.Contains(e.Location)) continue;
+            if (!r.Contains(e.Location) || !InRegion(e.Location)) continue;
             SelectAnnotation(a.Id);
             _dragId = a.Id;
             _originA = s;
@@ -690,6 +805,7 @@ public sealed class TimelineControl : Control
         }
 
         // Ruler or empty space: scrub
+        Scrub:
         SelectedAudioId = null;
         if (SelectedOverlayId is not null) SelectOverlay(null);
         SelectClip(null);
@@ -812,10 +928,16 @@ public sealed class TimelineControl : Control
     {
         var p = _session.Project;
         if (MarkerAt(pt) is not null) { Cursor = Cursors.SizeWE; return; }
+        if (pt.Y < RulerH)
+        {
+            if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
+            Cursor = Cursors.Default;
+            return;
+        }
         foreach (var (a, s, en, lane) in AnnotationBars())
         {
             var r = BarRect(s, en, lane);
-            if (!r.Contains(pt)) continue;
+            if (!r.Contains(pt) || !InRegion(pt)) continue;
             Cursor = pt.X <= r.Left + EdgeGrab || pt.X >= r.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand;
             if (_tipFor != a.Id) { _tipFor = a.Id; _tip.SetToolTip(this, Summary(a, s, en)); }
             return;

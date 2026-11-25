@@ -124,6 +124,22 @@ public class ClipSpeedTests
     }
 
     [Fact]
+    public void A_new_annotation_near_a_cut_still_gets_the_full_default_length()
+    {
+        var (p, a, b) = TwoClips();                       // a: timeline 0–10, b: 10–14
+        var text = TimelineOps.CreateAnnotation(p, S(9), AnnotationKind.Text, .1f, .1f, 0, 0)!;
+        // It used to stop at the cut (1 s); now it runs on into b as one linked run.
+        Assert.Equal((S(9), S(12)), TimelineOps.RunRange(p, text)!.Value);
+        var piece = p.Annotations.Single(x => x.ClipId == b.Id);
+        Assert.Equal("Text", piece.Text);
+        Assert.Equal(text.LinkId, piece.LinkId);
+
+        // At the very end of the timeline it can only run to the end.
+        var last = TimelineOps.CreateAnnotation(p, S(13), AnnotationKind.Box, 0, 0, .5f, .5f)!;
+        Assert.Equal((S(13), S(14)), TimelineOps.RunRange(p, last)!.Value);
+    }
+
+    [Fact]
     public void An_annotation_run_across_a_cut_into_a_slow_clip_covers_the_right_footage()
     {
         var (p, a, b) = TwoClips();                       // a: 0–10 s on the timeline

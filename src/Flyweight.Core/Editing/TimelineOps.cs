@@ -924,6 +924,10 @@ public static class TimelineOps
             a.FillColor = "#B0000000";
         }
         p.Annotations.Add(a);
+        // Always the default length on the timeline: near a cut it continues onto the next clip(s) as a
+        // linked run instead of being cut short to whatever was left of this clip (which looked random).
+        var startTl = hit.ClipStart + hit.Clip.TimelineOffset(a.Start);
+        ExtendAnnotationEnd(p, a.Id, Min(startTl + DefaultAnnotationLength, TotalDuration(p)));
         return a;
     }
 
