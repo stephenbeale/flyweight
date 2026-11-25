@@ -481,3 +481,12 @@ don't change. Toggle: clip right-click menu, "Blurred bars behind portrait clips
   ffmpeg scaling) but look the same; the sharp picture itself is untouched.
 - Proxies and thumbnails keep black bars (`Canvas.FitFilter`): the preview adds the blur at draw time, so toggling the
   setting never re-encodes anything.
+
+### Annotation fade in / fade out (2026-11-24)
+Arrows, boxes and text can fade in and out (Properties → Timing: Fade in / Fade out, 0–5 s, default 0 so existing
+projects are unchanged). One rule everywhere, `TimelineOps.FadeFor` / `AnnotationOpacity`: for a run across cuts the
+fade-in happens on its first piece and the fade-out on its last (no dip at the cut); fades longer than the piece are
+scaled to fit. Preview and Save frame draw the annotation into a layer and blend it at that opacity (so the outline and
+stroke fade together); the export loops the annotation PNG for its length and uses ffmpeg `fade=...:alpha=1`. The
+selected annotation is always drawn fully visible in the preview so you can see what you're editing.
+

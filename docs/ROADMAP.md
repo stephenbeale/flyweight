@@ -227,7 +227,7 @@ hurts search. They want something that says lean / light / fast / nimble.
 - Thumbnails/bitmaps: watch for GDI handle leaks over long sessions.
 
 ## v0.2 candidates (owner to prioritise)
-- Annotation fade in/out
+- ~~Annotation fade in/out~~ ✅ (2026-11-24, merged 2026-11-25)
 - Blur/redact box; numbered callouts; freehand pen
 - ~~**Chapter markers** → YouTube description timestamps~~ ✅ (D20): M to add, Ctrl+Shift+C to copy, .txt beside exports
 - ~~Thumbnail export (current frame + annotations at 1280×720)~~ ✅ YouTube thumbnail preset (2026-11-24)
