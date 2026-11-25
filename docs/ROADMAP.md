@@ -1,6 +1,30 @@
 # Roadmap & status
 
-_Last updated: 2026-11-25 (blur fill merged; vertical 9:16 on `feature/vertical-canvas`, awaiting owner test)_
+_Last updated: 2026-11-25 (blur fill merged; vertical 9:16 + annotation/timeline/crackle fixes on `feature/vertical-canvas`, PR #20 awaiting owner test)_
+
+### 2026-11-25 session close (b): annotation length, timeline layout, post-cut crackle (D42, D43), PR #20 open
+Branch `feature/vertical-canvas` (PR #20 into `main`, **open, not merged**); sub-PR #19 merged into it (97e6571).
+295 core tests pass, build 0 warnings / 0 errors. Dev build 18:43 is what the owner has open.
+- **Annotation length (D42):** new annotations always get the full 3 s default; near a cut they continue onto the next
+  clip as a linked run (before, they were clamped to the clip end). Default looks live in Core `CreateAnnotation`.
+- **Timeline layout (D42):** annotation lanes on top (stacking upward), overlay tracks below, main video + audio pinned
+  at the bottom. Scroll region with vertical scrollbar + Shift+wheel; panel auto-grows to half the window (never below
+  the user's dragged height). Selecting an annotation in the preview reveals its bar.
+- **Crackle after a cut (D43):** `PlaybackEngine._ignoreVlcTimeBelowMs` was only moved by Load, so a cut onto earlier
+  footage of the same file ignored every VLC time and resynced every ~1 s. Seek-in-place and drift resync now move the
+  floor and set a ceiling. Verified in `%LOCALAPPDATA%\Flyweight\playback.log` (no resyncs across the cut).
+- code-critic review done; must-fix and most nice-to-have items addressed in 32893c2.
+
+**Next steps:**
+1. Owner checks build 18:43: a box drawn just before a cut stays yellow; a text box added with 5+ overlapping lanes
+   opens its editor correctly. Then merge PR #20 into `main`.
+2. After that, delete the merged branch `fix/annotation-length-and-lanes` (local + remote).
+3. Investigate: one `drift resync` (possible small audio blip) when resuming from pause; pre-existing, seen in
+   playback.log right after `play from`.
+4. Idea only (owner said to ignore for now): no one-step way to add a video file's sound to the audio track. Workaround:
+   Add as overlay (O), right-click the overlay, Separate audio, delete the overlay.
+5. Code-critic nice-to-haves not done: replace `goto Scrub` in `TimelineControl.OnMouseDown` with a guard; the 2 px
+   band between the ruler and the scroll region draws bars that can't be clicked.
 
 ### 2026-11-25: blurred bars behind portrait clips (D40), branch `feature/blur-fill`
 Preview, export, Save frame and the YouTube thumbnail all fill the bars around non-16:9 clips with a dimmed blur of
