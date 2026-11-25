@@ -728,7 +728,8 @@ public sealed class MainForm : Form
             AudioItem? item = null;
             _session.Execute(p => item = TimelineOps.SeparateOverlayAudio(p, overlayId));
             if (item is not null) _statusText.Text = "Separated the overlay's audio onto the audio track; the overlay is muted.";
-        }) { Enabled = hasAudio });
+        }) { Enabled = hasAudio && TimelineOps.CannotSeparateOverlayAudio(_session.Project, overlayId) is null,
+             ToolTipText = TimelineOps.CannotSeparateOverlayAudio(_session.Project, overlayId) });
         menu.Items.Add("Remove overlay (Del)", null, (_, _) => DeleteSelection());
         menu.Show(screen);
     }

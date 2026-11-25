@@ -490,3 +490,13 @@ scaled to fit. Preview and Save frame draw the annotation into a layer and blend
 stroke fade together); the export loops the annotation PNG for its length and uses ffmpeg `fade=...:alpha=1`. The
 selected annotation is always drawn fully visible in the preview so you can see what you're editing.
 
+### Tracks stay with their footage for every ripple edit (2026-11-25)
+Delete and trim already moved the overlay and audio tracks with the footage (D37/D38). Now insert at playhead, freeze
+frame, paste and clip speed changes do too (`InsertGapInTracks` / `CutRangeFromTracks`), so a webcam overlay or a music
+cue placed against a moment stays on that moment whatever you add or change before it. Speed: the clip's END moves, so
+items after it move; items inside the sped-up clip keep their timeline time. Reorder (drag a clip elsewhere) still
+leaves the tracks alone. Opening a gap never leaves slivers: an item within MinClipLength of the gap moves whole.
+Also from the review: an edit left open by a wheel-zoom is committed before Undo/Redo (so Ctrl+Z straight after
+scrolling undoes the zoom and keeps redo), and "Separate audio" on a sped-up overlay is disabled with the reason shown.
+Removing a file from the Media bin still ripple-deletes its clips with the tracks in sync, like deleting them by hand.
+
