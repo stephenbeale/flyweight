@@ -57,6 +57,16 @@ public sealed class ExportPlan
         for (int i = 0; i < p.Timeline.Count; i++)
         {
             var clip = p.Timeline[i];
+            if (clip.IsGap)
+            {
+                // A gap: black and silence, generated (no input file).
+                if (clip.Duration < TimelineOps.MinClipLength)
+                    throw new InvalidOperationException($"Gap {i + 1} is too short to export. Select it and delete it to close it.");
+                var gd = Sec(clip.Duration);
+                graph.Append($"color=c=black:s={w}x{h}:r={fpsStr}:d={gd},format=yuv420p,setsar=1[v{i}];\n");
+                graph.Append($"anullsrc=r=48000:cl=stereo,atrim=duration={gd}[a{i}];\n");
+                continue;
+            }
             var media = p.FindMedia(clip.SourceId) ?? throw new InvalidOperationException($"Clip {i + 1} refers to missing media.");
             // A zero/negative length would become trim=duration=0, which ffmpeg reads as "no
             // limit": with tpad's endless clone that is an export that never finishes.

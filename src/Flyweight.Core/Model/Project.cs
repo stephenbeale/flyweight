@@ -173,6 +173,16 @@ public sealed class Clip
 
     double SafeSpeed => double.IsFinite(Speed) && Speed > 0 ? Speed : 1;
 
+    /// <summary>
+    /// A GAP: empty space on the main track (black picture, silence), left behind by a plain Delete so nothing after
+    /// it moves. It has no media (<see cref="SourceId"/> is empty); its length is <see cref="Out"/> − <see cref="In"/>.
+    /// Select it and delete it to close it (ripple). Older project files have none.
+    /// </summary>
+    [JsonIgnore] public bool IsGap => SourceId == Guid.Empty;
+
+    /// <summary>A new gap of <paramref name="length"/>.</summary>
+    public static Clip NewGap(TimeSpan length) => new() { SourceId = Guid.Empty, In = TimeSpan.Zero, Out = length };
+
     /// <summary>A copy with the same footage and settings (same Id: callers give it a new one).</summary>
     public Clip Clone() => (Clip)MemberwiseClone();
 

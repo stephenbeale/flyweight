@@ -413,6 +413,38 @@ public sealed class FfmpegIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Export_shows_a_gap_as_black_and_keeps_later_clips_and_tracks_at_their_time()
+    {
+        if (!FfmpegAvailable()) return;
+        var red = await MakeClip("gap-red.mp4", 1280, 720, 2, "red", audio: true, fps: 25);
+        var blue = await MakeClip("gap-blue.mp4", 1280, 720, 2, "blue", audio: true, fps: 25);
+        var green = await MakeClip("gap-green.mp4", 640, 360, 1, "green", audio: false, fps: 25);
+
+        var p = new Project();
+        var mRed = await MediaProbe.ProbeAsync(red);
+        var mBlue = await MediaProbe.ProbeAsync(blue);
+        var mGreen = await MediaProbe.ProbeAsync(green);
+        var a = TimelineOps.Append(p, mRed);                    // 0–2
+        TimelineOps.Append(p, mBlue);                           // 2–4
+        var o = TimelineOps.AddOverlay(p, mGreen, TimeSpan.FromSeconds(0.5)); // full frame over the (soon) gap
+        TimelineOps.PlaceOverlay(p, o.Id, OverlayPosition.FullFrame);
+        TimelineOps.Lift(p, a.Id);                              // red → 2 s gap; nothing moves
+
+        var output = Path.Combine(_dir, "gap-out.mp4");
+        var plan = ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output);
+        await plan.RunAsync();
+
+        var info = await MediaProbe.ProbeAsync(output);
+        Assert.InRange(info.Duration.TotalSeconds, 3.9, 4.15);
+        var gap = await Pixel(output, 0.2, 960, 540);
+        Assert.True(gap.R < 30 && gap.G < 30 && gap.B < 30, "the gap is black");
+        var ov = await Pixel(output, 1.0, 960, 540);
+        Assert.True(ov.G > 100 && ov.R < 60 && ov.B < 60, "the overlay still shows over the gap at its time");
+        var later = await Pixel(output, 3.0, 960, 540);
+        Assert.True(later.B > 200 && later.R < 60, "the next clip stays at its time");
+    }
+
+    [Fact]
     public async Task Export_holds_a_still_for_its_clip_length_after_video()
     {
         if (!FfmpegAvailable()) return;

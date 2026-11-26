@@ -546,3 +546,49 @@ crackle). Now seek-in-place and drift resync set the floor to the seek target âˆ
 ceiling of target + 2 s until the first reading inside that window is accepted (after a BACKWARD seek, VLC's stale old
 position is above the floor). The 250 ms
 drift limit (D24) is unchanged: a wider limit was tried first and only hid the symptom.
+
+### D44. Delete vs ripple delete, gaps, link/unlink audio, drag-select (2026-11-26)
+Owner: "i am confused by the deletion behaviour. there should be an option to link or unlink clips. also to delete or
+ripple delete. also, drag over to select elements on timeline." Owner picked (from options offered):
+- **Del = delete and leave a gap; Shift+Del = ripple delete** (as in Premiere/Resolve). Toolbar: Delete + Ripple delete.
+  The main track used to be gapless, so every delete rippled. Now `TimelineOps.Lift` swaps the clip for a **gap**: a
+  `Clip` with no media (`SourceId == Guid.Empty`, `Clip.IsGap`, `Clip.NewGap`), so nothing else moves (later clips,
+  overlays, audio). Gaps export as `color=black` + `anullsrc` (no input), play as black with the clock running (the
+  audio track and overlays keep playing), Save frame / thumbnail grab a black frame with overlays and annotations on
+  top. Select a gap and Del (either key) closes it = ripple delete with tracks in sync (D38). `NormaliseGaps` (after
+  delete, lift and move) joins neighbouring gaps (annotations/markers on the second keep their timeline time), drops
+  gaps at the end and closes slivers under `MinClipLength`. Gaps can be trimmed (up to `MaxGapLength`, 1 h), given a
+  length in Properties, split and moved; no speed, sound or picture settings. Old files load with no gaps.
+- **Per-clip Link / Unlink audio** (clip right-click). Unlink = the old Separate audio (the clip's sound becomes an
+  audio-track item at a fixed time; the clip is muted). Link puts it back: `LinkAudio` takes the in-sync items
+  (`UnlinkedSoundOf`: same file, same footage at the same moment within 20 ms, overlapping the clip) out of the audio
+  track where they overlap the clip, unmutes the clip and takes the item's volume; parts outside the clip stay. No
+  stored link id: sync is the link, so sound slid out of sync can't be relinked. The clip label shows "sound unlinked";
+  the audio item's menu has "Link back to its clip". This replaces the unmerged Shift+Del "delete video, keep sound":
+  Unlink then Del does the same, and a ripple delete still cuts the audio track to stay in sync (D38).
+- **Drag-select:** dragging on empty track space draws a box that selects every clip, gap, overlay, audio item and
+  annotation it touches (Shift/Ctrl adds); the ruler still scrubs, and a plain click on empty space still clears and
+  seeks. `TimelineControl` keeps one main item per kind (what Properties shows: clip, else overlay, else audio) plus a
+  set per kind (`SelectedAudioIds`, `SelectedOverlayIds`, `SelectedAnnotationIds`; setting a main id resets its set).
+  Del/Shift+Del act on everything selected in one undo step: annotations, audio and overlays are removed, selected gaps
+  close first, then clips are lifted (Del) or ripple-deleted (Shift+Del).
+- **Only Delete deletes (2026-11-26).** Backspace used to act as Delete on the timeline. The owner's only clip vanished
+  (saved project had it; 12 s later the timeline was empty, file still in the bin): most likely a stray Backspace with
+  the newly added clip selected (adding from the bin now selects it, and Del on the last clip leaves an end gap, which
+  is dropped). Owner chose: Backspace no longer deletes.
+- **Media bin multi-select:** Ctrl/Shift+click picks several files; add, insert at playhead (I), insert before/after,
+  overlay (O) and remove act on all of them in bin order, one undo step. Added clips are selected.
+- **Drag past the end (2026-11-26, owner: "end of proj should not be capped").** Dragging a main-track clip beyond the
+  end of the other clips (`EndWithout`) shows a ghost where it will land; dropping calls `MoveToTime`: its old slot
+  becomes a gap (nothing else moves, like Delete) and a gap fills the space before its new start. Within the other
+  clips a drag still reorders (ripple), as before.
+- **Narrow items can be dragged (owner: freeze frames couldn't be).** Trim handles were a fixed 7 px each end, so a clip
+  under ~14 px wide (a 5 s freeze frame zoomed out on a long video) was all handle and only ever trimmed.
+  `TimelineControl.Grab` caps each handle at a quarter of the item's width, for clips, gaps, overlays, audio and annotations.
+- **Timeline zoom lag (owner, project with many freeze frames).** Each repaint tiled every clip's thumbnail along its
+  WHOLE length (zoomed in, a long clip is 100k+ px: thousands of scaled draws, all clipped away) and computed every
+  clip's start by walking the timeline (nÂ² with many clips). Now `TileThumb` draws only the on-screen tiles from a
+  thumbnail pre-scaled to the row height (1:1 copies), and clip starts are computed once per paint.
+- **New project / discard prompts name the project (2026-11-26).** The owner was confused by the "unsaved changes" prompt
+  on New project. `ConfirmDiscard(before)` and `SaveProject(title)` now say which project is current and what happens
+  next (e.g. "before starting a new project").

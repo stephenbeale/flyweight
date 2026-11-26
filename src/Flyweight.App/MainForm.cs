@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     readonly ProjectSession _session = new();
     Action _fitTimeline = () => { }; // set in the constructor once the split container exists
     bool _selectingFromTimeline;
+    bool _marqueeSelecting; // the preview is being synced to a timeline drag-select box: don't let it reset the box
     readonly MediaLibrary _library = new();
     readonly PlaybackEngine _engine;
 
@@ -132,7 +133,8 @@ public sealed class MainForm : Form
             new ToolStripSeparator(),
             Btn("Split", "Split at playhead (S): the selected overlay or audio item, else the main clip. Shift+S splits every track", Split),
             Btn("Freeze", "Freeze this frame: hold it for a few seconds (F)", () => _ = FreezeFrameAsync()),
-            Btn("Delete", "Delete selection (Del)", DeleteSelection),
+            Btn("Delete", "Delete the selection (Del). Clips leave a gap, so nothing else moves", () => DeleteSelection(ripple: false)),
+            Btn("Ripple delete", "Delete the selection and close the gap (Shift+Del): later clips, overlays and audio move up to fill it", () => DeleteSelection(ripple: true)),
             Btn("Fit", "Zoom timeline to fit (Ctrl+0)", () => _timeline.ZoomToFit()),
             new ToolStripSeparator(),
             Btn("Chapter", "Add a chapter marker at the playhead (M): they become the 0:00 timestamps in your YouTube description", AddMarker),
@@ -300,10 +302,24 @@ public sealed class MainForm : Form
             if (_timeline.SelectedClipId is not null) _preview.Select(null);
             UpdatePropertyGrid();
         };
+        _timeline.MarqueeSelected += (_, _) =>
+        {
+            // Show a lone annotation in the preview (so its style panel opens); otherwise nothing is selected there.
+            // The preview's SelectionChanged would reset the timeline's selection to that one item, so skip it.
+            var annos = _timeline.SelectedAnnotationIds;
+            bool onlyOneAnnotation = annos.Count == 1 && _timeline.SelectionCount == 1;
+            _marqueeSelecting = true;
+            try { _preview.Select(onlyOneAnnotation ? annos.First() : null); } finally { _marqueeSelecting = false; }
+            UpdatePropertyGrid();
+            int n = _timeline.SelectionCount;
+            _statusText.Text = n == 0 ? "Nothing selected."
+                : $"Selected {n} {(n == 1 ? "item" : "items")}: Del deletes (clips leave a gap), Shift+Del ripple deletes. Shift+drag adds more.";
+        };
         _timeline.MarkerSelected += (_, _) => { if (_timeline.SelectedMarkerId is not null) _preview.Select(null); UpdatePropertyGrid(); };
         _timeline.MarkerRenameRequested += (_, id) => RenameMarker(id);
         _preview.SelectionChanged += (_, _) =>
         {
+            if (_marqueeSelecting) { UpdatePropertyGrid(); return; } // the timeline's box selection stands as it is
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
             if (_preview.SelectedAnnotationId is { } sel)
             {
@@ -391,6 +407,14 @@ public sealed class MainForm : Form
             ShowClipUnderPlayhead(cid);
             _statusText.Text = $"Speed {speed:0.##}×" + (clips.Count > 1 ? $" for {clips.Count} clips" : "");
         };
+        _clipProps.StillLengthChanged += secs =>
+        {
+            if (_timeline.SelectedClipId is not { } cid) return;
+            var clips = SelectedClips(); // SetStillLength ignores any videos in a mixed selection
+            _session.Execute(p => { foreach (var id in clips) TimelineOps.SetStillLength(p, id, TimeSpan.FromSeconds(secs)); });
+            _timeline.Invalidate();
+            _statusText.Text = $"Image shows for {secs:0.0}s; everything after it moved along" + (clips.Count > 1 ? $" (all selected images)" : "") + ".";
+        };
         _clipProps.LookReset += () =>
         {
             if (_timeline.SelectedClipId is not { } cid) return;
@@ -432,16 +456,8 @@ public sealed class MainForm : Form
         _bin.IsAudio = id => _session.Project.FindMedia(id) is { IsAudioOnly: true };
         _bin.InsertAtPlayheadRequested += InsertAtPlayhead;
         _bin.AddOverlayRequested += AddOverlayAtPlayhead;
-
-        _bin.AddToTimelineRequested += (_, id) =>
-        {
-            if (_session.Project.FindMedia(id) is { IsAudioOnly: true } audio) { AddAudioAtPlayhead(audio); return; }
-            _session.Execute(p =>
-            {
-                if (p.FindMedia(id) is { } m) TimelineOps.Append(p, m);
-            });
-        };
-        _bin.InsertRequested += (mediaId, after) => InsertMedia(mediaId, CurrentClipId(), after);
+        _bin.AddToTimelineRequested += AddToTimeline;
+        _bin.InsertRequested += (ids, after) => InsertMedia(ids, CurrentClipId(), after);
         _bin.RemoveRequested += RemoveMedia;
         _timeline.ClipMenuRequested += ShowClipMenu;
 
@@ -534,7 +550,9 @@ public sealed class MainForm : Form
             case Keys.O: WithBinSelection(AddOverlayAtPlayhead, "O"); return true;
             // Ctrl+M too: Windows turns it into Enter, which in the media bin re-added the selected file.
             case Keys.Shift | Keys.M: case Keys.Control | Keys.M: ToggleMute(CurrentClipId()); return true;
-            case Keys.Delete: case Keys.Back: DeleteSelection(); return true;
+            // Only Delete deletes. Backspace used to too, but it's easy to hit by accident and a clip vanished (2026-11-26).
+            case Keys.Delete: DeleteSelection(ripple: false); return true;                // leaves a gap
+            case Keys.Shift | Keys.Delete: DeleteSelection(ripple: true); return true;    // closes it
             case Keys.V: case Keys.Escape: _preview.Tool = Tool.Select; return true;
             case Keys.A: _preview.Tool = Tool.Arrow; return true;
             case Keys.R: _preview.Tool = Tool.Box; return true;
@@ -619,24 +637,56 @@ public sealed class MainForm : Form
         : TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id;
 
     /// <summary>Insert a bin item before/after <paramref name="anchorClipId"/> (or at the end if none), then jump to it.</summary>
-    void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after)
+    void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after) => InsertMedia(new[] { mediaId }, anchorClipId, after);
+
+    /// <summary>
+    /// Insert bin files, in order, before/after <paramref name="anchorClipId"/> (or at the end if none), as one undo
+    /// step, then select them and jump to the first. Audio files go on the audio track at the playhead, one after another.
+    /// </summary>
+    void InsertMedia(IReadOnlyList<Guid> mediaIds, Guid? anchorClipId, bool after)
     {
-        if (_session.Project.FindMedia(mediaId) is { IsAudioOnly: true } audio) { AddAudioAtPlayhead(audio); return; }
         _engine.Pause();
-        Clip? inserted = null;
+        var inserted = new List<Clip>();
+        int audio = 0;
+        var audioAt = AudioStartAtPlayhead();
         _session.Execute(p =>
         {
-            if (p.FindMedia(mediaId) is not { } m) return;
             int anchor = anchorClipId is { } a ? p.Timeline.FindIndex(c => c.Id == a) : -1;
             int index = anchor < 0 ? p.Timeline.Count : after ? anchor + 1 : anchor;
-            inserted = TimelineOps.InsertMedia(p, m, index);
+            foreach (var id in mediaIds)
+            {
+                if (p.FindMedia(id) is not { } m) continue;
+                if (m.IsAudioOnly) { audioAt = TimelineOps.AddAudio(p, m, audioAt).End; audio++; continue; }
+                inserted.Add(TimelineOps.InsertMedia(p, m, index++));
+            }
         });
-        if (inserted is null) return;
-        _timeline.SelectedClipId = inserted.Id;
-        _engine.Seek(TimelineOps.ClipStart(_session.Project, inserted.Id));
-        _timeline.EnsurePlayheadVisible();
-        _timeline.Invalidate();
+        AfterBinInsert(inserted, audio);
     }
+
+    /// <summary>Where audio from the bin goes: the playhead, or the start if the playhead is at the very end.</summary>
+    TimeSpan AudioStartAtPlayhead() =>
+        _engine.Position >= TimelineOps.TotalDuration(_session.Project) ? TimeSpan.Zero : _engine.Position;
+
+    /// <summary>After adding bin files: select the new clips, jump to the first, and say what happened.</summary>
+    void AfterBinInsert(List<Clip> inserted, int audio, string where = "")
+    {
+        if (inserted.Count > 0)
+        {
+            _timeline.SelectClips(inserted.Select(c => c.Id));
+            _engine.Seek(TimelineOps.ClipStart(_session.Project, inserted[0].Id));
+            _timeline.EnsurePlayheadVisible();
+        }
+        _preview.Select(null);
+        UpdatePropertyGrid();
+        _timeline.Invalidate();
+        var parts = new List<string>();
+        if (inserted.Count > 0) parts.Add(inserted.Count == 1 ? (_session.Project.FindMedia(inserted[0].SourceId)?.DisplayName ?? "1 clip") : $"{inserted.Count} clips");
+        if (audio > 0) parts.Add(audio == 1 ? "1 audio file on the audio track" : $"{audio} audio files on the audio track");
+        if (parts.Count > 0) _statusText.Text = $"Added {string.Join(" and ", parts)}{where} (Ctrl+Z to undo)";
+    }
+
+    /// <summary>Double-click / "Add to end of timeline" in the bin: videos and images go on the end, audio at the playhead.</summary>
+    void AddToTimeline(IReadOnlyList<Guid> mediaIds) => InsertMedia(mediaIds, anchorClipId: null, after: true);
 
     void ShowClipMenu(Guid clipId, Point screen)
     {
@@ -668,9 +718,17 @@ public sealed class MainForm : Form
         menu.Items.Add("Split all tracks at playhead (Shift+S)", null, (_, _) => SplitAll());
         menu.Items.Add(new ToolStripMenuItem("Copy (Ctrl+C)", null, (_, _) => CopyClips()));
         menu.Items.Add(new ToolStripMenuItem("Paste after this clip (Ctrl+V)", null, (_, _) => PasteClips()) { Enabled = _clipCopy is not null });
-        menu.Items.Add("Delete clip (Del)", null, (_, _) => DeleteSelection());
-        menu.Items.Add(new ToolStripSeparator());
         var clip = _session.Project.FindClip(clipId);
+        bool gap = clip is { IsGap: true };
+        menu.Items.Add(new ToolStripMenuItem(gap ? "Close gap (Del)" : "Delete, leave a gap (Del)", null, (_, _) => DeleteSelection(ripple: false))
+        {
+            ToolTipText = gap ? "Removes the gap: everything after it moves up." : "Removes the clip and leaves a gap in its place, so nothing else moves.",
+        });
+        menu.Items.Add(new ToolStripMenuItem("Ripple delete (Shift+Del)", null, (_, _) => DeleteSelection(ripple: true))
+        {
+            ToolTipText = "Removes it and closes the gap: later clips, overlays and audio move up together, staying in sync.",
+        });
+        menu.Items.Add(new ToolStripSeparator());
         var mute = new ToolStripMenuItem("Mute clip (Shift+M)", null, (_, _) => ToggleMute(clipId))
         {
             Checked = clip?.Muted == true,
@@ -678,11 +736,19 @@ public sealed class MainForm : Form
         };
         menu.Items.Add(mute);
         var why = TimelineOps.CannotSeparateAudio(_session.Project, clipId);
-        menu.Items.Add(new ToolStripMenuItem("Separate audio", null, (_, _) => SeparateAudio(clipId))
-        {
-            Enabled = why is null,
-            ToolTipText = why ?? "Puts this clip's sound on the audio track, where you can move or trim it on its own. The clip is muted.",
-        });
+        var whyNotLink = TimelineOps.CannotLinkAudio(_session.Project, clipId);
+        if (whyNotLink is null && clip is { Muted: true })
+            menu.Items.Add(new ToolStripMenuItem("Link audio", null, (_, _) => LinkAudio(clipId))
+            {
+                ToolTipText = "Puts this clip's sound back on the clip (from the audio track), so it moves and deletes with the picture again.",
+            });
+        else
+            menu.Items.Add(new ToolStripMenuItem("Unlink audio", null, (_, _) => SeparateAudio(clipId))
+            {
+                Enabled = why is null,
+                ToolTipText = why ?? "Moves this clip's sound onto the audio track, where you can move, trim or keep it on its own " +
+                                     "(e.g. delete the picture and keep the sound). Link audio puts it back.",
+            });
         menu.Items.Add(new ToolStripSeparator());
         bool blur = _session.Project.Background == BackgroundFill.Blur;
         menu.Items.Add(new ToolStripMenuItem("Blurred bars behind portrait clips (whole project)", null, (_, _) =>
@@ -694,48 +760,82 @@ public sealed class MainForm : Form
         menu.Show(screen);
     }
 
-    /// <summary>Run a bin command (I / O) on the file selected in the media bin.</summary>
-    void WithBinSelection(Action<Guid> command, string key)
+    /// <summary>Run a bin command (I / O) on the files selected in the media bin.</summary>
+    void WithBinSelection(Action<IReadOnlyList<Guid>> command, string key)
     {
-        if (_bin.SelectedMediaId is { } id) command(id);
+        if (_bin.SelectedMediaIds is { Count: > 0 } ids) command(ids);
         else _statusText.Text = $"Select a file in Media first, then press {key}.";
     }
 
-    /// <summary>Insert a bin file at the playhead: the clip there is split and the file goes in between (one undo step).</summary>
-    void InsertAtPlayhead(Guid mediaId)
+    void InsertAtPlayhead(Guid mediaId) => InsertAtPlayhead(new[] { mediaId });
+
+    /// <summary>
+    /// Insert bin files at the playhead, in order, as one undo step: the clip there is split and the files go in
+    /// between, one after another. Audio files go on the audio track from the playhead, one after another.
+    /// </summary>
+    void InsertAtPlayhead(IReadOnlyList<Guid> mediaIds)
     {
-        if (_session.Project.FindMedia(mediaId) is not { } media) return;
-        if (media.IsAudioOnly) { AddAudioAtPlayhead(media); return; }
         _engine.Pause();
         var at = _engine.Position;
-        Clip? inserted = null;
-        _session.Execute(p => { if (p.FindMedia(mediaId) is { } m) inserted = TimelineOps.InsertMediaAt(p, m, at); });
-        if (inserted is null) return;
-        _timeline.SelectedClipId = inserted.Id;
-        _engine.Seek(TimelineOps.ClipStart(_session.Project, inserted.Id));
-        _timeline.EnsurePlayheadVisible();
-        UpdatePropertyGrid();
-        _statusText.Text = $"Inserted {media.DisplayName} at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
+        var inserted = new List<Clip>();
+        int audio = 0;
+        var audioAt = AudioStartAtPlayhead();
+        _session.Execute(p =>
+        {
+            var t = at;
+            foreach (var id in mediaIds)
+            {
+                if (p.FindMedia(id) is not { } m) continue;
+                if (m.IsAudioOnly) { audioAt = TimelineOps.AddAudio(p, m, audioAt).End; audio++; continue; }
+                var c = TimelineOps.InsertMediaAt(p, m, t);
+                inserted.Add(c);
+                t = TimelineOps.ClipStart(p, c.Id) + c.Duration; // the next file goes right after this one
+            }
+        });
+        AfterBinInsert(inserted, audio, $" at {TimelineControl.FormatTime(at, tenths: true)}");
     }
 
-    /// <summary>Put a bin file on the first free overlay track at the playhead, as a picture-in-picture, and select it.</summary>
-    void AddOverlayAtPlayhead(Guid mediaId)
+    void AddOverlayAtPlayhead(Guid mediaId) => AddOverlayAtPlayhead(new[] { mediaId });
+
+    /// <summary>
+    /// Put bin files on the overlay tracks at the playhead, as picture-in-picture (one undo step). Several files stack
+    /// on the lowest free tracks; audio files go on the audio track instead. The last overlay is selected.
+    /// </summary>
+    void AddOverlayAtPlayhead(IReadOnlyList<Guid> mediaIds)
     {
-        var p = _session.Project;
-        if (p.FindMedia(mediaId) is not { } media) return;
-        if (media.IsAudioOnly) { AddAudioAtPlayhead(media); return; }
-        var total = TimelineOps.TotalDuration(p);
-        if (total <= TimeSpan.Zero) { _statusText.Text = "Overlays go over the main video: add a clip to the timeline first."; return; }
+        var p0 = _session.Project;
+        var media = mediaIds.Select(id => p0.FindMedia(id)).OfType<SourceMedia>().ToList();
+        if (media.Count == 0) return;
+        var total = TimelineOps.TotalDuration(p0);
+        if (media.Any(m => !m.IsAudioOnly) && total <= TimeSpan.Zero)
+        {
+            _statusText.Text = "Overlays go over the main video: add a clip to the timeline first.";
+            return;
+        }
         _engine.Pause();
         var at = _engine.Position >= total ? TimeSpan.Zero : _engine.Position;
-        var length = media.IsStill ? TimelineOps.DefaultStillLength : media.Duration;
-        OverlayClip? added = null;
-        _session.Execute(proj => added = TimelineOps.AddOverlay(proj, media, at, TimelineOps.FreeOverlayTrack(proj, at, length)));
-        if (added is null) return;
-        _timeline.SelectOverlay(added.Id);
-        _engine.Seek(at);
-        _statusText.Text = $"Added {media.DisplayName} as an overlay on V{added.Track + 1}. Drag it in the preview to place it; " +
-                           "the Properties panel sets its size or makes it full frame.";
+        var audioAt = AudioStartAtPlayhead();
+        var added = new List<OverlayClip>();
+        int audio = 0;
+        _session.Execute(proj =>
+        {
+            foreach (var m in media)
+            {
+                if (m.IsAudioOnly) { audioAt = TimelineOps.AddAudio(proj, m, audioAt).End; audio++; continue; }
+                var length = m.IsStill ? TimelineOps.DefaultStillLength : m.Duration;
+                added.Add(TimelineOps.AddOverlay(proj, m, at, TimelineOps.FreeOverlayTrack(proj, at, length)));
+            }
+        });
+        if (added.Count > 0) { _timeline.SelectOverlay(added[^1].Id); _engine.Seek(at); }
+        else _timeline.Invalidate();
+        _statusText.Text = added.Count switch
+        {
+            0 => $"Added {audio} audio file{(audio == 1 ? "" : "s")} to the audio track (Ctrl+Z to undo)",
+            1 => $"Added {p0.FindMedia(added[0].SourceId)?.DisplayName} as an overlay on V{added[0].Track + 1}. Drag it in the preview to place it; " +
+                 "the Properties panel sets its size or makes it full frame.",
+            _ => $"Added {added.Count} overlays at the playhead, stacked on V{added.Min(o => o.Track) + 1}–V{added.Max(o => o.Track) + 1}. " +
+                 "Drag each in the preview to place it (Ctrl+Z to undo).",
+        };
     }
 
     void SeparateAudio(Guid clipId)
@@ -750,7 +850,24 @@ public sealed class MainForm : Form
         _preview.Select(null);
         UpdatePropertyGrid();
         _timeline.Invalidate();
-        _statusText.Text = "Separated the audio onto the audio track; the clip is muted. Move or trim the audio on its own (Ctrl+Z to undo).";
+        _statusText.Text = "Unlinked: the clip's sound is now on the audio track. Move, trim or keep it on its own; " +
+                           "right-click the clip → Link audio puts it back (Ctrl+Z to undo).";
+    }
+
+    /// <summary>Put a clip's unlinked sound (in sync on the audio track) back on the clip.</summary>
+    void LinkAudio(Guid clipId)
+    {
+        if (TimelineOps.CannotLinkAudio(_session.Project, clipId) is { } why) { _statusText.Text = why; return; }
+        _engine.Pause();
+        int n = 0;
+        _session.Execute(p => n = TimelineOps.LinkAudio(p, clipId));
+        if (n == 0) return;
+        _timeline.SelectedAudioId = null;
+        _timeline.SelectedClipId = clipId;
+        _preview.Select(null);
+        UpdatePropertyGrid();
+        _timeline.Invalidate();
+        _statusText.Text = "Linked: the clip plays its own sound again, and it moves and deletes with the picture (Ctrl+Z to undo).";
     }
 
     void ShowOverlayMenu(Guid overlayId, Point screen)
@@ -827,6 +944,11 @@ public sealed class MainForm : Form
             { Enabled = _engine.Position - a.Start >= TimelineOps.MinClipLength && a.End - _engine.Position >= TimelineOps.MinClipLength });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Mute (Shift+M)", null, (_, _) => ToggleMute(null)) { Checked = a.Muted });
+        if (TimelineOps.LinkedClipOf(_session.Project, audioId) is { } owner)
+            menu.Items.Add(new ToolStripMenuItem("Link back to its clip", null, (_, _) => LinkAudio(owner.Id))
+            {
+                ToolTipText = "This is a clip's own sound, still in sync with it: put it back on the clip.",
+            });
         menu.Items.Add("Remove from audio track (Del)", null, (_, _) => DeleteSelection());
         menu.Show(screen);
     }
@@ -927,7 +1049,8 @@ public sealed class MainForm : Form
         if (p.Timeline.Count > 0 && at >= total) at = total - _engine.OneFrame();
         if (TimelineOps.Locate(p, at) is not { } hit || p.FindMedia(hit.Clip.SourceId) is not { } media)
         {
-            _preview.ShowNotice("Move the playhead onto a clip first, then press F.");
+            _preview.ShowNotice(TimelineOps.Locate(p, at) is { Clip.IsGap: true } ? "That's a gap: there's no picture to freeze here."
+                                                                                  : "Move the playhead onto a clip first, then press F.");
             return;
         }
         if (media.IsStill)
@@ -959,26 +1082,29 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Remove a file from the bin; if the timeline uses it, confirm first (it takes those clips too). Undoable.</summary>
-    void RemoveMedia(Guid mediaId)
+    /// <summary>Remove files from the project, with every clip, overlay and audio item using them (one confirm, one undo step).</summary>
+    void RemoveMedia(IReadOnlyList<Guid> mediaIds)
     {
         var p = _session.Project;
-        if (p.FindMedia(mediaId) is not { } m) return;
-        int uses = TimelineOps.UsageCount(p, mediaId);
+        var media = mediaIds.Select(id => p.FindMedia(id)).OfType<SourceMedia>().ToList();
+        if (media.Count == 0) return;
+        int uses = media.Sum(m => TimelineOps.UsageCount(p, m.Id));
+        string what = media.Count == 1 ? media[0].DisplayName : $"These {media.Count} files";
         if (uses > 0)
         {
             var r = MessageBox.Show(this,
-                $"{m.DisplayName} is used {uses} time{(uses == 1 ? "" : "s")} on the timeline.\n\n" +
-                "Remove it from the project, along with those clips? (The file on disk isn't deleted, and you can Undo.)",
+                $"{what} {(media.Count == 1 ? "is" : "are")} used {uses} time{(uses == 1 ? "" : "s")} on the timeline.\n\n" +
+                "Remove from the project, along with those clips? (The files on disk aren't deleted, and you can Undo.)",
                 "Remove from project", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
             if (r != DialogResult.OK) return;
         }
         _engine.Pause();
-        _session.Execute(proj => TimelineOps.RemoveMedia(proj, mediaId));
+        _session.Execute(proj => { foreach (var m in media) TimelineOps.RemoveMedia(proj, m.Id); });
         _timeline.PruneSelection(_session.Project);
         if (_timeline.SelectedAudioId is { } aid && _session.Project.FindAudio(aid) is null) _timeline.SelectedAudioId = null;
         UpdatePropertyGrid();
         _engine.Refresh();
-        _statusText.Text = $"Removed {m.DisplayName} from the project";
+        _statusText.Text = media.Count == 1 ? $"Removed {media[0].DisplayName} from the project" : $"Removed {media.Count} files from the project";
     }
 
     // ---------------- Chapter markers → YouTube timestamps (D31) ----------------
@@ -1022,9 +1148,16 @@ public sealed class MainForm : Form
             : $"Copied, but YouTube won't show them yet: {chapters.Warnings[0]}";
     }
 
-    void DeleteSelection()
+    /// <summary>
+    /// Delete everything selected, as one undo step: annotations, audio items, overlays and main-track clips.
+    /// Del (<paramref name="ripple"/> false) takes clips off and leaves a GAP, so nothing else moves; a selected gap is
+    /// closed. Shift+Del (<paramref name="ripple"/> true) closes the space too: later clips, overlays and the audio
+    /// track move up together and stay in sync (D38). Overlays, audio items and annotations sit at their own times,
+    /// so for them both keys just remove them.
+    /// </summary>
+    void DeleteSelection(bool ripple = false)
     {
-        if (_bin.ListFocused && _bin.SelectedMediaId is not null)
+        if (_bin.ListFocused && _bin.SelectedMediaIds.Count > 0)
         {
             _bin.RequestRemoveSelected();
             return;
@@ -1035,33 +1168,52 @@ public sealed class MainForm : Form
             _timeline.SelectedMarkerId = null;
             return;
         }
-        if (_preview.SelectedAnnotationId is { } aid)
+        var p0 = _session.Project;
+        var annotations = _timeline.SelectedAnnotationIds.ToHashSet();
+        if (_preview.SelectedAnnotationId is { } pa) annotations.Add(pa);
+        var audio = _timeline.SelectedAudioIds.ToList();
+        var overlays = _timeline.SelectedOverlayIds.ToList();
+        var clips = SelectedClips();
+        var gaps = clips.Where(id => p0.FindClip(id) is { IsGap: true }).ToList();
+        var footage = clips.Except(gaps).ToList();
+        if (annotations.Count + audio.Count + overlays.Count + clips.Count == 0)
         {
-            _session.Execute(p => TimelineOps.DeleteAnnotation(p, aid)); // the whole run if it spans cuts
-            _preview.Select(null);
+            _statusText.Text = "Click a clip, overlay, audio item, annotation or chapter marker (or drag a box around several) first, then press Delete.";
+            return;
         }
-        else if (_timeline.SelectedAudioId is { } audioId)
+
+        _engine.Pause();
+        _session.Execute(p =>
         {
-            _session.Execute(p => TimelineOps.DeleteAudio(p, audioId)); // the file stays in the bin
-            _timeline.SelectedAudioId = null;
-            UpdatePropertyGrid();
-        }
-        else if (_timeline.SelectedOverlayId is { } overlayId)
-        {
-            _session.Execute(p => TimelineOps.DeleteOverlay(p, overlayId)); // the file stays in the bin
-            _timeline.SelectOverlay(null);
-        }
-        else if (_timeline.SelectedClipId is not null)
-        {
-            var clips = SelectedClips(); // every selected clip (Ctrl+A, Ctrl/Shift+click), one undo step
-            _session.Execute(p => { foreach (var id in clips) TimelineOps.Delete(p, id); });
-            _timeline.SelectedClipId = null;
-            if (clips.Count > 1) _statusText.Text = $"Deleted {clips.Count} clips (Ctrl+Z to undo)";
-        }
-        else
-        {
-            _statusText.Text = "Click a clip, overlay, audio item, annotation or chapter marker first, then press Delete.";
-        }
+            foreach (var id in annotations) TimelineOps.DeleteAnnotation(p, id); // the whole run if it spans cuts
+            foreach (var id in audio) TimelineOps.DeleteAudio(p, id);             // the file stays in the bin
+            foreach (var id in overlays) TimelineOps.DeleteOverlay(p, id);
+            // Selected gaps close first, so lifting a clip next to one leaves its own gap rather than closing both.
+            foreach (var id in gaps) TimelineOps.Delete(p, id);
+            foreach (var id in footage)
+                if (ripple) TimelineOps.Delete(p, id); else TimelineOps.Lift(p, id);
+        });
+
+        _preview.Select(null);
+        _timeline.SelectedClipId = null;
+        _timeline.SelectedAudioId = null;
+        _timeline.SelectedAnnotationId = null;
+        _timeline.SelectOverlay(null);
+        UpdatePropertyGrid();
+        _timeline.Invalidate();
+
+        var parts = new List<string>();
+        void Count(int n, string one, string many) { if (n > 0) parts.Add(n == 1 ? one : $"{n} {many}"); }
+        Count(footage.Count, "1 clip", "clips");
+        Count(gaps.Count, "1 gap", "gaps");
+        Count(overlays.Count, "1 overlay", "overlays");
+        Count(audio.Count, "1 audio item", "audio items");
+        Count(annotations.Count, "1 annotation", "annotations");
+        var how = ripple || (footage.Count == 0 && gaps.Count > 0) ? ": the space was closed up and the tracks stayed in sync"
+                : footage.Count == 0 ? ""
+                : gaps.Count > 0 ? ": the clips left gaps (Shift+Del closes them up) and the selected gaps closed"
+                : ": a gap was left in their place, so nothing else moved (Shift+Del closes gaps up)";
+        _statusText.Text = $"Deleted {string.Join(", ", parts)}{how}. Ctrl+Z to undo.";
     }
 
     void ImportDialog()
@@ -1218,7 +1370,7 @@ public sealed class MainForm : Form
 
     void NewProject()
     {
-        if (!ConfirmDiscard()) return;
+        if (!ConfirmDiscard("starting a new project")) return;
         using var dlg = new NewProjectForm(NewProjectForm.DefaultFolder(_session.FilePath));
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _engine.Pause();
@@ -1286,13 +1438,13 @@ public sealed class MainForm : Form
             RecentProjects.Save(RecentPath, RecentProjects.Remove(RecentProjects.Load(RecentPath), path));
             return;
         }
-        if (!ConfirmDiscard()) return;
+        if (!ConfirmDiscard("opening another project")) return;
         LoadProject(path);
     }
 
     void OpenProject()
     {
-        if (!ConfirmDiscard()) return;
+        if (!ConfirmDiscard("opening another project")) return;
         using var dlg = new OpenFileDialog { Filter = $"Flyweight project|*{ProjectSerializer.FileExtension}" };
         if (dlg.ShowDialog(this) == DialogResult.OK) LoadProject(dlg.FileName);
     }
@@ -1317,7 +1469,7 @@ public sealed class MainForm : Form
         _timeline.ZoomToFit();
     }
 
-    bool SaveProject(bool saveAs)
+    bool SaveProject(bool saveAs, string? title = null)
     {
         _preview.CommitTextEdit();
         var path = _session.FilePath;
@@ -1330,7 +1482,7 @@ public sealed class MainForm : Form
                 Filter = $"Flyweight project|*{ProjectSerializer.FileExtension}",
                 FileName = (current is null ? "My video" : Path.GetFileNameWithoutExtension(current)) + ProjectSerializer.FileExtension,
                 InitialDirectory = current is not null ? Path.GetDirectoryName(current) : NewProjectForm.DefaultFolder(null),
-                Title = saveAs ? "Save project as" : "Save project",
+                Title = title ?? (saveAs ? "Save project as" : "Save project"),
             };
             if (dlg.ShowDialog(this) != DialogResult.OK) return false;
             path = dlg.FileName;
@@ -1348,11 +1500,20 @@ public sealed class MainForm : Form
         }
     }
 
-    bool ConfirmDiscard()
+    /// <summary>
+    /// Ask to save unsaved changes first. <paramref name="before"/> says what happens next (e.g. "starting a new
+    /// project"): owner was confused when New showed a Save dialog for the OLD project and then the New project window,
+    /// and took the first for the second. So the prompt names the current project and says what comes after.
+    /// </summary>
+    bool ConfirmDiscard(string? before = null)
     {
         if (!_session.IsDirty) return true;
-        var r = MessageBox.Show(this, "Save changes to this project?", "Flyweight", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-        return r == DialogResult.No || (r == DialogResult.Yes && SaveProject(false));
+        var name = _session.FilePath is { } fp ? $"\"{Path.GetFileNameWithoutExtension(fp)}\"" : "the current (untitled) project";
+        var msg = before is null ? $"Save changes to {name}?"
+            : $"Save changes to {name} before {before}?" +
+              (_session.FilePath is null ? $"\n\nYes asks where to save it first; then you'll carry on {before}." : "");
+        var r = MessageBox.Show(this, msg, "Flyweight", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        return r == DialogResult.No || (r == DialogResult.Yes && SaveProject(false, before is null ? null : $"Save the current project (before {before})"));
     }
 
     // ---------------- Autosave & crash recovery ----------------

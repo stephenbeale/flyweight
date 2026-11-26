@@ -250,6 +250,18 @@ public sealed class PlaybackEngine : IDisposable
             return;
         }
 
+        if (hit.Clip.IsGap)
+        {
+            // A gap: nothing to decode. The preview shows black while the real-time clock carries on (the audio
+            // track and overlays keep playing over it).
+            StopPlayer();
+            _clipId = hit.Clip.Id;
+            PlayingMedia = null;
+            PlayingOriginal = false;
+            WaitingForProxy = false;
+            return;
+        }
+
         _clipId = hit.Clip.Id;
         var state = _library.GetState(hit.Clip.SourceId);
         var media = _session.Project.FindMedia(hit.Clip.SourceId);
@@ -378,7 +390,11 @@ public sealed class PlaybackEngine : IDisposable
 
         if (Locate(t) is { } hit)
         {
-            if (hit.Clip.Id != _clipId)
+            if (hit.Clip.IsGap)
+            {
+                if (hit.Clip.Id != _clipId) ApplySeek(t, force: true); // into a gap: stop the video, show black
+            }
+            else if (hit.Clip.Id != _clipId)
             {
                 var prev = _clipId is { } id ? p.FindClip(id) : null;
                 bool seamless = prev is not null && prev.SourceId == hit.Clip.SourceId &&
@@ -391,8 +407,11 @@ public sealed class PlaybackEngine : IDisposable
             {
                 KeepVideoInStep(hit);
             }
-            ApplyVolume(hit.Clip);
-            ApplyRate(hit.Clip);
+            if (!hit.Clip.IsGap)
+            {
+                ApplyVolume(hit.Clip);
+                ApplyRate(hit.Clip);
+            }
         }
         PositionChanged?.Invoke(this, EventArgs.Empty);
     }

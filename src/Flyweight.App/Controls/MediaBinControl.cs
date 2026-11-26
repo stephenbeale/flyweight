@@ -26,24 +26,32 @@ public sealed class MediaBinControl : UserControl
         public BinList() { DoubleBuffered = true; Theme.DarkScrollbars(this); }
     }
 
-    public event EventHandler<Guid>? AddToTimelineRequested;
+    // Every action carries the selected files in bin order (Ctrl/Shift+click picks several), so MainForm can do them
+    // all as ONE undo step.
 
-    /// <summary>Right-click "Insert before/after current clip": media id, and true for after.</summary>
-    public event Action<Guid, bool>? InsertRequested;
+    /// <summary>Double-click / "Add to end of timeline".</summary>
+    public event Action<IReadOnlyList<Guid>>? AddToTimelineRequested;
 
-    /// <summary>"Insert at playhead": split the clip under the playhead and put this file in between.</summary>
-    public event Action<Guid>? InsertAtPlayheadRequested;
+    /// <summary>Right-click "Insert before/after current clip": media ids, and true for after.</summary>
+    public event Action<IReadOnlyList<Guid>, bool>? InsertRequested;
 
-    /// <summary>"Add as overlay at playhead": picture-in-picture on the overlay track.</summary>
-    public event Action<Guid>? AddOverlayRequested;
+    /// <summary>"Insert at playhead": split the clip under the playhead and put these files in between, in order.</summary>
+    public event Action<IReadOnlyList<Guid>>? InsertAtPlayheadRequested;
+
+    /// <summary>"Add as overlay at playhead": picture-in-picture on the overlay tracks.</summary>
+    public event Action<IReadOnlyList<Guid>>? AddOverlayRequested;
 
     /// <summary>Set by MainForm: whether a media id is a pure audio file (for the right-click menu).</summary>
     public Func<Guid, bool> IsAudio { get; set; } = _ => false;
 
-    /// <summary>"Remove from project" (right-click, or Delete with the bin focused): media id.</summary>
-    public event Action<Guid>? RemoveRequested;
+    /// <summary>"Remove from project" (right-click, or Delete with the bin focused).</summary>
+    public event Action<IReadOnlyList<Guid>>? RemoveRequested;
 
-    /// <summary>The selected file, if any.</summary>
+    /// <summary>The selected files, in bin order (empty if none).</summary>
+    public IReadOnlyList<Guid> SelectedMediaIds =>
+        _list.SelectedItems.Cast<ListViewItem>().OrderBy(i => i.Index).Select(i => (Guid)i.Tag!).ToList();
+
+    /// <summary>The selected file when exactly one is selected.</summary>
     public Guid? SelectedMediaId => _list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id ? id : null;
 
     /// <summary>True when the list has keyboard focus, so Delete means "remove this file", not "delete the clip".</summary>
@@ -60,7 +68,7 @@ public sealed class MediaBinControl : UserControl
 
     public void RequestRemoveSelected()
     {
-        if (SelectedMediaId is { } id) RemoveRequested?.Invoke(id);
+        if (SelectedMediaIds is { Count: > 0 } ids) RemoveRequested?.Invoke(ids);
     }
 
     public MediaBinControl()
@@ -69,7 +77,7 @@ public sealed class MediaBinControl : UserControl
         _list = new BinList
         {
             Dock = DockStyle.Fill, View = View.Tile, TileSize = new Size(260, 84), ShowItemToolTips = true, OwnerDraw = true,
-            BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None, MultiSelect = false,
+            BackColor = Theme.Panel, ForeColor = Theme.Text, BorderStyle = BorderStyle.None, MultiSelect = true,
         };
         _list.Columns.Add("Name");
         _list.Columns.Add("Status");
@@ -79,27 +87,35 @@ public sealed class MediaBinControl : UserControl
         _list.MouseLeave += (_, _) => SetHot(-1);
         _list.ItemActivate += (_, _) =>
         {
-            if (_list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id) AddToTimelineRequested?.Invoke(this, id);
+            if (SelectedMediaIds is { Count: > 0 } ids) AddToTimelineRequested?.Invoke(ids);
         };
         var menu = new ContextMenuStrip { Renderer = new Theme.ToolRenderer() };
-        Guid? MenuMedia() => _list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id ? id : null;
-        var atPlayhead = menu.Items.Add("Insert at playhead (I)", null, (_, _) => { if (MenuMedia() is { } id) InsertAtPlayheadRequested?.Invoke(id); });
-        atPlayhead.ToolTipText = "Splits the clip under the playhead and puts this in between";
-        var before = menu.Items.Add("Insert before current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, false); });
-        var after = menu.Items.Add("Insert after current clip", null, (_, _) => { if (MenuMedia() is { } id) InsertRequested?.Invoke(id, true); });
-        var overlay = menu.Items.Add("Add as overlay at playhead (O)", null, (_, _) => { if (MenuMedia() is { } id) AddOverlayRequested?.Invoke(id); });
+        IReadOnlyList<Guid> Sel() => SelectedMediaIds;
+        var atPlayhead = menu.Items.Add("Insert at playhead (I)", null, (_, _) => InsertAtPlayheadRequested?.Invoke(Sel()));
+        atPlayhead.ToolTipText = "Splits the clip under the playhead and puts the file(s) in between, in bin order";
+        var before = menu.Items.Add("Insert before current clip", null, (_, _) => InsertRequested?.Invoke(Sel(), false));
+        var after = menu.Items.Add("Insert after current clip", null, (_, _) => InsertRequested?.Invoke(Sel(), true));
+        var overlay = menu.Items.Add("Add as overlay at playhead (O)", null, (_, _) => AddOverlayRequested?.Invoke(Sel()));
         overlay.ToolTipText = "Picture-in-picture over the main video, on the overlay track (V2). Drag it in the preview to place it.";
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Add to end of timeline", null, (_, _) => { if (MenuMedia() is { } id) AddToTimelineRequested?.Invoke(this, id); });
+        var toEnd = menu.Items.Add("Add to end of timeline", null, (_, _) => AddToTimelineRequested?.Invoke(Sel()));
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Remove from project (Del)", null, (_, _) => { if (MenuMedia() is { } id) RemoveRequested?.Invoke(id); });
+        var remove = menu.Items.Add("Remove from project (Del)", null, (_, _) => RemoveRequested?.Invoke(Sel()));
         menu.Opening += (_, e) =>
         {
-            e.Cancel = MenuMedia() is null;
+            var ids = Sel();
+            e.Cancel = ids.Count == 0;
+            if (e.Cancel) return;
             // Audio files only go on the audio track (at the playhead); the video-only placements don't apply.
-            bool video = MenuMedia() is { } id && !IsAudio(id);
-            before.Visible = after.Visible = overlay.Visible = video;
-            atPlayhead.Text = video ? "Insert at playhead (I)" : "Add to audio track at playhead";
+            bool anyVideo = ids.Any(id => !IsAudio(id)), allAudio = !anyVideo;
+            before.Visible = after.Visible = overlay.Visible = anyVideo;
+            string n = ids.Count == 1 ? "" : $" {ids.Count} files";
+            atPlayhead.Text = allAudio ? $"Add{n} to audio track at playhead" : $"Insert{n} at playhead (I)";
+            before.Text = $"Insert{n} before current clip";
+            after.Text = $"Insert{n} after current clip";
+            overlay.Text = $"Add{n} as overlay{(ids.Count == 1 ? "" : "s")} at playhead (O)";
+            toEnd.Text = $"Add{n} to end of timeline";
+            remove.Text = $"Remove{n} from project (Del)";
         };
         _list.ContextMenuStrip = menu;
 
@@ -110,7 +126,7 @@ public sealed class MediaBinControl : UserControl
         };
         var hint = new Label
         {
-            Text = "Double-click to add · right-click for more", Dock = DockStyle.Bottom, Height = LogicalToDeviceUnits(26),
+            Text = "Double-click to add · Ctrl/Shift+click for several · right-click for more", Dock = DockStyle.Bottom, Height = LogicalToDeviceUnits(26),
             ForeColor = Color.FromArgb(120, 120, 130), BackColor = Theme.Panel, Padding = new Padding(10, 0, 0, 0),
             TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Font = new Font(Font.FontFamily, 8f),
         };
