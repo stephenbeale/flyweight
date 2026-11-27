@@ -95,7 +95,7 @@ public class LinkedAnnotationTests
 
         TimelineOps.DeleteAnnotation(p, TimelineOps.LinkedPieces(p, ann)[1].Id);
 
-        Assert.Equal(new[] { keep.Id }, p.Annotations.Select(x => x.Id));
+        Assert.Equal([keep.Id], p.Annotations.Select(x => x.Id));
     }
 
     [Fact]

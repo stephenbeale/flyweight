@@ -16,34 +16,44 @@ public static class FrameExport
     /// <summary>ffmpeg arguments that write the bare frame (no annotations) for <paramref name="hit"/>.</summary>
     public static IReadOnlyList<string> BuildArgs(Project p, TimelineHit hit, int width, int height, string outputPng)
     {
-        var media = p.FindMedia(hit.Clip.SourceId) ?? throw new InvalidOperationException("The clip's media is missing.");
         var clip = hit.Clip;
-        var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, width, height)
-                : ClipLook.BlursBars(p, clip, media) ? ClipLook.BlurFitFilter(width, height, "bf")
-                : Canvas.FitFilter(width, height);
-
         var args = new List<string>();
-        if (!media.IsStill) args.AddRange(new[] { "-ss", Sec(hit.SourceTime) }); // input seek: fast, and exact when decoding
-        args.AddRange(new[] { "-i", media.OriginalPath });
+        string baseChain; // filters from input 0 to the finished main picture (no trailing comma)
+        if (clip.IsGap)
+        {
+            // A gap is black: a generated frame at the output size (overlays and annotations still go on top).
+            args.AddRange(["-f", "lavfi", "-i", $"color=c=black:s={width}x{height}:d=1"]);
+            baseChain = "setsar=1";
+        }
+        else
+        {
+            var media = p.FindMedia(clip.SourceId) ?? throw new InvalidOperationException("The clip's media is missing.");
+            var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, width, height)
+                    : ClipLook.BlursBars(p, clip, media) ? ClipLook.BlurFitFilter(width, height, "bf")
+                    : Canvas.FitFilter(width, height);
+            if (!media.IsStill) args.AddRange(["-ss", Sec(hit.SourceTime)]); // input seek: fast, and exact when decoding
+            args.AddRange(["-i", media.OriginalPath]);
+            baseChain = $"{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}".TrimEnd(',');
+        }
 
         // Overlay-track video showing at this moment goes on, placed as in the export (OverlayLayout).
         var t = TimelineTimeOf(hit);
-        var graph = $"[0:v]{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=yuv420p[b0]";
+        var graph = $"[0:v]{baseChain},format=yuv420p[b0]";
         int n = 0;
         foreach (var o in TimelineOps.OverlaysAt(p, t))
         {
             if (p.FindMedia(o.SourceId) is not { IsAudioOnly: false } om) continue;
-            if (!om.IsStill) args.AddRange(new[] { "-ss", Sec(o.SourceAt(t - o.Start)) });
-            args.AddRange(new[] { "-i", om.OriginalPath });
+            if (!om.IsStill) args.AddRange(["-ss", Sec(o.SourceAt(t - o.Start))]);
+            args.AddRange(["-i", om.OriginalPath]);
             var (x, y, w, h) = OverlayLayout.PixelRect(o, om, width, height);
             graph += $";[{n + 1}:v]{OverlayLayout.CropFilter(o)}scale={w}:{h}:flags=bicubic,setsar=1[o{n}];[b{n}][o{n}]overlay={x}:{y}[b{n + 1}]";
             n++;
         }
         if (n == 0)
-            args.AddRange(new[] { "-vf", $"{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}format=rgb24" });
+            args.AddRange(["-vf", $"{baseChain},format=rgb24"]);
         else
-            args.AddRange(new[] { "-filter_complex", graph + $";[b{n}]format=rgb24[out]", "-map", "[out]" });
-        args.AddRange(new[] { "-frames:v", "1", "-f", "image2", "-update", "1", outputPng });
+            args.AddRange(["-filter_complex", graph + $";[b{n}]format=rgb24[out]", "-map", "[out]"]);
+        args.AddRange(["-frames:v", "1", "-f", "image2", "-update", "1", outputPng]);
         return args;
     }
 

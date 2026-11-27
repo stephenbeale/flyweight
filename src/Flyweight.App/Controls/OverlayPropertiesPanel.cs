@@ -14,11 +14,11 @@ public sealed class OverlayPropertiesPanel : PropertySheet
     static readonly Color Fg = Theme.Text;
 
     static readonly (OverlayPosition Pos, string Label)[] Placements =
-    {
+    [
         (OverlayPosition.BottomRight, "Bottom right"), (OverlayPosition.BottomLeft, "Bottom left"),
         (OverlayPosition.TopRight, "Top right"), (OverlayPosition.TopLeft, "Top left"),
         (OverlayPosition.Centre, "Centre"), (OverlayPosition.FullFrame, "Full frame (cutaway)"),
-    };
+    ];
 
     readonly Label _name = new() { ForeColor = Fg, AutoSize = true, Margin = new Padding(0, 2, 0, 4) };
     readonly Label _timing = new() { ForeColor = Color.Gray, AutoSize = true, Margin = new Padding(0, 0, 0, 4) };

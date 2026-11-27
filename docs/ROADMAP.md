@@ -1,6 +1,40 @@
 # Roadmap & status
 
-_Last updated: 2026-11-25 (blur fill merged; vertical 9:16 + annotation/timeline/crackle fixes on `feature/vertical-canvas`, PR #20 awaiting owner test)_
+_Last updated: 2026-11-26 (delete/ripple delete, gaps, link/unlink, drag-select, bin multi-select; PR open for `feature/independent-delete-and-still-length`)_
+
+### 2026-11-26: delete vs ripple delete, gaps, link/unlink, drag-select, bin multi-select (D44)
+Branch `feature/independent-delete-and-still-length` (PR open into `main`, **not merged**). 316 core tests pass (incl. a
+real-ffmpeg gap export pixel test); build 0 warnings. Owner has dev build 22:25 open.
+- **Delete vs ripple delete:** Del leaves a gap on the main track, Shift+Del ripple deletes; toolbar Delete + Ripple
+  delete. Gaps export as black + silence, play as black, Save frame gives black; trimmable, length in Properties.
+- **Link / Unlink audio** per clip (right-click on clip and audio item); label "sound unlinked".
+- **Drag-select (marquee)** on empty timeline space: clips, gaps, overlays, audio, annotations; Del/Shift+Del act on the
+  whole selection in one undo step. Ruler still scrubs.
+- **Backspace no longer deletes** (owner's clip vanished, probably a stray Backspace).
+- **New-project prompts** (ConfirmDiscard / SaveProject) now name the current project and what happens next.
+- **Media bin multi-select** (Ctrl/Shift+click): add, insert at playhead (I), before/after, overlay (O), remove; one undo step.
+- **Drag a main clip past the end** of the timeline: leaves a gap behind, gap before the new spot, ghost preview.
+- **Narrow items draggable:** trim handles capped at 1/4 of the item width (freeze frames zoomed out).
+- **Timeline zoom lag fix:** only on-screen thumbnail tiles drawn; clip starts cached per paint.
+- Also on the branch from earlier: still-image Length box (pushes all tracks), audio-item edge snapping
+  (`AudioSnapTests`), squeezed annotation lanes, AudioLanePlayer changes.
+- Claude verified in the dev build (posted-message scripts + screenshots): marquee select, Del on a mixed selection,
+  Del closing a gap.
+
+**Owner to test by hand:**
+1. Shift+Del (ripple; tracks stay in sync) vs Del (gap).
+2. Right-click Link / Unlink audio on a clip, and "Link back to its clip" on the audio item.
+3. Play across a gap with music under it (black, music continues).
+4. Media bin multi-select: Ctrl/Shift+click, then I, O, before/after, remove.
+5. Drag a clip past the end of the timeline (ghost, gap left behind).
+6. Drag freeze frames when zoomed out.
+7. Zoom in/out on the project with many freeze frames: lag gone?
+8. New project with unsaved changes: do the prompts read clearly?
+
+**Next steps:**
+1. Owner runs the checklist above; fix anything found.
+2. Merge the PR into `main`, then delete the branch (local + remote).
+3. Pending from 2026-11-25: merge PR #20 (vertical canvas) if still open; consider a 0.4.0-preview release.
 
 ### 2026-11-25 session close (b): annotation length, timeline layout, post-cut crackle (D42, D43), PR #20 open
 Branch `feature/vertical-canvas` (PR #20 into `main`, **open, not merged**); sub-PR #19 merged into it (97e6571).

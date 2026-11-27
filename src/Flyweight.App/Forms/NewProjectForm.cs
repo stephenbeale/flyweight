@@ -48,7 +48,7 @@ public sealed class NewProjectForm : Form
         _name.Text = UnusedName(folder, "My video");
         foreach (var (_, label) in ExportResolutions.All) _resolution.Items.Add(label);
         _resolution.SelectedIndex = 0;
-        _shape.Items.AddRange(new object[] { "Landscape 16:9 (YouTube video)", "Vertical 9:16 (YouTube Shorts)" });
+        _shape.Items.AddRange(["Landscape 16:9 (YouTube video)", "Vertical 9:16 (YouTube Shorts)"]);
         _shape.SelectedIndex = 0;
         // The size labels follow the shape, so "1080p vertical (1080x1920)" says exactly what you'll get.
         void Relabel()
@@ -91,7 +91,7 @@ public sealed class NewProjectForm : Form
         layout.Controls.Add(_blur, 1, 5);
         layout.SetColumnSpan(_blur, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        buttons.Controls.AddRange(new Control[] { cancel, ok });
+        buttons.Controls.AddRange([cancel, ok]);
         layout.Controls.Add(buttons, 0, 6);
         layout.SetColumnSpan(buttons, 3);
         Controls.Add(layout);

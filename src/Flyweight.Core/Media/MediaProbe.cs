@@ -9,10 +9,9 @@ public static class MediaProbe
     /// <summary>Read duration, size, frame rate and audio presence with ffprobe.</summary>
     public static async Task<SourceMedia> ProbeAsync(string path, CancellationToken ct = default)
     {
-        var json = await FfmpegRunner.RunFfprobeAsync(new[]
-        {
+        var json = await FfmpegRunner.RunFfprobeAsync([
             "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path,
-        }, ct);
+        ], ct);
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;

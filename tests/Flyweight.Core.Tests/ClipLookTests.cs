@@ -34,7 +34,7 @@ public class ClipLookTests
     [Fact]
     public void Old_project_files_load_with_no_zoom_or_tone()
     {
-        var (p, c) = OneClip();
+        var (p, _) = OneClip();
         var node = System.Text.Json.Nodes.JsonNode.Parse(ProjectSerializer.Serialize(p))!;
         var clipNode = node["Timeline"]![0]!.AsObject();
         foreach (var key in new[] { "Zoom", "PanX", "PanY", "Brightness", "Contrast" }) clipNode.Remove(key);

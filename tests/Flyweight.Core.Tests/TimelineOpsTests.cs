@@ -12,7 +12,7 @@ public class TimelineOpsTests
         var p = new Project();
         var a = new SourceMedia { OriginalPath = "a.mp4", Duration = S(10), Fps = 30 };
         var b = new SourceMedia { OriginalPath = "b.mp4", Duration = S(5), Fps = 30 };
-        p.Media.AddRange(new[] { a, b });
+        p.Media.AddRange([a, b]);
         TimelineOps.Append(p, a);
         TimelineOps.Append(p, b);
         return (p, a, b);

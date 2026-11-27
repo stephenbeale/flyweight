@@ -57,7 +57,7 @@ public sealed class OverlayLanePlayer : IDisposable
     readonly LibVLC _vlc;
     readonly ProjectSession _session;
     readonly MediaLibrary _library;
-    readonly Dictionary<Guid, Layer> _layers = new();
+    readonly Dictionary<Guid, Layer> _layers = [];
     volatile bool _playing;
 
     /// <summary>Raised on a LibVLC thread when an overlay has a new frame. Only set a flag here.</summary>

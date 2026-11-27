@@ -10,8 +10,9 @@ namespace Flyweight.App.Controls;
 /// clip track and audio track pinned at the bottom (they're the core of the edit, so they never scroll away).
 ///
 ///   ruler       click/drag to scrub
+///   empty space drag a box to select everything it touches (Shift/Ctrl adds); a click clears and seeks
 ///   overlays    drag to move in time and between tracks, drag ends to trim (they stay at their timeline time)
-///   clip track  click to select + seek, drag body to reorder, drag edges to trim
+///   clip track  click to select + seek, drag body to reorder, drag edges to trim; gaps (left by Delete) too
 ///   audio track drag to move in time, drag ends to trim (items stay at their timeline time)
 ///   annotations drag bar to move in time, drag ends to change duration
 ///   wheel       scroll; Ctrl+wheel zoom around the mouse
@@ -44,12 +45,35 @@ public sealed class TimelineControl : Control
 
     int OverlayBlockH => OverlayRows() * (OverlayRowH + LaneSpacing);
 
-    /// <summary>Unscrolled height of the scroll region's content: annotation lanes + overlay tracks.</summary>
-    int ContentH()
+    /// <summary>Smallest an annotation lane gets squeezed to (its label is hidden below <see cref="LabelMinLaneH"/>).</summary>
+    const int MinLaneH = 10, LabelMinLaneH = 14;
+
+    int LaneCount() => AnnotationBars().Select(b => b.Lane + 1).DefaultIfEmpty(0).Max();
+
+    /// <summary>
+    /// Annotation lane height right now. Full height while everything fits; once the panel can't grow any more
+    /// (the form caps it), lanes are squeezed down to <see cref="MinLaneH"/> so every annotation stays in view, and
+    /// only past that does the region scroll (owner: "I need to see all annotations").
+    /// </summary>
+    int CurLaneH
     {
-        int lanes = AnnotationBars().Select(b => b.Lane + 1).DefaultIfEmpty(0).Max();
-        return lanes * (LaneH + LaneSpacing) + (lanes > 0 ? LaneGap : 0) + OverlayBlockH;
+        get
+        {
+            int lanes = LaneCount();
+            if (lanes == 0) return LaneH;
+            int room = RegionBottom - RegionTop - OverlayBlockH - LaneGap;
+            return Math.Clamp(room / lanes - LaneSpacing, MinLaneH, LaneH);
+        }
     }
+
+    /// <summary>Unscrolled height of the scroll region's content (annotation lanes + overlay tracks) at a lane height.</summary>
+    int ContentH(int laneH)
+    {
+        int lanes = LaneCount();
+        return lanes * (laneH + LaneSpacing) + (lanes > 0 ? LaneGap : 0) + OverlayBlockH;
+    }
+
+    int ContentH() => ContentH(CurLaneH);
 
     bool InRegion(Point pt) => pt.Y >= RegionTop && pt.Y <= RegionBottom;
     static readonly Color ClipColor = Color.FromArgb(52, 99, 160);
@@ -60,7 +84,7 @@ public sealed class TimelineControl : Control
     ProjectSession _session = null!;
     MediaLibrary _library = null!;
     Func<TimeSpan> _playhead = () => TimeSpan.Zero;
-    readonly Dictionary<Guid, Image> _thumbs = new();
+    readonly Dictionary<Guid, Image> _thumbs = [];
 
     double _pps = 40;       // pixels per second
     float _scrollX;         // pixels
@@ -71,15 +95,21 @@ public sealed class TimelineControl : Control
     /// <summary>Top of the overlay tracks: bottom-anchored in the scroll region, moved down as you scroll up.</summary>
     int OverlayTop => RegionBottom - OverlayBlockH + LaneSpacing + _scrollY;
 
-    enum Drag { None, Scrub, ClipBody, TrimIn, TrimOut, AnnoMove, AnnoStart, AnnoEnd, AudioMove, AudioIn, AudioOut, Marker, OverlayMove, OverlayIn, OverlayOut }
+    enum Drag { None, Scrub, ClipBody, TrimIn, TrimOut, AnnoMove, AnnoStart, AnnoEnd, AudioMove, AudioIn, AudioOut, Marker, OverlayMove, OverlayIn, OverlayOut, Marquee }
     static readonly Color MarkerColor = Color.FromArgb(255, 196, 0);
     Drag _drag;
-    int _downX;
+    int _downX, _downY;
+    /// <summary>Drag-select box: where it started, where the mouse is now, and the selection to add to (Shift/Ctrl).</summary>
+    Point _marqueeFrom, _marqueeTo;
+    (HashSet<Guid> Clips, HashSet<Guid> Audio, HashSet<Guid> Overlays, HashSet<Guid> Annotations)? _marqueeBase;
     bool _dragMoved;
     Guid _dragId;
     TimeSpan _originA, _originB;
     TimelineOps.TrackSnapshot? _trackSnap; // overlay/audio tracks when a clip-edge drag began, so they stay in sync
     int _dropIndex = -1;
+    /// <summary>Clip-body drag past the end of the other clips: the time it will start at (a gap fills the space before it).</summary>
+    TimeSpan? _dropTime;
+    TimeSpan _dragClipStart;
 
     public TimelineControl()
     {
@@ -97,7 +127,7 @@ public sealed class TimelineControl : Control
     int MaxScrollY() => Math.Max(0, ContentH() - (RegionBottom - RegionTop));
 
     /// <summary>Height that shows everything without scrolling. The form grows the panel towards it (up to a limit).</summary>
-    public int PreferredHeight => RegionTop + ContentH() + 4 + BottomH;
+    public int PreferredHeight => RegionTop + ContentH(LaneH) + 4 + BottomH; // full-height lanes: grow before squeezing
 
     /// <summary>
     /// Raised when a timeline drag ends, since the form doesn't refit the panel mid-drag (<see cref="IsDragging"/>).
@@ -154,7 +184,7 @@ public sealed class TimelineControl : Control
     }
 
     Guid? _primaryClip;
-    readonly HashSet<Guid> _selectedClips = new();
+    readonly HashSet<Guid> _selectedClips = [];
 
     /// <summary>
     /// The MAIN selected clip (the one the Properties panel shows). Setting it selects just that clip; use
@@ -206,16 +236,46 @@ public sealed class TimelineControl : Control
         Invalidate();
     }
 
-    /// <summary>Forget selected clips that no longer exist (after delete / undo).</summary>
+    /// <summary>Forget selected items that no longer exist (after delete / undo).</summary>
     public void PruneSelection(Project p)
     {
         _selectedClips.RemoveWhere(id => p.FindClip(id) is null);
         if (_primaryClip is { } pc && p.FindClip(pc) is null) _primaryClip = _selectedClips.Count > 0 ? _selectedClips.First() : null;
+        _selAudio.RemoveWhere(id => p.FindAudio(id) is null);
+        if (_primaryAudio is { } pa && p.FindAudio(pa) is null) _primaryAudio = null;
+        _selOverlays.RemoveWhere(id => p.FindOverlay(id) is null);
+        if (_primaryOverlay is { } po && p.FindOverlay(po) is null) _primaryOverlay = null;
+        _selAnnotations.RemoveWhere(id => p.FindAnnotation(id) is null);
+        if (_primaryAnnotation is { } pn && p.FindAnnotation(pn) is null) _primaryAnnotation = null;
     }
-    public Guid? SelectedAnnotationId { get; set; }
-    public Guid? SelectedAudioId { get; set; }
+
+    // One "main" item per kind (what the Properties panel shows; setting it selects just that one), plus everything a
+    // drag-select box picked up (the *Ids sets, which include the main one). Delete acts on all of them.
+    Guid? _primaryAudio, _primaryOverlay, _primaryAnnotation;
+    readonly HashSet<Guid> _selAudio = [], _selOverlays = [], _selAnnotations = [];
+
+    static void SetOne(ref Guid? primary, HashSet<Guid> set, Guid? value)
+    {
+        primary = value;
+        set.Clear();
+        if (value is { } v) set.Add(v);
+    }
+
+    public Guid? SelectedAnnotationId { get => _primaryAnnotation; set => SetOne(ref _primaryAnnotation, _selAnnotations, value); }
+    public Guid? SelectedAudioId { get => _primaryAudio; set => SetOne(ref _primaryAudio, _selAudio, value); }
+    public Guid? SelectedOverlayId { get => _primaryOverlay; set => SetOne(ref _primaryOverlay, _selOverlays, value); }
     public Guid? SelectedMarkerId { get; set; }
-    public Guid? SelectedOverlayId { get; set; }
+
+    /// <summary>Every selected audio item / overlay / annotation (a drag-select box can pick up several).</summary>
+    public IReadOnlyCollection<Guid> SelectedAudioIds => _selAudio;
+    public IReadOnlyCollection<Guid> SelectedOverlayIds => _selOverlays;
+    public IReadOnlyCollection<Guid> SelectedAnnotationIds => _selAnnotations;
+
+    /// <summary>A drag-select box on the timeline finished (the selection may mix clips, overlays, audio and annotations).</summary>
+    public event EventHandler? MarqueeSelected;
+
+    /// <summary>How many things are selected on the timeline, of every kind.</summary>
+    public int SelectionCount => _selectedClips.Count + _selAudio.Count + _selOverlays.Count + _selAnnotations.Count;
 
     public event EventHandler? OverlaySelected;
 
@@ -259,7 +319,7 @@ public sealed class TimelineControl : Control
     float X(TimeSpan t) => (float)(t.TotalSeconds * _pps) - _scrollX;
     TimeSpan T(float x) => TimeSpan.FromSeconds(Math.Max(0, (x + _scrollX) / _pps));
     /// <summary>Annotation lanes stack UPWARDS above the overlay tracks: lane 0 is just above V2.</summary>
-    int LaneTop(int lane) => OverlayTop - LaneGap - (lane + 1) * (LaneH + LaneSpacing) + LaneSpacing;
+    int LaneTop(int lane) => OverlayTop - LaneGap - (lane + 1) * (CurLaneH + LaneSpacing) + LaneSpacing;
 
     // ---- Overlay tracks: one row per track above the main track, the highest track at the top ----
 
@@ -314,13 +374,21 @@ public sealed class TimelineControl : Control
 
     List<(AudioItem A, int Row)> AudioRows() => _audioRowsCache ?? ComputeAudioRows();
 
+    /// <summary>How close (on screen) an audio edge has to be to another edge or a cut to stick to it while dragging.</summary>
+    const int SnapPx = 10;
+    TimeSpan SnapTolerance => TimeSpan.FromSeconds(SnapPx / _pps);
+
+    /// <summary>Items overlapping by less than this on screen still share a row (they look like they touch).</summary>
+    const int RowOverlapPx = 6;
+
     List<(AudioItem A, int Row)> ComputeAudioRows()
     {
         var rowEnds = new List<TimeSpan>();
         var result = new List<(AudioItem, int)>();
+        var slack = TimeSpan.FromSeconds(RowOverlapPx / _pps);
         foreach (var a in _session.Project.AudioTrack.OrderBy(a => a.Start))
         {
-            int row = rowEnds.FindIndex(end => end <= a.Start);
+            int row = rowEnds.FindIndex(end => end - slack <= a.Start);
             if (row < 0) { row = rowEnds.Count; rowEnds.Add(a.End); } else rowEnds[row] = a.End;
             result.Add((a, row));
         }
@@ -337,10 +405,21 @@ public sealed class TimelineControl : Control
     RectangleF AudioRect(AudioItem a, int row) =>
         new(X(a.Start), AudioTop + row * (AudioRowH + LaneSpacing), Math.Max(4, (float)(a.Duration.TotalSeconds * _pps)), AudioRowH);
 
+    /// <summary>Clip start times for ONE paint (ClipStart walks the timeline; per clip that was n² with many freeze frames).</summary>
+    TimeSpan[]? _clipStartsCache;
+
+    static TimeSpan[] ComputeClipStarts(Project p)
+    {
+        var starts = new TimeSpan[p.Timeline.Count];
+        var t = TimeSpan.Zero;
+        for (int i = 0; i < starts.Length; i++) { starts[i] = t; t += p.Timeline[i].Duration; }
+        return starts;
+    }
+
     RectangleF ClipRect(int index)
     {
         var p = _session.Project;
-        var start = TimelineOps.ClipStart(p, index);
+        var start = _clipStartsCache is { } cs && index < cs.Length ? cs[index] : TimelineOps.ClipStart(p, index);
         var c = p.Timeline[index];
         return new RectangleF(X(start), TrackTop, (float)(c.Duration.TotalSeconds * _pps), TrackH);
     }
@@ -373,7 +452,7 @@ public sealed class TimelineControl : Control
     }
 
     RectangleF BarRect(TimeSpan s, TimeSpan e, int lane) =>
-        new(X(s), LaneTop(lane), Math.Max(4, (float)((e - s).TotalSeconds * _pps)), LaneH);
+        new(X(s), LaneTop(lane), Math.Max(4, (float)((e - s).TotalSeconds * _pps)), CurLaneH);
 
     // ---------------- View ----------------
 
@@ -426,8 +505,9 @@ public sealed class TimelineControl : Control
         if (_session is null) return;
         _audioRowsCache = ComputeAudioRows();
         _barsCache = ComputeAnnotationBars();
+        _clipStartsCache = ComputeClipStarts(_session.Project);
         try { PaintTimeline(g, _session.Project); }
-        finally { _audioRowsCache = null; _barsCache = null; } // hit-testing between paints computes fresh
+        finally { _audioRowsCache = null; _barsCache = null; _clipStartsCache = null; } // hit-testing between paints computes fresh
     }
 
     void PaintTimeline(Graphics g, Project p)
@@ -445,7 +525,21 @@ public sealed class TimelineControl : Control
         // Pinned: main video track and audio track.
         for (int i = 0; i < p.Timeline.Count; i++) DrawClip(g, p, i);
 
-        if (_drag == Drag.ClipBody && _dragMoved && _dropIndex >= 0)
+        if (_drag == Drag.ClipBody && _dragMoved && _dropTime is { } dropAt && p.FindClip(_dragId) is { } moving)
+        {
+            // Ghost of the clip where it will land, and a dashed line from the end of the others (the gap it leaves).
+            var ghost = new RectangleF(X(dropAt), TrackTop, (float)(moving.Duration.TotalSeconds * _pps), TrackH);
+            using var fill = new SolidBrush(Color.FromArgb(60, Accent));
+            g.FillRectangle(fill, ghost);
+            using var pen = new Pen(Accent, 2) { DashStyle = DashStyle.Dash };
+            g.DrawRectangle(pen, ghost.X, ghost.Y, ghost.Width, ghost.Height);
+            var gapFrom = X(TimelineOps.EndWithout(p, _dragId));
+            if (ghost.X - gapFrom > 30)
+                TextRenderer.DrawText(g, $"gap {(dropAt - TimelineOps.EndWithout(p, _dragId)).TotalSeconds:0.0}s", Font,
+                    Rectangle.Round(new RectangleF(gapFrom, TrackTop + TrackH / 2 - 9, ghost.X - gapFrom, 18)), Color.Silver,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+        }
+        else if (_drag == Drag.ClipBody && _dragMoved && _dropIndex >= 0)
         {
             float x = _dropIndex < p.Timeline.Count ? ClipRect(_dropIndex).X : X(TimelineOps.TotalDuration(p));
             using var pen = new Pen(Accent, 3);
@@ -453,6 +547,15 @@ public sealed class TimelineControl : Control
         }
 
         DrawAudioTrack(g, p);
+
+        if (_drag == Drag.Marquee && _dragMoved)
+        {
+            var box = MarqueeRect();
+            using var fill = new SolidBrush(Color.FromArgb(40, Accent));
+            g.FillRectangle(fill, box);
+            using var pen = new Pen(Accent, 1) { DashStyle = DashStyle.Dash };
+            g.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);
+        }
 
         DrawRuler(g);
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -462,7 +565,7 @@ public sealed class TimelineControl : Control
         float px = X(_playhead());
         using (var pen = new Pen(Color.FromArgb(255, 70, 70), 2)) g.DrawLine(pen, px, 0, px, Height);
         using (var b = new SolidBrush(Color.FromArgb(255, 70, 70)))
-            g.FillPolygon(b, new[] { new PointF(px - 6, 0), new PointF(px + 6, 0), new PointF(px, 9) });
+            g.FillPolygon(b, [new PointF(px - 6, 0), new PointF(px + 6, 0), new PointF(px, 9)]);
     }
 
     protected override void OnResize(EventArgs e)
@@ -512,7 +615,7 @@ public sealed class TimelineControl : Control
         using var bg = new SolidBrush(Color.FromArgb(38, 38, 44));
         g.FillRectangle(bg, 0, 0, Width, RulerH);
         // Pick a label step that leaves ~80px between labels.
-        double[] steps = { 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600 };
+        double[] steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
         double step = steps.FirstOrDefault(s => s * _pps >= 80, 600);
         double first = Math.Floor(_scrollX / _pps / step) * step;
         using var pen = new Pen(Color.FromArgb(90, 90, 100));
@@ -533,6 +636,7 @@ public sealed class TimelineControl : Control
         var r = ClipRect(i);
         if (r.Right < 0 || r.Left > Width) return;
         r = Gap(r); // a hair of space between clips so the rounded ends read as separate clips
+        if (c.IsGap) { DrawGap(g, c, r); return; }
         var media = p.FindMedia(c.SourceId);
         var state = _library.GetState(c.SourceId);
         using var shape = Theme.Rounded(r);
@@ -544,8 +648,7 @@ public sealed class TimelineControl : Control
         {
             var region = g.Clip;
             g.SetClip(shape, CombineMode.Intersect);
-            float tw = TrackH * img.Width / (float)img.Height;
-            for (float x = r.X; x < r.Right; x += tw) g.DrawImage(img, x, r.Y, tw, TrackH);
+            TileThumb(g, c.SourceId, img, r, TrackH);
             using var shade = new SolidBrush(Color.FromArgb(90, ClipColor));
             g.FillRectangle(shade, r);
             // Darker strip behind the label so it stays readable on bright thumbnails.
@@ -560,7 +663,8 @@ public sealed class TimelineControl : Control
         if (state.Status == ProxyStatus.Failed) label += "  ·  failed";
         if (media is { HasAudio: true })
         {
-            if (c.Muted) label += "  ·  muted";
+            if (c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0) label += "  ·  sound unlinked";
+            else if (c.Muted) label += "  ·  muted";
             else if (Math.Abs(c.Volume - 1) >= 0.005) label += $"  ·  vol {c.Volume:P0}";
         }
         TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y + 4, r.Width - 12, 18)),
@@ -571,6 +675,27 @@ public sealed class TimelineControl : Control
         else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
         Grips(g, r, TrackH, 20, sel);
     }
+
+    /// <summary>A gap on the main track: an empty dashed slot (black in the video), selectable so Delete can close it.</summary>
+    void DrawGap(Graphics g, Clip c, RectangleF r)
+    {
+        bool sel = _selectedClips.Contains(c.Id);
+        Theme.FillRounded(g, Color.FromArgb(sel ? 40 : 24, 255, 255, 255), r);
+        using (var pen = new Pen(sel ? Accent : Color.FromArgb(110, 255, 255, 255), sel ? 2.5f : 1f) { DashStyle = DashStyle.Dash })
+        {
+            using var shape = Theme.Rounded(r);
+            g.DrawPath(pen, shape);
+        }
+        TextRenderer.DrawText(g, $"Gap  ·  {c.Duration.TotalSeconds:0.0}s", Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y + 4, r.Width - 12, 18)),
+            Color.FromArgb(170, 170, 180), TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        Grips(g, r, TrackH, 20, sel);
+    }
+
+    /// <summary>
+    /// Width of the trim handle at each end: <see cref="EdgeGrab"/>, but at most a quarter of the item, so a narrow one
+    /// (a short freeze frame when zoomed out) still has a middle to drag it by instead of being all trim handle.
+    /// </summary>
+    static float Grab(RectangleF r) => Math.Min(EdgeGrab, r.Width / 4);
 
     static RectangleF Gap(RectangleF r) => r.Width > 6 ? new RectangleF(r.X + 1, r.Y, r.Width - 2, r.Height) : r;
 
@@ -609,8 +734,7 @@ public sealed class TimelineControl : Control
         {
             var region = g.Clip;
             g.SetClip(shape, CombineMode.Intersect);
-            float tw = r.Height * img.Width / (float)img.Height;
-            for (float x = r.X; x < r.Right; x += tw) g.DrawImage(img, x, r.Y, tw, r.Height);
+            TileThumb(g, o.SourceId, img, r, (int)r.Height);
             using var shade = new SolidBrush(Color.FromArgb(120, OverlayColor));
             g.FillRectangle(shade, r);
             g.Clip = region;
@@ -622,7 +746,7 @@ public sealed class TimelineControl : Control
         if (media is { HasAudio: true } && o.Muted) label += "  ·  muted";
         TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y, r.Width - 12, r.Height)),
             Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-        bool sel = SelectedOverlayId == o.Id;
+        bool sel = _selOverlays.Contains(o.Id);
         if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
         else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
         Grips(g, r, r.Height, 14, sel);
@@ -671,7 +795,7 @@ public sealed class TimelineControl : Control
 
         // No text on audio items: just the waveform (greyed when muted). The name, times and volume
         // are in the hover tooltip and the Properties panel.
-        bool sel = SelectedAudioId == a.Id;
+        bool sel = _selAudio.Contains(a.Id);
         if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
         else Theme.DrawRounded(g, Color.FromArgb(60, 255, 255, 255), 1f, r);
         Grips(g, r, AudioRowH, 14, sel);
@@ -685,12 +809,49 @@ public sealed class TimelineControl : Control
             AnnotationKind.Box => Color.FromArgb(200, 160, 30),
             _ => Color.FromArgb(120, 120, 135),
         };
-        Theme.FillRounded(g, col, r, 5);
-        if (SelectedAnnotationId is { } sel && (sel == a.Id || (a.LinkId is { } l && _session.Project.FindAnnotation(sel)?.LinkId == l)))
-            Theme.DrawRounded(g, Accent, 2, r, 5);
+        float radius = Math.Min(5, r.Height / 2);
+        Theme.FillRounded(g, col, r, radius);
+        if (IsAnnotationSelected(a)) Theme.DrawRounded(g, Accent, 2, r, radius);
+        if (r.Height < LabelMinLaneH) return; // squeezed lanes: colour only (hover shows what it is)
         var text = a.Kind == AnnotationKind.Text ? $"T  {a.Text.Split('\n')[0]}" : a.Kind == AnnotationKind.Arrow ? "→  Arrow" : "▭  Box";
         TextRenderer.DrawText(g, text, Font, Rectangle.Round(new RectangleF(r.X + 4, r.Y, r.Width - 6, r.Height)),
             Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+    }
+
+    /// <summary>Selected, or another piece of the same run across cuts is.</summary>
+    bool IsAnnotationSelected(Annotation a)
+    {
+        if (_selAnnotations.Count == 0) return false;
+        if (_selAnnotations.Contains(a.Id)) return true;
+        return a.LinkId is { } l && _selAnnotations.Any(id => _session.Project.FindAnnotation(id)?.LinkId == l);
+    }
+
+    /// <summary>Thumbnails pre-scaled to a row height, so tiling them is a 1:1 copy instead of a resample per tile.</summary>
+    readonly Dictionary<(Guid, int), Bitmap> _tiles = [];
+
+    /// <summary>
+    /// Tile a poster thumbnail along an item, but ONLY across the part that's on screen. Zoomed in, a long clip is
+    /// hundreds of thousands of pixels wide; tiling all of it (clipped away, but still drawn) made Ctrl+wheel zoom lag.
+    /// </summary>
+    void TileThumb(Graphics g, Guid sourceId, Image img, RectangleF r, int height)
+    {
+        if (height <= 0) return;
+        if (!_tiles.TryGetValue((sourceId, height), out var tile))
+        {
+            int w = Math.Max(1, (int)Math.Round(height * img.Width / (double)img.Height));
+            tile = new Bitmap(w, height);
+            tile.SetResolution(g.DpiX, g.DpiY); // so DrawImage below doesn't rescale it for DPI
+            using (var tg = Graphics.FromImage(tile))
+            {
+                tg.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                tg.DrawImage(img, 0, 0, w, height);
+            }
+            _tiles[(sourceId, height)] = tile;
+        }
+        float tw = tile.Width;
+        float from = Math.Max(r.X, r.X + (float)Math.Floor((-tw - r.X) / tw) * tw); // first tile that reaches the screen
+        float to = Math.Min(r.Right, Width);
+        for (float x = from; x < to; x += tw) g.DrawImageUnscaled(tile, (int)x, (int)r.Y);
     }
 
     Image? Thumb(Guid sourceId, string? path)
@@ -767,7 +928,7 @@ public sealed class TimelineControl : Control
             _dragId = a.Id;
             _originA = s;
             _originB = en;
-            _drag = e.X <= r.Left + EdgeGrab ? Drag.AnnoStart : e.X >= r.Right - EdgeGrab ? Drag.AnnoEnd : Drag.AnnoMove;
+            _drag = e.X <= r.Left + Grab(r) ? Drag.AnnoStart : e.X >= r.Right - Grab(r) ? Drag.AnnoEnd : Drag.AnnoMove;
             _session.BeginEdit();
             return;
         }
@@ -779,8 +940,8 @@ public sealed class TimelineControl : Control
             SelectAudio(a.Id);
             _dragId = a.Id;
             _originA = a.Start;
-            _originB = e.X <= hit.R.Left + EdgeGrab ? a.In : a.Out;
-            _drag = e.X <= hit.R.Left + EdgeGrab ? Drag.AudioIn : e.X >= hit.R.Right - EdgeGrab ? Drag.AudioOut : Drag.AudioMove;
+            _originB = e.X <= hit.R.Left + Grab(hit.R) ? a.In : a.Out;
+            _drag = e.X <= hit.R.Left + Grab(hit.R) ? Drag.AudioIn : e.X >= hit.R.Right - Grab(hit.R) ? Drag.AudioOut : Drag.AudioMove;
             if (_drag == Drag.AudioMove) SeekRequested?.Invoke(this, T(e.X)); // so S splits it where you clicked
             _session.BeginEdit();
             return;
@@ -793,8 +954,8 @@ public sealed class TimelineControl : Control
             SelectOverlay(o.Id);
             _dragId = o.Id;
             _originA = o.Start;
-            _originB = e.X <= ov.R.Left + EdgeGrab ? o.In : o.Out;
-            _drag = e.X <= ov.R.Left + EdgeGrab ? Drag.OverlayIn : e.X >= ov.R.Right - EdgeGrab ? Drag.OverlayOut : Drag.OverlayMove;
+            _originB = e.X <= ov.R.Left + Grab(ov.R) ? o.In : o.Out;
+            _drag = e.X <= ov.R.Left + Grab(ov.R) ? Drag.OverlayIn : e.X >= ov.R.Right - Grab(ov.R) ? Drag.OverlayOut : Drag.OverlayMove;
             // Like a clip: clicking its body also moves the playhead there, so S splits it right where you clicked.
             if (_drag == Drag.OverlayMove) SeekRequested?.Invoke(this, T(e.X));
             _session.BeginEdit();
@@ -818,21 +979,79 @@ public sealed class TimelineControl : Control
             _originA = c.In;
             _originB = c.Out;
             _trackSnap = TimelineOps.CaptureTracks(p, c.Id);
-            if (e.X <= r.Left + EdgeGrab) { _drag = Drag.TrimIn; _session.BeginEdit(); }
-            else if (e.X >= r.Right - EdgeGrab) { _drag = Drag.TrimOut; _session.BeginEdit(); }
-            else { _drag = Drag.ClipBody; SeekRequested?.Invoke(this, T(e.X)); }
+            if (e.X <= r.Left + Grab(r)) { _drag = Drag.TrimIn; _session.BeginEdit(); }
+            else if (e.X >= r.Right - Grab(r)) { _drag = Drag.TrimOut; _session.BeginEdit(); }
+            else { _drag = Drag.ClipBody; _dragClipStart = TimelineOps.ClipStart(p, c.Id); SeekRequested?.Invoke(this, T(e.X)); }
             return;
         }
 
-        // Ruler or empty space: scrub
+        // Empty space in the tracks: drag a box to select everything it touches (Shift/Ctrl adds to the selection).
+        // A plain click (no drag) clears the selection and moves the playhead, as before.
+        bool additive = (ModifierKeys & (Keys.Shift | Keys.Control)) != 0;
+        if (!additive) ClearSelection();
+        _marqueeBase = ([.. _selectedClips], new(_selAudio), new(_selOverlays), new(_selAnnotations));
+        _marqueeFrom = _marqueeTo = e.Location;
+        _downY = e.Y;
+        _drag = Drag.Marquee;
+        return;
+
+        // Ruler: scrub
         Scrub:
+        ClearSelection();
+        _drag = Drag.Scrub;
+        SeekRequested?.Invoke(this, T(e.X));
+    }
+
+    void ClearSelection()
+    {
         SelectedAudioId = null;
         if (SelectedOverlayId is not null) SelectOverlay(null);
         SelectClip(null);
         SelectAnnotation(null);
         SelectMarker(null);
-        _drag = Drag.Scrub;
-        SeekRequested?.Invoke(this, T(e.X));
+    }
+
+    RectangleF MarqueeRect() => RectangleF.FromLTRB(
+        Math.Min(_marqueeFrom.X, _marqueeTo.X), Math.Min(_marqueeFrom.Y, _marqueeTo.Y),
+        Math.Max(_marqueeFrom.X, _marqueeTo.X), Math.Max(_marqueeFrom.Y, _marqueeTo.Y));
+
+    /// <summary>
+    /// Select what the drag box touches, on top of what was selected when it started (Shift/Ctrl) or instead of it.
+    /// The Properties panel shows one main item: a clip if any were caught, else an overlay, else an audio item.
+    /// </summary>
+    void ApplyMarquee()
+    {
+        if (_marqueeBase is not { } b) return;
+        var box = MarqueeRect();
+        var p = _session.Project;
+        var region = RectangleF.FromLTRB(0, RegionTop, Width, RegionBottom); // scrolled-away bars can't be caught
+        _selectedClips.Clear(); _selectedClips.UnionWith(b.Clips);
+        _selAudio.Clear(); _selAudio.UnionWith(b.Audio);
+        _selOverlays.Clear(); _selOverlays.UnionWith(b.Overlays);
+        _selAnnotations.Clear(); _selAnnotations.UnionWith(b.Annotations);
+        for (int i = 0; i < p.Timeline.Count; i++)
+            if (ClipRect(i).IntersectsWith(box)) _selectedClips.Add(p.Timeline[i].Id);
+        foreach (var (a, row) in AudioRows())
+            if (AudioRect(a, row).IntersectsWith(box)) _selAudio.Add(a.Id);
+        foreach (var o in p.Overlays)
+        {
+            var r = OverlayRect(o);
+            if (r.IntersectsWith(box) && r.IntersectsWith(region)) _selOverlays.Add(o.Id);
+        }
+        foreach (var (a, s, en, lane) in AnnotationBars())
+        {
+            var r = BarRect(s, en, lane);
+            if (r.IntersectsWith(box) && r.IntersectsWith(region)) _selAnnotations.Add(a.Id);
+        }
+
+        // One main item for the Properties panel, by priority; the others keep only their sets.
+        _primaryClip = p.Timeline.Select(c => (Guid?)c.Id).FirstOrDefault(id => _selectedClips.Contains(id!.Value));
+        bool clips = _primaryClip is not null;
+        _primaryOverlay = clips ? null : _selOverlays.Select(id => (Guid?)id).FirstOrDefault();
+        _primaryAudio = clips || _primaryOverlay is not null ? null : _selAudio.Select(id => (Guid?)id).FirstOrDefault();
+        _primaryAnnotation = clips || _primaryOverlay is not null || _primaryAudio is not null ? null : _selAnnotations.Select(id => (Guid?)id).FirstOrDefault();
+        SelectedMarkerId = null;
+        Invalidate();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -843,6 +1062,7 @@ public sealed class TimelineControl : Control
 
         var dt = TimeSpan.FromSeconds((e.X - _downX) / _pps);
         if (Math.Abs(e.X - _downX) > 3) _dragMoved = true;
+        if (_drag == Drag.Marquee && Math.Abs(e.Y - _downY) > 3) _dragMoved = true; // a box can be dragged straight up/down
         var id = _dragId;
         // A click is not a drag: nothing changes until the mouse has really moved (a stray 1 px move
         // used to "move" an annotation piece and break its link).
@@ -853,8 +1073,21 @@ public sealed class TimelineControl : Control
             case Drag.Scrub:
                 SeekRequested?.Invoke(this, T(e.X));
                 break;
+            case Drag.Marquee:
+                _marqueeTo = e.Location;
+                ApplyMarquee();
+                break;
             case Drag.ClipBody:
-                if (_dragMoved) { _dropIndex = DropIndex(e.X); Invalidate(); }
+                if (_dragMoved)
+                {
+                    // Past the end of the other clips: it lands right there, with a gap before it (owner: "end of
+                    // proj should not be capped"). Within them: reorder, as before.
+                    var proposed = _dragClipStart + dt;
+                    var restEnd = TimelineOps.EndWithout(_session.Project, id);
+                    if (proposed > restEnd + SnapTolerance) { _dropTime = proposed; _dropIndex = -1; }
+                    else { _dropTime = null; _dropIndex = DropIndex(e.X); }
+                    Invalidate();
+                }
                 break;
             case Drag.TrimIn:
                 // The mouse moves in timeline time; In/Out are footage time (they differ when the clip is sped up).
@@ -874,15 +1107,33 @@ public sealed class TimelineControl : Control
                 _session.Preview(p => TimelineOps.SetRunRange(p, id, _originA, _originB + dt));
                 break;
             case Drag.AudioMove:
-                _session.Preview(p => TimelineOps.MoveAudio(p, id, _originA + dt));
+                // Edges stick to other audio items and clip cuts within a few pixels, so items slide together and
+                // touch exactly (same row) instead of overlapping a hair and dropping to a new row.
+                _session.Preview(p => TimelineOps.MoveAudio(p, id, TimelineOps.SnapAudioStart(p, id, _originA + dt, SnapTolerance)));
                 break;
             case Drag.AudioIn:
-                // Absolute target (origin + delta), so repeated Preview steps don't accumulate.
-                _session.Preview(p => TimelineOps.TrimAudioIn(p, id, _originB + dt));
+            {
+                // Absolute target (origin + delta), so repeated Preview steps don't accumulate. _originA = start, _originB = in.
+                var edge = _originA + dt;
+                _session.Preview(p =>
+                {
+                    var snapped = TimelineOps.SnapAudioEdge(p, id, edge, SnapTolerance);
+                    TimelineOps.TrimAudioIn(p, id, _originB + (snapped - _originA));
+                });
                 break;
+            }
             case Drag.AudioOut:
-                _session.Preview(p => TimelineOps.TrimAudioOut(p, id, _originB + dt));
+            {
+                // _originA = start, _originB = out. The right edge on the timeline is start + (out − in).
+                _session.Preview(p =>
+                {
+                    if (p.FindAudio(id) is not { } a) return;
+                    var edge = _originA + (_originB + dt - a.In);
+                    var snapped = TimelineOps.SnapAudioEdge(p, id, edge, SnapTolerance);
+                    TimelineOps.TrimAudioOut(p, id, _originB + dt + (snapped - edge));
+                });
                 break;
+            }
             case Drag.Marker:
                 if (_dragMoved) _session.Preview(p => MarkerOps.MoveTo(p, id, _originA + dt));
                 break;
@@ -904,7 +1155,18 @@ public sealed class TimelineControl : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
-        if (_drag == Drag.ClipBody && _dragMoved && _dropIndex >= 0)
+        if (_drag == Drag.Marquee)
+        {
+            _marqueeBase = null;
+            if (_dragMoved) MarqueeSelected?.Invoke(this, EventArgs.Empty);
+            else SeekRequested?.Invoke(this, T(e.X)); // a click on empty space: just move the playhead
+        }
+        else if (_drag == Drag.ClipBody && _dragMoved && _dropTime is { } dropAt)
+        {
+            var id = _dragId;
+            _session.Execute(p => TimelineOps.MoveToTime(p, id, dropAt));
+        }
+        else if (_drag == Drag.ClipBody && _dragMoved && _dropIndex >= 0)
         {
             var id = _dragId;
             int from = _session.Project.Timeline.FindIndex(c => c.Id == id);
@@ -922,6 +1184,7 @@ public sealed class TimelineControl : Control
         _dragTrack = 0;
         _drag = Drag.None;
         _dropIndex = -1;
+        _dropTime = null;
         Invalidate();
         if (wasDragging) PreferredHeightChanged?.Invoke(this, EventArgs.Empty); // the form held the size during the drag
     }
@@ -960,19 +1223,19 @@ public sealed class TimelineControl : Control
         {
             var r = BarRect(s, en, lane);
             if (!r.Contains(pt) || !InRegion(pt)) continue;
-            Cursor = pt.X <= r.Left + EdgeGrab || pt.X >= r.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand;
+            Cursor = pt.X <= r.Left + Grab(r) || pt.X >= r.Right - Grab(r) ? Cursors.SizeWE : Cursors.Hand;
             if (_tipFor != a.Id) { _tipFor = a.Id; _tip.SetToolTip(this, Summary(a, s, en)); }
             return;
         }
         if (AudioHit(pt) is { } hit)
         {
-            Cursor = pt.X <= hit.R.Left + EdgeGrab || pt.X >= hit.R.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand;
+            Cursor = pt.X <= hit.R.Left + Grab(hit.R) || pt.X >= hit.R.Right - Grab(hit.R) ? Cursors.SizeWE : Cursors.Hand;
             if (_tipFor != hit.A.Id) { _tipFor = hit.A.Id; _tip.SetToolTip(this, AudioSummary(hit.A)); }
             return;
         }
         if (OverlayHit(pt) is { } ov)
         {
-            Cursor = pt.X <= ov.R.Left + EdgeGrab || pt.X >= ov.R.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand;
+            Cursor = pt.X <= ov.R.Left + Grab(ov.R) || pt.X >= ov.R.Right - Grab(ov.R) ? Cursors.SizeWE : Cursors.Hand;
             if (_tipFor != ov.O.Id)
             {
                 _tipFor = ov.O.Id;
@@ -986,7 +1249,15 @@ public sealed class TimelineControl : Control
         for (int i = 0; i < p.Timeline.Count; i++)
         {
             var r = ClipRect(i);
-            if (r.Contains(pt)) { Cursor = pt.X <= r.Left + EdgeGrab || pt.X >= r.Right - EdgeGrab ? Cursors.SizeWE : Cursors.Hand; return; }
+            if (!r.Contains(pt)) continue;
+            Cursor = pt.X <= r.Left + Grab(r) || pt.X >= r.Right - Grab(r) ? Cursors.SizeWE : Cursors.Hand;
+            if (p.Timeline[i] is { IsGap: true } gap && _tipFor != gap.Id)
+            {
+                _tipFor = gap.Id;
+                _tip.SetToolTip(this, $"Gap ({gap.Duration.TotalSeconds:0.0}s): black, with only the audio track and overlays playing\n" +
+                                      "Click it and press Del to close it up · drag its edges to make it shorter or longer");
+            }
+            return;
         }
         Cursor = Cursors.Default;
     }
@@ -1088,7 +1359,11 @@ public sealed class TimelineControl : Control
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) foreach (var img in _thumbs.Values) img.Dispose();
+        if (disposing)
+        {
+            foreach (var img in _thumbs.Values) img.Dispose();
+            foreach (var t in _tiles.Values) t.Dispose();
+        }
         base.Dispose(disposing);
     }
 }

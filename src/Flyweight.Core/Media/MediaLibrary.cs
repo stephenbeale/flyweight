@@ -112,10 +112,9 @@ public sealed class MediaLibrary
             {
                 try
                 {
-                    await FfmpegRunner.RunFfmpegAsync(new[]
-                    {
+                    await FfmpegRunner.RunFfmpegAsync([
                         "-i", proxy, "-frames:v", "1", "-update", "1", "-vf", "scale=320:-2", "-q:v", "4", thumb,
-                    }, ct: ct);
+                    ], ct: ct);
                 }
                 catch (FfmpegException) { }
             }
@@ -161,25 +160,23 @@ public sealed class MediaLibrary
             // Stills: loop the image, decoding it only once a second (decoding a 12 MP photo 30×/s is
             // what makes this slow). A static picture compresses to almost nothing, and a keyframe
             // every second is plenty for seeking because the other frames are trivial.
-            args.AddRange(new[]
-            {
+            args.AddRange([
                 "-loop", "1", "-framerate", "1", "-t", Sec(media.Duration), "-i", media.OriginalPath,
                 "-map", "0:v:0", "-vf", $"{fit},fps={fps},format=yuv420p",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-g", fps, "-bf", "0",
-            });
+            ]);
         else
         {
-            if (hwDecode) args.AddRange(new[] { "-hwaccel", "auto" }); // falls back to CPU by itself if there's no GPU decoder
-            args.AddRange(new[]
-            {
+            if (hwDecode) args.AddRange(["-hwaccel", "auto"]); // falls back to CPU by itself if there's no GPU decoder
+            args.AddRange([
                 "-i", media.OriginalPath,
                 "-map", "0:v:0", "-vf", $"{fit},fps={fps},format=yuv420p",
                 "-c:v", "libx264", "-preset", "superfast", "-crf", "21", "-g", "1", "-bf", "0",
-            });
+            ]);
         }
         if (media.HasAudio && !media.IsStill)
-            args.AddRange(new[] { "-map", "0:a:0", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2" });
-        args.AddRange(new[] { "-map_metadata", "-1", "-write_tmcd", "0", output });
+            args.AddRange(["-map", "0:a:0", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2"]);
+        args.AddRange(["-map_metadata", "-1", "-write_tmcd", "0", output]);
         return args;
     }
 
@@ -202,12 +199,11 @@ public sealed class MediaLibrary
             await _thumbJobs.WaitAsync(ct);
             try
             {
-                await FfmpegRunner.RunFfmpegAsync(new[]
-                {
+                await FfmpegRunner.RunFfmpegAsync([
                     "-i", media.OriginalPath, "-vn",
                     "-filter_complex", $"aformat=channel_layouts=mono,showwavespic=s={WaveformWidth}x{WaveformHeight}:colors=0x9fe3c4:scale=sqrt",
                     "-frames:v", "1", "-update", "1", tmp,
-                }, ct: ct);
+                ], ct: ct);
                 if (File.Exists(tmp)) File.Move(tmp, wave, overwrite: true);
             }
             catch (FfmpegException) { /* no waveform is cosmetic; the audio still plays */ }
@@ -236,11 +232,10 @@ public sealed class MediaLibrary
         var png = folder is not null
             ? Export.FrameExport.Unique(Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} freeze {Export.FrameExport.Stamp(sourceTime)}.png"))
             : Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(media.OriginalPath)} at {sourceTime.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}s {Guid.NewGuid().ToString("N")[..6]}.png");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             // -ss before -i seeks fast; ffmpeg still decodes to the exact frame.
             "-ss", Sec(sourceTime), "-i", media.OriginalPath, "-frames:v", "1", "-update", "1", png,
-        }, ct: ct);
+        ], ct: ct);
         if (!File.Exists(png)) throw new FfmpegException($"Couldn't grab a frame from '{media.DisplayName}'.", "");
         return png;
     }
@@ -253,12 +248,11 @@ public sealed class MediaLibrary
     {
         var tmp = Path.Combine(Path.GetDirectoryName(thumb)!, "thumb.partial.jpg");
         var args = new List<string>();
-        if (!media.IsStill) args.AddRange(new[] { "-ss", Sec(TimeSpan.FromTicks(media.Duration.Ticks / 10)) });
-        args.AddRange(new[]
-        {
+        if (!media.IsStill) args.AddRange(["-ss", Sec(TimeSpan.FromTicks(media.Duration.Ticks / 10))]);
+        args.AddRange([
             "-i", media.OriginalPath, "-frames:v", "1", "-update", "1",
             "-vf", Canvas.FitFilter(320, 180), "-q:v", "4", tmp,
-        });
+        ]);
         try
         {
             await FfmpegRunner.RunFfmpegAsync(args, ct: ct);

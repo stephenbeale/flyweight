@@ -23,7 +23,7 @@ public class InsertAndUpgradeTests
 
         var inserted = TimelineOps.InsertMedia(p, c, 1);
 
-        Assert.Equal(new[] { a.Id, c.Id, b.Id }, p.Timeline.Select(x => x.SourceId));
+        Assert.Equal([a.Id, c.Id, b.Id], p.Timeline.Select(x => x.SourceId));
         Assert.Equal(TimeSpan.FromSeconds(5), inserted.Duration);
         Assert.Equal(TimeSpan.FromSeconds(15), TimelineOps.ClipStart(p, 2));
         Assert.Contains(c, p.Media);

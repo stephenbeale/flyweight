@@ -14,7 +14,7 @@ public class AudioTrackTests
         var p = new Project();
         var video = new SourceMedia { OriginalPath = "v.mp4", Duration = S(videoSecs), Fps = 30, HasAudio = true };
         var song = new SourceMedia { OriginalPath = "song.mp3", Duration = S(songSecs), HasAudio = true, IsAudioOnly = true };
-        p.Media.AddRange(new[] { video, song });
+        p.Media.AddRange([video, song]);
         TimelineOps.Append(p, video);
         return (p, song);
     }

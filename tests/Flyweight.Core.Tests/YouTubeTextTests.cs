@@ -33,7 +33,7 @@ public class YouTubeTextTests
         Assert.Empty(YouTubeText.Problems(new YouTubeDetails { Title = "Barbour buyer's guide", Tags = "barbour, wax jacket" }));
         Assert.Contains(YouTubeText.Problems(new YouTubeDetails { Title = "" }), p => p.Contains("empty"));
         Assert.Contains(YouTubeText.Problems(new YouTubeDetails { Title = new string('x', 101) }), p => p.Contains("101"));
-        Assert.Contains(YouTubeText.Problems(new YouTubeDetails { Title = "a <b>" }), p => p.Contains("<"));
+        Assert.Contains(YouTubeText.Problems(new YouTubeDetails { Title = "a <b>" }), p => p.Contains('<'));
         var manyTags = string.Join(",", Enumerable.Repeat("abcdefghij", 50)); // 50×10 + 49 commas = 549
         Assert.Contains(YouTubeText.Problems(new YouTubeDetails { Title = "t", Tags = manyTags }), p => p.Contains("549"));
         // The chapters count towards the 5000-character description.

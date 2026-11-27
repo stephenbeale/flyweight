@@ -28,7 +28,7 @@ public class RecentProjectsTests
         {
             var file = Path.Combine(dir, "recent.json");
             Assert.Empty(RecentProjects.Load(file));
-            var list = RecentProjects.Add(RecentProjects.Add(new List<string>(), P("one")), P("two"));
+            var list = RecentProjects.Add(RecentProjects.Add([], P("one")), P("two"));
             RecentProjects.Save(file, list);
             Assert.Equal(list, RecentProjects.Load(file));
             Assert.Equal(new[] { P("one") }, RecentProjects.Remove(list, P("two")));

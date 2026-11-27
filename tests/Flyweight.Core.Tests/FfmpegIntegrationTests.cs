@@ -25,7 +25,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
     static bool FfmpegAvailable()
     {
         // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1")
@@ -38,10 +38,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
     {
         var path = Path.Combine(_dir, name);
         var args = new List<string> { "-f", "lavfi", "-i", $"color=c={color}:s={w}x{h}:r={FfmpegRunner.Num(fps)}:d={FfmpegRunner.Num(seconds)}" };
-        if (audio) args.AddRange(new[] { "-f", "lavfi", "-i", $"sine=frequency=440:duration={FfmpegRunner.Num(seconds)}" });
+        if (audio) args.AddRange(["-f", "lavfi", "-i", $"sine=frequency=440:duration={FfmpegRunner.Num(seconds)}"]);
         // Long GOP like a phone, to prove the export doesn't depend on keyframes.
-        args.AddRange(new[] { "-c:v", "libx264", "-g", "250", "-pix_fmt", "yuv420p" });
-        if (audio) args.AddRange(new[] { "-c:a", "aac" });
+        args.AddRange(["-c:v", "libx264", "-g", "250", "-pix_fmt", "yuv420p"]);
+        if (audio) args.AddRange(["-c:a", "aac"]);
         args.Add(path);
         await FfmpegRunner.RunFfmpegAsync(args);
         return path;
@@ -51,11 +51,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
     async Task<(int R, int G, int B)> Pixel(string video, double t, int x, int y)
     {
         var raw = Path.Combine(_dir, $"px-{Guid.NewGuid():N}.rgb");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-ss", FfmpegRunner.Num(t), "-i", video, "-frames:v", "1",
             "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw,
-        });
+        ]);
         var b = await File.ReadAllBytesAsync(raw);
         return (b[0], b[1], b[2]);
     }
@@ -104,7 +103,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var p = new Project();
         var mRed = await MediaProbe.ProbeAsync(red);
         var mBlue = await MediaProbe.ProbeAsync(blue);
-        p.Media.AddRange(new[] { mRed, mBlue });
+        p.Media.AddRange([mRed, mBlue]);
         var c1 = TimelineOps.Append(p, mRed);
         TimelineOps.Append(p, mBlue);
         TimelineOps.TrimIn(p, c1.Id, TimeSpan.FromSeconds(1)); // red now 1–4s → 3s long. Total 6s.
@@ -115,11 +114,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
 
         // Stand-in for the UI's GDI+ renderer: a 1920×1080 PNG, opaque white top-left, transparent elsewhere.
         var png = Path.Combine(_dir, "box.png");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=white@1.0:s=960x540,format=rgba",
             "-vf", "pad=1920:1080:0:0:color=black@0.0", "-frames:v", "1", png,
-        });
+        ]);
 
         var output = Path.Combine(_dir, "out.mp4");
         var plan = ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" },
@@ -201,11 +199,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var red = await MakeClip("main2.mp4", 1280, 720, 2, "red", audio: false);
         // Overlay source: left half blue, right half yellow.
         var split = Path.Combine(_dir, "split.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=2,drawbox=x=320:y=0:w=320:h=360:color=yellow:t=fill",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", split,
-        });
+        ]);
 
         var p = new Project();
         TimelineOps.Append(p, await MediaProbe.ProbeAsync(red));
@@ -234,18 +231,16 @@ public sealed class FfmpegIntegrationTests : IDisposable
         if (!FfmpegAvailable()) return;
         // Main source: left half green, right half blue. Cropping off the left half leaves only blue.
         var main = Path.Combine(_dir, "halves.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=green:s=1280x720:r=30:d=2,drawbox=x=640:y=0:w=640:h=720:color=blue:t=fill",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", main,
-        });
+        ]);
         // Overlay source: a white band down the left quarter, the rest red. Cropping the left quarter leaves only red.
         var band = Path.Combine(_dir, "band.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=2,drawbox=x=0:y=0:w=160:h=360:color=white:t=fill",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", band,
-        });
+        ]);
 
         var p = new Project();
         var clip = TimelineOps.Append(p, await MediaProbe.ProbeAsync(main));
@@ -279,7 +274,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
     async Task<string> MakeImage(string name, int w, int h, string color)
     {
         var path = Path.Combine(_dir, name);
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", $"color=c={color}:s={w}x{h}", "-frames:v", "1", path });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "lavfi", "-i", $"color=c={color}:s={w}x{h}", "-frames:v", "1", path]);
         return path;
     }
 
@@ -314,11 +309,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
     async Task<double> Rms(string video, double from, double to)
     {
         var raw = Path.Combine(_dir, $"pcm-{Guid.NewGuid():N}.raw");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-ss", FfmpegRunner.Num(from), "-t", FfmpegRunner.Num(to - from), "-i", video,
             "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", raw,
-        });
+        ]);
         var b = await File.ReadAllBytesAsync(raw);
         double sum = 0;
         int n = b.Length / 2;
@@ -357,10 +351,9 @@ public sealed class FfmpegIntegrationTests : IDisposable
     async Task<string> MakeTone(string name, double seconds, int hz = 440)
     {
         var path = Path.Combine(_dir, name);
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", $"sine=frequency={hz}:duration={FfmpegRunner.Num(seconds)}", path,
-        });
+        ]);
         return path;
     }
 
@@ -396,7 +389,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var p = new Project();
         var mVideo = await MediaProbe.ProbeAsync(silent);
         var mTone = await MediaProbe.ProbeAsync(tone);
-        p.Media.AddRange(new[] { mVideo, mTone });
+        p.Media.AddRange([mVideo, mTone]);
         TimelineOps.Append(p, mVideo);
         TimelineOps.AddAudio(p, mTone, TimeSpan.FromSeconds(2)); // 10 s of music from 0:02, video ends at 0:04
 
@@ -413,6 +406,38 @@ public sealed class FfmpegIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Export_shows_a_gap_as_black_and_keeps_later_clips_and_tracks_at_their_time()
+    {
+        if (!FfmpegAvailable()) return;
+        var red = await MakeClip("gap-red.mp4", 1280, 720, 2, "red", audio: true, fps: 25);
+        var blue = await MakeClip("gap-blue.mp4", 1280, 720, 2, "blue", audio: true, fps: 25);
+        var green = await MakeClip("gap-green.mp4", 640, 360, 1, "green", audio: false, fps: 25);
+
+        var p = new Project();
+        var mRed = await MediaProbe.ProbeAsync(red);
+        var mBlue = await MediaProbe.ProbeAsync(blue);
+        var mGreen = await MediaProbe.ProbeAsync(green);
+        var a = TimelineOps.Append(p, mRed);                    // 0–2
+        TimelineOps.Append(p, mBlue);                           // 2–4
+        var o = TimelineOps.AddOverlay(p, mGreen, TimeSpan.FromSeconds(0.5)); // full frame over the (soon) gap
+        TimelineOps.PlaceOverlay(p, o.Id, OverlayPosition.FullFrame);
+        TimelineOps.Lift(p, a.Id);                              // red → 2 s gap; nothing moves
+
+        var output = Path.Combine(_dir, "gap-out.mp4");
+        var plan = ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast" }, new Dictionary<Guid, string>(), output);
+        await plan.RunAsync();
+
+        var info = await MediaProbe.ProbeAsync(output);
+        Assert.InRange(info.Duration.TotalSeconds, 3.9, 4.15);
+        var gap = await Pixel(output, 0.2, 960, 540);
+        Assert.True(gap.R < 30 && gap.G < 30 && gap.B < 30, "the gap is black");
+        var ov = await Pixel(output, 1.0, 960, 540);
+        Assert.True(ov.G > 100 && ov.R < 60 && ov.B < 60, "the overlay still shows over the gap at its time");
+        var later = await Pixel(output, 3.0, 960, 540);
+        Assert.True(later.B > 200 && later.R < 60, "the next clip stays at its time");
+    }
+
+    [Fact]
     public async Task Export_holds_a_still_for_its_clip_length_after_video()
     {
         if (!FfmpegAvailable()) return;
@@ -422,7 +447,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var p = new Project();
         var mRed = await MediaProbe.ProbeAsync(red);
         var mImg = await MediaProbe.ProbeAsync(img);
-        p.Media.AddRange(new[] { mImg, mRed });
+        p.Media.AddRange([mImg, mRed]);
         var still = TimelineOps.Append(p, mImg);
         TimelineOps.TrimOut(p, still.Id, TimeSpan.FromSeconds(3)); // 8s default → 3s to keep the test fast
         TimelineOps.Append(p, mRed);
@@ -454,7 +479,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var green = await MakeClip("g.mp4", 1280, 720, 1, "green", audio: false);
         var magenta = await MakeClip("m.mp4", 1280, 720, 1, "magenta", audio: false);
         var both = Path.Combine(_dir, "both.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-i", green, "-i", magenta, "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", "-c:v", "libx264", "-g", "250", both });
+        await FfmpegRunner.RunFfmpegAsync(["-i", green, "-i", magenta, "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", "-c:v", "libx264", "-g", "250", both]);
 
         var lib = new MediaLibrary(Path.Combine(_dir, "cache"));
         var m = await lib.ProbeAsync(both);
@@ -472,11 +497,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
         if (!FfmpegAvailable()) return;
         // 1: left half red, right half blue. 2: portrait green (pillarboxed). 3: dark grey.
         var halves = Path.Combine(_dir, "halves.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=red:s=640x720:r=30:d=1", "-f", "lavfi", "-i", "color=c=blue:s=640x720:r=30:d=1",
             "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]", "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", halves,
-        });
+        ]);
         var portrait = await MakeClip("portrait.mp4", 360, 640, 1, "green", audio: false);
         var grey = await MakeClip("grey.mp4", 1280, 720, 1, "0x404040", audio: false);
 
@@ -484,7 +508,7 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var mH = await MediaProbe.ProbeAsync(halves);
         var mP = await MediaProbe.ProbeAsync(portrait);
         var mG = await MediaProbe.ProbeAsync(grey);
-        p.Media.AddRange(new[] { mH, mP, mG });
+        p.Media.AddRange([mH, mP, mG]);
         var c1 = TimelineOps.Append(p, mH);
         var c2 = TimelineOps.Append(p, mP);
         var c3 = TimelineOps.Append(p, mG);
@@ -520,11 +544,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var green = await MakeClip("sg.mp4", 640, 360, 2, "green", audio: true);
         var magenta = await MakeClip("sm.mp4", 640, 360, 2, "magenta", audio: true);
         var both = Path.Combine(_dir, "gm.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-i", green, "-i", magenta, "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]",
             "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", both,
-        });
+        ]);
         var p = new Project();
         var m = await MediaProbe.ProbeAsync(both);
         p.Media.Add(m);
@@ -554,11 +577,10 @@ public sealed class FfmpegIntegrationTests : IDisposable
         var green = await MakeClip("og.mp4", 640, 360, 2, "green", audio: false);
         var magenta = await MakeClip("om.mp4", 640, 360, 2, "magenta", audio: false);
         var both = Path.Combine(_dir, "ogm.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-i", green, "-i", magenta, "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
             "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", both,
-        });
+        ]);
         var red = await MakeClip("om-main.mp4", 1280, 720, 4, "red", audio: false);
         var p = new Project();
         TimelineOps.Append(p, await MediaProbe.ProbeAsync(red));

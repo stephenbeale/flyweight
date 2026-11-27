@@ -18,7 +18,7 @@ public sealed class ExportSafetyTests : IDisposable
     static bool FfmpegAvailable()
     {
         // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1")
@@ -31,22 +31,20 @@ public sealed class ExportSafetyTests : IDisposable
     {
         var path = Path.Combine(_dir, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", $"color=c={color}:s=640x360:r=30:d={FfmpegRunner.Num(seconds)}",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", path,
-        });
+        ]);
         return path;
     }
 
     async Task<(int R, int G, int B)> Pixel(string file, double t, int x, int y)
     {
         var raw = Path.Combine(_dir, $"px-{Guid.NewGuid():N}.rgb");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-ss", FfmpegRunner.Num(t), "-i", file, "-frames:v", "1",
             "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw,
-        });
+        ]);
         var b = await File.ReadAllBytesAsync(raw);
         return (b[0], b[1], b[2]);
     }
@@ -86,11 +84,10 @@ public sealed class ExportSafetyTests : IDisposable
 
         // A full-frame transparent PNG with a white square top-left, reused by enough annotations to need the file route.
         var png = Path.Combine(_dir, "box.png");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=white@1.0:s=200x200,format=rgba",
             "-vf", "pad=1920:1080:0:0:color=black@0.0", "-frames:v", "1", png,
-        });
+        ]);
         var overlays = new Dictionary<Guid, string>();
         for (int i = 0; i < 60; i++)
         {

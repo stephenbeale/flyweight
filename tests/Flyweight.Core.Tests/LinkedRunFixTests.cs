@@ -51,7 +51,7 @@ public class LinkedRunFixTests
         var p = new Project();
         var m = new SourceMedia { OriginalPath = "talk.mp4", Duration = S(20), Fps = 30 };
         var other = new SourceMedia { OriginalPath = "broll.mp4", Duration = S(10), Fps = 30 };
-        p.Media.AddRange(new[] { m, other });
+        p.Media.AddRange([m, other]);
         TimelineOps.Append(p, m);
         var box = TimelineOps.CreateAnnotation(p, S(2), AnnotationKind.Box, 0, 0, 1, 1)!;
         box.End = S(8);

@@ -16,7 +16,7 @@ public sealed class YouTubeThumbnailTests : IDisposable
     static bool FfmpegAvailable()
     {
         // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1")
@@ -33,7 +33,7 @@ public sealed class YouTubeThumbnailTests : IDisposable
         new Random(42).NextBytes(bytes);
         await File.WriteAllBytesAsync(raw, bytes);
         var png = Path.Combine(_dir, "random.png");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "1280x720", "-i", raw, "-frames:v", "1", png });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "1280x720", "-i", raw, "-frames:v", "1", png]);
         return png;
     }
 
@@ -69,7 +69,7 @@ public sealed class YouTubeThumbnailTests : IDisposable
     {
         if (!FfmpegAvailable()) return;
         var png = Path.Combine(_dir, "bars.png");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", "testsrc2=s=1920x1080", "-frames:v", "1", png });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "lavfi", "-i", "testsrc2=s=1920x1080", "-frames:v", "1", png]);
         var jpg = Path.Combine(_dir, "bars.jpg");
         Assert.Equal(2, await YouTubeThumbnail.SaveJpegUnderLimitAsync(png, jpg));
         Assert.Equal((1280, 720), ((await MediaProbe.ProbeAsync(jpg)).Width, (await MediaProbe.ProbeAsync(jpg)).Height));

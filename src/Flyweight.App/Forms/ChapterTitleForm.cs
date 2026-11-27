@@ -22,7 +22,7 @@ public sealed class ChapterTitleForm : Form
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        buttons.Controls.AddRange(new Control[] { cancel, ok });
+        buttons.Controls.AddRange([cancel, ok]);
 
         var layout = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
         layout.Controls.Add(_title);

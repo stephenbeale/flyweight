@@ -36,7 +36,19 @@ public sealed class ClipPropertiesPanel : PropertySheet
         Text = "Crop cuts edges off (the rest is fitted to the frame); zoom magnifies. Both work on the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
     };
     readonly SpeedBox _speed = new();
-    readonly List<Control> _speedControls = new();
+    readonly List<Control> _speedControls = [];
+
+    /// <summary>Stills only: how long the image shows (seconds). Videos get Speed instead.</summary>
+    readonly NumericUpDown _length = new()
+    {
+        // Gaps can be longer than a still (TimelineOps clamps each to its own limit).
+        Minimum = 0.1m, Maximum = (decimal)TimelineOps.MaxGapLength.TotalSeconds, DecimalPlaces = 1, Increment = 1,
+        BackColor = Color.FromArgb(46, 46, 54), ForeColor = Fg, BorderStyle = BorderStyle.FixedSingle, Width = 80,
+    };
+    readonly List<Control> _lengthControls = [];
+
+    /// <summary>A still's length on the timeline was changed (seconds). Later clips and the other tracks move along.</summary>
+    public event Action<double>? StillLengthChanged;
     bool _loading;
     int _multi = 1;
 
@@ -58,6 +70,10 @@ public sealed class ClipPropertiesPanel : PropertySheet
         _speedControls.Add(Row("Speed", _speed));
         _speedControls.Add(_speed);
         _speed.Picked += v => { if (!_loading) SpeedChanged?.Invoke(v); };
+        _lengthControls.Add(Row("Length (s)", _length));
+        _lengthControls.Add(_length);
+        new ToolTip().SetToolTip(_length, "How long the image shows. Everything after it (clips, overlays, audio) moves along. You can also drag its right edge.");
+        _length.ValueChanged += (_, _) => { if (!_loading) StillLengthChanged?.Invoke((double)_length.Value); };
         Group("Audio");
         Row("Volume", _volume);
         Row("", _muted);
@@ -96,13 +112,17 @@ public sealed class ClipPropertiesPanel : PropertySheet
     /// <param name="selectedCount">How many clips are selected: with more than one, edits here apply to all of them.</param>
     public void ShowClip(Clip c, SourceMedia? media, int selectedCount = 1)
     {
+        if (c.IsGap) { ShowGap(c, selectedCount); return; }
         _loading = true;
         try
         {
             SetPictureVisible(true);
-            foreach (var sc in _speedControls) sc.Visible = true;
+            bool still = media is { IsStill: true };
+            foreach (var sc in _speedControls) sc.Visible = !still; // stills have no speed…
+            foreach (var lc in _lengthControls) lc.Visible = still;  // …they have a length instead
             _speed.SetValue(c.Speed);
-            _speed.Enabled = media is not { IsStill: true }; // stills: drag the edge to change how long they show
+            if (still)
+                _length.Value = Math.Clamp((decimal)Math.Round(c.Duration.TotalSeconds, 1), _length.Minimum, _length.Maximum);
             _zoom.SetValue((int)Math.Round(c.Zoom * 100));
             _panX.SetValue((int)Math.Round(c.PanX * 100));
             _panY.SetValue((int)Math.Round(c.PanY * 100));
@@ -125,11 +145,30 @@ public sealed class ClipPropertiesPanel : PropertySheet
             : media is { IsStill: true } ? "Still images have no sound." : "This clip has no audio track.");
     }
 
+    /// <summary>A gap on the main track: only its length can be changed (no picture, no sound).</summary>
+    void ShowGap(Clip c, int selectedCount)
+    {
+        _loading = true;
+        try
+        {
+            SetPictureVisible(false);
+            foreach (var sc in _speedControls) sc.Visible = false;
+            foreach (var lc in _lengthControls) lc.Visible = true;
+            _length.Value = Math.Clamp((decimal)Math.Round(c.Duration.TotalSeconds, 1), _length.Minimum, _length.Maximum);
+        }
+        finally { _loading = false; }
+        _multi = selectedCount;
+        Show(selectedCount > 1 ? $"{selectedCount} clips selected" : "Gap", null, 1, false, hasAudio: false,
+            "Empty space: black, with only the audio track and overlays playing. Delete it (Del) to close it up.");
+        _name.Text = "Gap (left by Delete)";
+    }
+
     public void ShowAudio(AudioItem a, SourceMedia? media)
     {
         _multi = 1;
         SetPictureVisible(false);
         foreach (var sc in _speedControls) sc.Visible = false;
+        foreach (var lc in _lengthControls) lc.Visible = false;
         Show("Audio track item", media, a.Volume, a.Muted, hasAudio: true,
             $"Starts at {TimelineControl.FormatTime(a.Start, tenths: true)}, plays {a.Duration.TotalSeconds:0.0}s. " +
             "It plays over the clips' own sound: turn clips down or mute them (Shift+M) to hear only this.");

@@ -137,7 +137,7 @@ static class Theme
     /// <summary>Windows' dark scrollbars (and dark list chrome) for a control, applied whenever its handle is (re)created.</summary>
     public static void DarkScrollbars(Control c)
     {
-        void Apply() { try { SetWindowTheme(c.Handle, "DarkMode_Explorer", null); } catch { } } // older Windows: stays light
+        void Apply() { try { _ = SetWindowTheme(c.Handle, "DarkMode_Explorer", null); } catch { } } // older Windows: stays light
         if (c.IsHandleCreated) Apply();
         c.HandleCreated += (_, _) => Apply();
     }
@@ -183,7 +183,7 @@ static class Theme
             var old = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using var pen = new Pen(Enabled ? Color.Silver : Muted, 1.6f);
-            g.DrawLines(pen, new[] { new PointF(cx - a, cy - a / 2), new PointF(cx, cy + a / 2), new PointF(cx + a, cy - a / 2) });
+            g.DrawLines(pen, [new PointF(cx - a, cy - a / 2), new PointF(cx, cy + a / 2), new PointF(cx + a, cy - a / 2)]);
             g.SmoothingMode = old;
         }
 

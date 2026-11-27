@@ -53,7 +53,7 @@ public sealed class ExportForm : Form
         layout.Controls.Add(_resolution, 1, 0);
         layout.Controls.Add(new Label { Text = "Save to", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
         var pathRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        pathRow.Controls.AddRange(new Control[] { _path, _browse });
+        pathRow.Controls.AddRange([_path, _browse]);
         layout.Controls.Add(pathRow, 1, 1);
 
         // YouTube details
@@ -81,7 +81,7 @@ public sealed class ExportForm : Form
         layout.Controls.Add(_status, 0, 9);
         layout.SetColumnSpan(_status, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        buttons.Controls.AddRange(new Control[] { _cancel, _export });
+        buttons.Controls.AddRange([_cancel, _export]);
         layout.Controls.Add(buttons, 0, 10);
         layout.SetColumnSpan(buttons, 2);
         Controls.Add(layout);

@@ -31,8 +31,8 @@ public static class YouTubeChapters
         var total = TimelineOps.TotalDuration(p);
         var markers = MarkerOps.Visible(p);
         if (markers.Count == 0)
-            return new ChapterList("", Array.Empty<(TimeSpan, string)>(),
-                new[] { "There are no chapter markers yet. Press M at each new section to add one." });
+            return new ChapterList("", [],
+                ["There are no chapter markers yet. Press M at each new section to add one."]);
 
         // YouTube works in whole seconds; floor so a chapter never starts after the moment it marks.
         var chapters = new List<(TimeSpan Time, string Title)>();

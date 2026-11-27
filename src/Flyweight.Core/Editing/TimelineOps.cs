@@ -142,7 +142,7 @@ public static class TimelineOps
         if (!still.IsStill) throw new ArgumentException("Freeze frames must be still images.", nameof(still));
         if (Locate(p, t) is not { } hit) return null;
         // What's on screen at the frozen moment, captured before the split below moves things around.
-        var onScreen = copyAnnotations ? VisibleAt(p, t).Select(a => a.Clone()).ToList() : new List<Annotation>();
+        var onScreen = copyAnnotations ? [.. VisibleAt(p, t).Select(a => a.Clone())] : new List<Annotation>();
 
         int insertAt = OpenGapAt(p, t, hit);
 
@@ -197,8 +197,10 @@ public static class TimelineOps
 
     /// <summary>Why <see cref="SeparateAudio"/> would refuse this clip, or null if it can be done.</summary>
     public static string? CannotSeparateAudio(Project p, Guid clipId) =>
-        p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is not { } m ? "That clip no longer exists."
+        p.FindClip(clipId) is { IsGap: true } ? "A gap has no sound."
+        : p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is not { } m ? "That clip no longer exists."
         : m.IsStill || !m.HasAudio ? "This clip has no sound to separate."
+        : c.Muted && UnlinkedSoundOf(p, clipId).Count > 0 ? "Its sound is already unlinked (on the audio track)."
         : Math.Abs(c.Speed - 1) > 0.0005 ? "Set the clip back to 1× speed first: audio-track items play at normal speed."
         : null;
 
@@ -217,6 +219,74 @@ public static class TimelineOps
         c.Muted = true;
         return item;
     }
+
+    /// <summary>How far apart (in timeline time) separated sound may drift from its clip and still count as in sync.</summary>
+    static readonly TimeSpan LinkTolerance = TimeSpan.FromMilliseconds(20);
+
+    /// <summary>
+    /// Audio-track items that play THIS clip's own sound in sync with it (same file, same footage at the same moment,
+    /// overlapping the clip): what "Unlink audio" (<see cref="SeparateAudio"/>) made, possibly since trimmed or split.
+    /// Empty for gaps and sped-up clips.
+    /// </summary>
+    public static List<AudioItem> UnlinkedSoundOf(Project p, Guid clipId)
+    {
+        if (p.FindClip(clipId) is not { IsGap: false } c || Math.Abs(c.Speed - 1) > 0.0005) return [];
+        var start = ClipStart(p, clipId);
+        var end = start + c.Duration;
+        var origin = start - c.In; // timeline time of the file's 0:00 for this clip
+        return [.. p.AudioTrack.Where(a => a.SourceId == c.SourceId && a.Start < end && a.End > start &&
+                                       ((a.Start - a.In) - origin).Duration() <= LinkTolerance)];
+    }
+
+    /// <summary>Why <see cref="LinkAudio"/> would refuse this clip, or null if it can be done.</summary>
+    public static string? CannotLinkAudio(Project p, Guid clipId) =>
+        p.FindClip(clipId) is not { } c ? "That clip no longer exists."
+        : c.IsGap ? "A gap has no sound."
+        : UnlinkedSoundOf(p, clipId).Count == 0 ? "None of this clip's sound is on the audio track in sync with it."
+        : null;
+
+    /// <summary>
+    /// Link the clip's sound back: the in-sync audio-track items playing its own sound (<see cref="UnlinkedSoundOf"/>)
+    /// are removed where they overlap the clip and the clip is unmuted, at the first item's volume (still muted if
+    /// every item was muted). Parts of an item outside the clip stay on the audio track. Returns how many items were
+    /// linked (0 = nothing to link).
+    /// </summary>
+    public static int LinkAudio(Project p, Guid clipId)
+    {
+        var items = UnlinkedSoundOf(p, clipId);
+        if (items.Count == 0 || p.FindClip(clipId) is not { } c) return 0;
+        var start = ClipStart(p, clipId);
+        var end = start + c.Duration;
+        c.Volume = items[0].Volume;
+        c.Muted = items.All(a => a.Muted);
+        foreach (var a in items) RemoveAudioRange(p, a, start, end);
+        return items.Count;
+    }
+
+    /// <summary>Take timeline range [from, to) out of ONE audio item without moving anything (the pieces keep their times).</summary>
+    static void RemoveAudioRange(Project p, AudioItem a, TimeSpan from, TimeSpan to)
+    {
+        if (a.End <= from || a.Start >= to) return;
+        if (a.Start < from && a.End > to)
+        {
+            var right = a.Clone();
+            right.Id = Guid.NewGuid();
+            right.In = a.In + (to - a.Start);
+            right.Start = to;
+            a.Out = a.In + (from - a.Start);
+            p.AudioTrack.Insert(p.AudioTrack.IndexOf(a) + 1, right);
+            if (right.Duration < MinClipLength) p.AudioTrack.Remove(right);
+        }
+        else if (a.Start < from) a.Out = a.In + (from - a.Start);
+        else if (a.End > to) { a.In += to - a.Start; a.Start = to; }
+        else { p.AudioTrack.Remove(a); return; }
+        if (a.Duration < MinClipLength) p.AudioTrack.Remove(a);
+    }
+
+    /// <summary>The main-track clip whose own sound <paramref name="audioId"/> plays in sync (for "Link to clip"), or null.</summary>
+    public static Clip? LinkedClipOf(Project p, Guid audioId) =>
+        p.FindAudio(audioId) is not { } a ? null
+        : p.Timeline.FirstOrDefault(c => c.SourceId == a.SourceId && UnlinkedSoundOf(p, c.Id).Any(x => x.Id == audioId));
 
     /// <summary>The same for an overlay: its sound goes onto the audio track and the overlay is muted.</summary>
     /// <summary>Why <see cref="SeparateOverlayAudio"/> would refuse this overlay, or null if it can be done.</summary>
@@ -393,14 +463,21 @@ public static class TimelineOps
 
     /// <summary>Overlays showing at timeline time <paramref name="t"/>, bottom first (track, then the order they were added).</summary>
     public static List<OverlayClip> OverlaysAt(Project p, TimeSpan t) =>
-        p.Overlays.Where(o => o.Start <= t && t < o.End).OrderBy(o => o.Track).ToList(); // OrderBy is stable
+        [.. p.Overlays.Where(o => o.Start <= t && t < o.End).OrderBy(o => o.Track)]; // OrderBy is stable
 
     /// <summary>
     /// Ripple delete: remove the clip and close the gap. Its annotations and markers go too. With
     /// <paramref name="keepTracksInSync"/> (the default) the overlay tracks and the audio track close the same gap, so
     /// everything after the cut stays lined up with the footage it was placed against (see <see cref="CutRangeFromTracks"/>).
+    /// Deleting a gap (<see cref="Clip.IsGap"/>) closes it the same way.
     /// </summary>
     public static void Delete(Project p, Guid clipId, bool keepTracksInSync = true)
+    {
+        RemoveClip(p, clipId, keepTracksInSync);
+        NormaliseGaps(p); // gaps either side of the deleted clip join up; a gap left at the end goes
+    }
+
+    static void RemoveClip(Project p, Guid clipId, bool keepTracksInSync)
     {
         int index = p.Timeline.FindIndex(c => c.Id == clipId);
         if (index < 0) return;
@@ -411,6 +488,78 @@ public static class TimelineOps
         p.Annotations.RemoveAll(a => a.ClipId == clipId);
         p.Markers.RemoveAll(m => m.ClipId == clipId);
         if (keepTracksInSync) CutRangeFromTracks(p, start, end);
+    }
+
+    /// <summary>
+    /// Plain delete ("lift"): take the clip off the main track and leave a GAP of the same length in its place, so
+    /// NOTHING else moves: later clips, overlays and the audio track all stay where they are. Its annotations and
+    /// markers go with it; its own sound goes too (separate it onto the audio track first to keep it). Deleting a gap
+    /// closes it instead (<see cref="Delete"/>). A gap left at the very end is dropped (it would only add black).
+    /// </summary>
+    public static void Lift(Project p, Guid clipId)
+    {
+        int index = p.Timeline.FindIndex(c => c.Id == clipId);
+        if (index < 0) return;
+        var c = p.Timeline[index];
+        if (c.IsGap) { Delete(p, clipId); return; }
+        DetachFromRuns(p, clipId);
+        p.Annotations.RemoveAll(a => a.ClipId == clipId);
+        p.Markers.RemoveAll(m => m.ClipId == clipId);
+        p.Timeline[index] = Clip.NewGap(c.Duration);
+        NormaliseGaps(p);
+    }
+
+    /// <summary>Longest a gap can be dragged out to.</summary>
+    public static readonly TimeSpan MaxGapLength = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Keep gaps tidy after an edit: neighbouring gaps become one (annotations and markers on the second move onto the
+    /// first at the same timeline time), gaps at the very end are dropped, and slivers shorter than
+    /// <see cref="MinClipLength"/> are closed (ffmpeg can't export them).
+    /// </summary>
+    public static void NormaliseGaps(Project p)
+    {
+        for (int i = p.Timeline.Count - 1; i > 0; i--)
+        {
+            var a = p.Timeline[i - 1];
+            var b = p.Timeline[i];
+            if (!a.IsGap || !b.IsGap) continue;
+            var shift = a.Out - b.In; // b's time t becomes a's time t + shift
+            foreach (var an in p.Annotations.Where(x => x.ClipId == b.Id)) { an.ClipId = a.Id; an.Start += shift; an.End += shift; }
+            foreach (var m in p.Markers.Where(x => x.ClipId == b.Id)) { m.ClipId = a.Id; m.SourceTime += shift; }
+            a.Out += b.Duration;
+            p.Timeline.RemoveAt(i);
+        }
+        while (p.Timeline.Count > 0 && p.Timeline[^1].IsGap)
+        {
+            var last = p.Timeline[^1];
+            p.Annotations.RemoveAll(x => x.ClipId == last.Id);
+            p.Markers.RemoveAll(x => x.ClipId == last.Id);
+            p.Timeline.RemoveAt(p.Timeline.Count - 1);
+        }
+        foreach (var g in p.Timeline.Where(c => c.IsGap && c.Duration < MinClipLength).ToList()) RemoveClip(p, g.Id, keepTracksInSync: true);
+        NormaliseLinks(p);
+    }
+
+    /// <summary>
+    /// Show a still image (or a gap) for <paramref name="length"/> on the timeline (clamped to <see cref="MinClipLength"/>
+    /// and the still's maximum). Later clips ripple, and the overlay and audio tracks after it move along with them, as
+    /// for a trim of its end. Not for videos (their length is their footage: trim or change the speed).
+    /// </summary>
+    public static void SetStillLength(Project p, Guid clipId, TimeSpan length)
+    {
+        if (p.FindClip(clipId) is not { } c) return;
+        TimeSpan max;
+        if (c.IsGap) max = MaxGapLength;
+        else if (p.FindMedia(c.SourceId) is { IsStill: true } m) max = m.Duration;
+        else return;
+        var start = ClipStart(p, clipId);
+        var before = c.Duration;
+        c.Out = c.In + Clamp(length, MinClipLength, max - c.In);
+        var change = c.Duration - before;
+        var oldEnd = start + before;
+        if (change < TimeSpan.Zero) CutRangeFromTracks(p, oldEnd + change, oldEnd);
+        else if (change > TimeSpan.Zero) InsertGapInTracks(p, oldEnd, change);
     }
 
     /// <summary>
@@ -508,7 +657,7 @@ public static class TimelineOps
         var newIds = new Dictionary<Guid, Guid>();
         foreach (var src in copy.Clips)
         {
-            if (p.FindMedia(src.SourceId) is null) continue;
+            if (!src.IsGap && p.FindMedia(src.SourceId) is null) continue;
             var c = src.Clone();
             c.Id = Guid.NewGuid();
             newIds[src.Id] = c.Id;
@@ -543,6 +692,41 @@ public static class TimelineOps
         newIndex = Math.Clamp(newIndex, 0, p.Timeline.Count);
         p.Timeline.Insert(newIndex, clip);
         NormaliseLinks(p);
+        NormaliseGaps(p); // moving a gap next to another, or to the end
+    }
+
+    /// <summary>
+    /// Where the main track would end without <paramref name="clipId"/>: the end of the other clips, ignoring gaps
+    /// that would be left at the very end. Dragging a clip past this point places it there with a gap before it.
+    /// </summary>
+    public static TimeSpan EndWithout(Project p, Guid clipId)
+    {
+        // The clip's own slot counts as a gap (the others don't move), unless it ends up at the very end.
+        var slots = p.Timeline.Select(c => (c.Duration, Gap: c.IsGap || c.Id == clipId)).ToList();
+        while (slots.Count > 0 && slots[^1].Gap) slots.RemoveAt(slots.Count - 1);
+        return slots.Aggregate(TimeSpan.Zero, (sum, s) => sum + s.Duration);
+    }
+
+    /// <summary>
+    /// Drag a clip past the end of the timeline (owner: "end of proj should not be capped"): it starts at
+    /// <paramref name="start"/>, with a gap before it, and the space it came from becomes a gap, so nothing else moves
+    /// (as with Delete). Its annotations and markers go with it. A <paramref name="start"/> at or before the end of
+    /// the other clips (<see cref="EndWithout"/>) just puts it last. Overlays and the audio track stay where they are.
+    /// </summary>
+    public static void MoveToTime(Project p, Guid clipId, TimeSpan start)
+    {
+        int index = p.Timeline.FindIndex(c => c.Id == clipId);
+        if (index < 0) return;
+        var clip = p.Timeline[index];
+        var end = EndWithout(p, clipId);
+        DetachFromRuns(p, clipId);
+        p.Timeline[index] = Clip.NewGap(clip.Duration); // nothing before or after it moves
+        NormaliseGaps(p);                                // (a gap left at the end is dropped)
+        var gap = start - end;
+        if (gap >= MinClipLength) p.Timeline.Add(Clip.NewGap(gap));
+        p.Timeline.Add(clip);
+        NormaliseGaps(p);
+        NormaliseLinks(p);
     }
 
     /// <summary>
@@ -562,9 +746,13 @@ public static class TimelineOps
     /// <summary>Move a clip's out point (source time). Later clips ripple; tracks follow as for <see cref="TrimIn"/>.</summary>
     public static void TrimOut(Project p, Guid clipId, TimeSpan newOut, TrackSnapshot? syncFrom = null)
     {
-        if (p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is not { } m) return;
+        if (p.FindClip(clipId) is not { } c) return;
+        TimeSpan max;
+        if (c.IsGap) max = MaxGapLength;
+        else if (p.FindMedia(c.SourceId) is { } m) max = m.Duration;
+        else return;
         var start = ClipStart(p, clipId);
-        c.Out = Clamp(newOut, c.In + MinClipLength, m.Duration);
+        c.Out = Clamp(newOut, c.In + MinClipLength, max);
         if (syncFrom is { } snap) SyncTracksToTrim(p, snap, clipId, start, atEnd: true);
     }
 
@@ -574,7 +762,7 @@ public static class TimelineOps
     /// <summary>Snapshot the tracks before trimming <paramref name="clipId"/>, so the drag can keep them in sync.</summary>
     public static TrackSnapshot? CaptureTracks(Project p, Guid clipId) =>
         p.FindClip(clipId) is { } c
-            ? new TrackSnapshot(p.Overlays.Select(o => o.Clone()).ToList(), p.AudioTrack.Select(a => a.Clone()).ToList(), clipId, c.Duration)
+            ? new TrackSnapshot([.. p.Overlays.Select(o => o.Clone())], [.. p.AudioTrack.Select(a => a.Clone())], clipId, c.Duration)
             : null;
 
     /// <summary>Restore the tracks from the snapshot, then cut or open the gap the trim made, at the trimmed edge.</summary>
@@ -647,10 +835,10 @@ public static class TimelineOps
     /// The speeds offered in the UI: fine steps near normal speed (owner: "1.25 is quite fast"), coarser further out.
     /// </summary>
     public static readonly double[] SpeedPresets =
-    {
+    [
         0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1,
         1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2, 2.5, 3, 4,
-    };
+    ];
 
     /// <summary>
     /// Play a clip faster or slower (clamped to 0.25–4). Its In/Out don't change, so its annotations stay on the same
@@ -658,7 +846,7 @@ public static class TimelineOps
     /// </summary>
     public static void SetClipSpeed(Project p, Guid clipId, double speed)
     {
-        if (p.FindClip(clipId) is not { } c || p.FindMedia(c.SourceId) is { IsStill: true }) return;
+        if (p.FindClip(clipId) is not { } c || c.IsGap || p.FindMedia(c.SourceId) is { IsStill: true }) return;
         var start = ClipStart(p, clipId);
         var before = c.Duration;
         c.Speed = double.IsFinite(speed) ? Math.Clamp(speed, MinSpeed, MaxSpeed) : 1;
@@ -859,6 +1047,50 @@ public static class TimelineOps
         return item;
     }
 
+    /// <summary>
+    /// Where an audio item's edge "sticks" when dragged: the nearest other audio item's start or end, or a clip cut
+    /// (including 0 and the end of the timeline), if one is within <paramref name="tolerance"/> of
+    /// <paramref name="edge"/>; otherwise <paramref name="edge"/> unchanged. Lets items be slid together so they
+    /// touch exactly instead of overlapping a hair (owner: "they should touch and there should be some tolerance").
+    /// </summary>
+    public static TimeSpan SnapAudioEdge(Project p, Guid movingId, TimeSpan edge, TimeSpan tolerance)
+    {
+        var best = edge;
+        var bestDist = tolerance;
+        void Try(TimeSpan candidate)
+        {
+            var d = (candidate - edge).Duration();
+            if (d <= bestDist) { bestDist = d; best = candidate; }
+        }
+        foreach (var a in p.AudioTrack)
+        {
+            if (a.Id == movingId) continue;
+            Try(a.Start);
+            Try(a.End);
+        }
+        var t = TimeSpan.Zero;
+        Try(t);
+        foreach (var c in p.Timeline) { t += c.Duration; Try(t); }
+        return best;
+    }
+
+    /// <summary>
+    /// The start to move an audio item to so that whichever of its edges is closer to a snap point touches it
+    /// (see <see cref="SnapAudioEdge"/>); <paramref name="proposedStart"/> if neither is within tolerance.
+    /// </summary>
+    public static TimeSpan SnapAudioStart(Project p, Guid id, TimeSpan proposedStart, TimeSpan tolerance)
+    {
+        if (p.FindAudio(id) is not { } a) return proposedStart;
+        var len = a.Duration;
+        var startSnap = SnapAudioEdge(p, id, proposedStart, tolerance);
+        var endSnap = SnapAudioEdge(p, id, proposedStart + len, tolerance) - len;
+        var ds = (startSnap - proposedStart).Duration();
+        var de = (endSnap - proposedStart).Duration();
+        bool startSnapped = startSnap != proposedStart, endSnapped = endSnap != proposedStart;
+        if (startSnapped && (!endSnapped || ds <= de)) return startSnap;
+        return endSnapped ? endSnap : proposedStart;
+    }
+
     /// <summary>Slide an audio item to a new timeline start (never before 0). Its length doesn't change.</summary>
     public static void MoveAudio(Project p, Guid id, TimeSpan start)
     {
@@ -1019,7 +1251,7 @@ public static class TimelineOps
     /// <summary>All pieces of <paramref name="a"/>'s run (just <paramref name="a"/> if it isn't linked), in timeline order.</summary>
     public static List<Annotation> LinkedPieces(Project p, Annotation a) =>
         a.LinkId is not { } link ? new List<Annotation> { a }
-        : p.Annotations.Where(x => x.LinkId == link).OrderBy(x => ClipIndex(p, x.ClipId)).ThenBy(x => x.Start).ToList();
+        : [.. p.Annotations.Where(x => x.LinkId == link).OrderBy(x => ClipIndex(p, x.ClipId)).ThenBy(x => x.Start)];
 
     /// <summary>Copy look and position from one piece to the rest of its run (not times or clip).</summary>
     public static void SyncLinked(Project p, Guid annotationId)
@@ -1203,7 +1435,7 @@ public static class TimelineOps
             for (int i = 1; i < pieces.Count; i++)
             {
                 int gap = ClipIndex(p, pieces[i].ClipId) - ClipIndex(p, pieces[i - 1].ClipId);
-                if (gap <= 1) chains[^1].Add(pieces[i]); else chains.Add(new() { pieces[i] });
+                if (gap <= 1) chains[^1].Add(pieces[i]); else chains.Add([pieces[i]]);
             }
             for (int c = 0; c < chains.Count; c++)
             {
