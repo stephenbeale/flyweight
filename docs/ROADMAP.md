@@ -1,9 +1,51 @@
 # Roadmap & status
 
-_Last updated: 2026-11-26 (delete/ripple delete, gaps, link/unlink, drag-select, bin multi-select; PR open for `feature/independent-delete-and-still-length`)_
+_Last updated: 2026-11-27 (PRs #20-#23 merged; session close)_
+
+### 2026-11-27 session close: PRs #20-#23 merged to `main` (11bf22f)
+All CI green. 327 core tests pass; build 0 warnings. Nothing open on `main`.
+- **#20** vertical 9:16 canvas, timeline layout, crackle fix. **#21** delete vs ripple delete, gaps, link/unlink audio,
+  drag-select, bin multi-select + lint.
+- **Lint:** root `.editorconfig` encodes house style (compact initializers, case blocks, labels, `end_of_line=lf`);
+  `dotnet format --verify-no-changes` passes. Collection expressions applied across the codebase; dead
+  `ApplySeek(force)` param removed.
+- **#22 data-loss fixes:** `ProjectSession.Preview` opens the edit itself (undo mid-drag no longer leaves un-undoable,
+  non-dirty edits); `Execute` rolls back if the edit throws; crash recovery is offered BEFORE a double-clicked project
+  loads (prompt names the file). Verified in the app with a planted stale lock.
+- **#23 vertical fill (D45):** in vertical projects wide clips fill the 9:16 frame with a full-height slice
+  (`Clip.FrameX`); drag empty picture to reframe (whole video shown, frame over it, outside dimmed); clip right-click
+  "Fit whole picture (bars)" (`Clip.FitWhole`) keeps blur/black bars. `ClipLook.FrameFilter` is shared by export and
+  Save frame; real-ffmpeg pixel test. Code-critic must-fixes in d3b8968. Verified in the app with a labelled test video.
+- **Installed copy** updated 0.2.1 -> 0.3.1-preview so `.flyweight` file icons show the yellow fly (the installed exe
+  is what the file association uses).
+- **Whole-codebase code-critic review:** architecture 8, CLAUDE.md consistency 8, readability 7, tests 7,
+  robustness 6, SOLID 5, long-timeline performance 5.
+
+**Next steps (in order):**
+1. Release 0.4.0-preview (vertical projects, vertical fill, delete/ripple delete, data-loss fixes) and install it
+   (installed is 0.3.1).
+2. LibVLC shutdown race: thread-pool player calls can run after Dispose (`PlaybackEngine.cs` ~149-153,
+   `OverlayLanePlayer` ~217, `AudioLanePlayer` ~133); act on callback flags on the UI thread and drain before dispose.
+3. Long-form export: one `ffmpeg -i` per clip and per annotation PNG can hit the command-length limit (~a few hundred
+   items, untested estimate) and decodes all at once; `OverlayRenderer.RenderAll` runs on the UI thread. Chunked
+   export + concat; render off the UI thread (make `AnnotationRenderer`'s static `MeasureGraphics` thread-local first).
+4. Proxy robustness: status can stick at Queued on exceptions before the try; duplicate imports race on
+   `thumb.partial.jpg`; orphaned ffmpeg on exit (Job Object).
+5. `Project.Version` not checked: older builds silently drop unknown fields on save; refuse or open read-only for newer
+   versions.
+6. Preview look at cuts may flicker for a few hundred ms (look taken from playhead clip while previous frame still
+   shows); unconfirmed.
+7. Vertical-fill nice-to-haves: draw annotations/overlays inside the reframe window while dragging; let cropped clips
+   fill too (mask before Upright in the preview); decide whether Reset look resets `FrameX`/`FitWhole`; anamorphic
+   (non-square SAR) sources not handled (inherited from D41).
+8. Refactors: `MainForm` (1,694 lines; add `ProjectSession.Apply(edit, phase)` to replace 5 copied switch blocks),
+   split `TimelineOps` into Clip/Overlay/Audio/AnnotationOps, `TimelineControl` drag gestures.
+9. Housekeeping: worktree `flyweight-audio-only` (`feature/add-audio-only`) and `origin/feature/annotation-fades` still
+   exist; check whether they are done.
+10. Still open: one `drift resync` blip when resuming from pause (`playback.log`).
 
 ### 2026-11-26: delete vs ripple delete, gaps, link/unlink, drag-select, bin multi-select (D44)
-Branch `feature/independent-delete-and-still-length` (PR open into `main`, **not merged**). 316 core tests pass (incl. a
+Branch `feature/independent-delete-and-still-length` (PR #21, merged 2026-11-27). 316 core tests pass (incl. a
 real-ffmpeg gap export pixel test); build 0 warnings. Owner has dev build 22:25 open.
 - **Delete vs ripple delete:** Del leaves a gap on the main track, Shift+Del ripple deletes; toolbar Delete + Ripple
   delete. Gaps export as black + silence, play as black, Save frame gives black; trimmable, length in Properties.
@@ -33,8 +75,8 @@ real-ffmpeg gap export pixel test); build 0 warnings. Owner has dev build 22:25 
 
 **Next steps:**
 1. Owner runs the checklist above; fix anything found.
-2. Merge the PR into `main`, then delete the branch (local + remote).
-3. Pending from 2026-11-25: merge PR #20 (vertical canvas) if still open; consider a 0.4.0-preview release.
+2. ~~Merge the PR into `main`~~ done 2026-11-27 (#21).
+3. ~~Merge PR #20~~ done 2026-11-27; 0.4.0-preview release is next (see 2026-11-27 entry).
 
 ### 2026-11-25 session close (b): annotation length, timeline layout, post-cut crackle (D42, D43), PR #20 open
 Branch `feature/vertical-canvas` (PR #20 into `main`, **open, not merged**); sub-PR #19 merged into it (97e6571).
