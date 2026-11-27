@@ -21,6 +21,8 @@ public sealed class MainForm : Form
     static readonly string[] AudioExtensions = { ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma" };
 
     readonly ProjectSession _session = new();
+    Action _fitTimeline = () => { }; // set in the constructor once the split container exists
+    bool _selectingFromTimeline;
     readonly MediaLibrary _library = new();
     readonly PlaybackEngine _engine;
 
@@ -144,11 +146,24 @@ public sealed class MainForm : Form
         var previewMenu = new ContextMenuStrip();
         previewMenu.Items.Add("Save this frame as an image (Ctrl+Shift+E)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false));
         previewMenu.Items.Add("Save this frame as…", null, (_, _) => _ = ExportFrameAsync(chooseLocation: true));
-        previewMenu.Items.Add("Save as YouTube thumbnail (1280×720 JPG, under 2 MB)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false, thumbnail: true));
+        // Shorts don't take 16:9 custom thumbnails, so vertical projects hide this (D41); Save frame still works.
+        var thumb = new ToolStripMenuItem("Save as YouTube thumbnail (1280×720 JPG, under 2 MB)", null, (_, _) => _ = ExportFrameAsync(chooseLocation: false, thumbnail: true));
+        previewMenu.Items.Add(thumb);
         previewMenu.Items.Add(new ToolStripSeparator());
         previewMenu.Items.Add("Freeze this frame (F)", null, (_, _) => _ = FreezeFrameAsync());
         previewMenu.Items.Add("Add chapter marker here (M)", null, (_, _) => AddMarker());
-        previewMenu.Opening += (_, e) => e.Cancel = _session.Project.Timeline.Count == 0;
+        previewMenu.Items.Add(new ToolStripSeparator());
+        var landscape = new ToolStripMenuItem("Landscape 16:9", null, (_, _) => ChangeShape(CanvasShape.Landscape));
+        var vertical = new ToolStripMenuItem("Vertical 9:16 (Shorts)", null, (_, _) => ChangeShape(CanvasShape.Vertical));
+        previewMenu.Items.Add(new ToolStripMenuItem("Frame shape", null, landscape, vertical));
+        previewMenu.Opening += (_, e) =>
+        {
+            e.Cancel = _session.Project.Timeline.Count == 0;
+            bool isVertical = _session.Project.Shape == CanvasShape.Vertical;
+            thumb.Visible = !isVertical;
+            landscape.Checked = !isVertical;
+            vertical.Checked = isVertical;
+        };
         _preview.ContextMenuStrip = previewMenu;
 
         // Transport bar under the preview
@@ -201,10 +216,41 @@ public sealed class MainForm : Form
         Controls.Add(tools);
         Controls.Add(status);
 
+        // The timeline panel grows to fit more annotation lanes / overlay tracks (up to half the window; past that it
+        // scrolls) and shrinks back as they go, but never below the height the user last dragged it to.
+        // Refits run synchronously right after each edit (so a text box's inline editor opens on the final layout),
+        // never mid-drag on the timeline (the preview would jump around under the drag), and on window resize.
+        int timelineBaseH = 290;
+        bool sizingTimeline = false;
+        void FitTimeline()
+        {
+            if (_timeline.IsDragging) return; // refits on mouse-up (PreferredHeightChanged)
+            // Too small to split (minimised / tiny window): setting SplitterDistance would throw.
+            if (main.Height < main.Panel1MinSize + main.Panel2MinSize + main.SplitterWidth + 200) return;
+            int cap = Math.Max(timelineBaseH, main.Height / 2);
+            int want = Math.Clamp(_timeline.PreferredHeight, timelineBaseH, cap);
+            int distance = Math.Max(200, main.Height - main.SplitterWidth - want);
+            if (distance == main.SplitterDistance) return;
+            sizingTimeline = true;
+            try { main.SplitterDistance = distance; }
+            catch (InvalidOperationException) { } // a layout we can't apply right now; the next edit retries
+            finally { sizingTimeline = false; }
+        }
+        _fitTimeline = FitTimeline;
+        _timeline.PreferredHeightChanged += (_, _) => FitTimeline();
+        main.Resize += (_, _) => FitTimeline();
+        main.SplitterMoved += (_, _) =>
+        {
+            if (!sizingTimeline) timelineBaseH = Math.Max(120, main.Height - main.SplitterWidth - main.SplitterDistance);
+        };
+
         // SplitContainer distances can only be set once the controls have a size.
         Load += (_, _) =>
         {
+            sizingTimeline = true;
             main.SplitterDistance = Math.Max(200, main.Height - 290); // ruler + overlay track + video + audio track + annotation lanes
+            sizingTimeline = false;
+            FitTimeline();
             // Side panels sized for the display scaling (fixed pixels cramped them at 150%), but never more than a
             // quarter of the window each, so the preview keeps most of the room.
             top.SplitterDistance = Math.Min(LogicalToDeviceUnits(270), top.Width / 4);
@@ -228,6 +274,7 @@ public sealed class MainForm : Form
             // re-seeking on every mouse move of an annotation drag queued dozens of VLC seeks (laggy play after).
             var sig = TimelineSignature(_session.Project);
             if (sig != _timelineSig) { _timelineSig = sig; _engine.Refresh(); }
+            _fitTimeline(); // new lane / track: grow the timeline now, before e.g. a text editor is placed
             UpdateUi();
         };
         _library.StateChanged += (_, id) => { if (IsHandleCreated) BeginInvoke(() => OnMediaStateChanged(id)); };
@@ -242,7 +289,12 @@ public sealed class MainForm : Form
         _engine.PlayingChanged += (_, _) => UpdateTimecode(); // flips the ▶ / ❚❚ button
 
         _timeline.SeekRequested += (_, t) => { _engine.Pause(); _engine.Seek(t); };
-        _timeline.AnnotationSelected += (_, _) => _preview.Select(_timeline.SelectedAnnotationId);
+        _timeline.AnnotationSelected += (_, _) =>
+        {
+            // Clicked on the timeline: it's already in view, so don't scroll it (that yanked a long bar from under the drag).
+            _selectingFromTimeline = true;
+            try { _preview.Select(_timeline.SelectedAnnotationId); } finally { _selectingFromTimeline = false; }
+        };
         _timeline.ClipSelected += (_, _) =>
         {
             if (_timeline.SelectedClipId is not null) _preview.Select(null);
@@ -253,7 +305,11 @@ public sealed class MainForm : Form
         _preview.SelectionChanged += (_, _) =>
         {
             _timeline.SelectedAnnotationId = _preview.SelectedAnnotationId;
-            if (_preview.SelectedAnnotationId is not null) _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
+            if (_preview.SelectedAnnotationId is { } sel)
+            {
+                _timeline.SelectedClipId = _timeline.SelectedAudioId = _timeline.SelectedOverlayId = null;
+                if (!_selectingFromTimeline) _timeline.RevealAnnotation(sel); // a new text box may land in a lane out of view
+            }
             _timeline.Invalidate();
             UpdatePropertyGrid();
         };
@@ -1096,7 +1152,7 @@ public sealed class MainForm : Form
             }
             else
             {
-                var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.Size;
+                var (w, h) = new ExportSettings { Resolution = project.OutputResolution }.SizeFor(project.Shape);
                 await FrameRenderer.ExportAsync(snapshot, t, w, h, path);
             }
 
@@ -1113,6 +1169,28 @@ public sealed class MainForm : Form
             _statusText.Text = "Saving the frame failed.";
         }
         finally { _exportingFrame = false; }
+    }
+
+    /// <summary>
+    /// Switch the whole project between landscape and vertical (D41; one undo step). Positions are kept as fractions of
+    /// the frame, so arrows, boxes, text and overlays may land somewhere unexpected: warn first if there are any.
+    /// </summary>
+    void ChangeShape(CanvasShape shape)
+    {
+        var p = _session.Project;
+        if (p.Shape == shape) return;
+        if (p.Annotations.Count > 0 || p.Overlays.Count > 0)
+        {
+            var name = shape == CanvasShape.Vertical ? "vertical (9:16)" : "landscape (16:9)";
+            var answer = MessageBox.Show(this,
+                $"Change this project to {name}?\n\nArrows, boxes, text and overlays keep their place as a share of the frame, " +
+                "so some may end up stretched or in an odd spot and need moving. You can undo this (Ctrl+Z).",
+                "Frame shape", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+            if (answer != DialogResult.OK) return;
+        }
+        _session.Execute(proj => TimelineOps.SetCanvasShape(proj, shape));
+        _preview.Invalidate();
+        _statusText.Text = shape == CanvasShape.Vertical ? "Frame shape: vertical 9:16 (YouTube Shorts)." : "Frame shape: landscape 16:9.";
     }
 
     void StartProxy(SourceMedia media) => _ = Task.Run(async () =>
@@ -1144,7 +1222,7 @@ public sealed class MainForm : Form
         using var dlg = new NewProjectForm(NewProjectForm.DefaultFolder(_session.FilePath));
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _engine.Pause();
-        _session.New(dlg.OutputResolution, dlg.Background);
+        _session.New(dlg.OutputResolution, dlg.Background, dlg.Shape);
         _engine.Seek(TimeSpan.Zero);
         // Save it straight away, so it has its name from the start (and Ctrl+S just saves).
         try

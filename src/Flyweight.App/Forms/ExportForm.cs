@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Flyweight.App.Rendering;
+using Flyweight.Core.Editing;
 using Flyweight.Core.Export;
 using Flyweight.Core.Media;
 using Flyweight.Core.Model;
@@ -40,7 +41,10 @@ public sealed class ExportForm : Form
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Padding = new Padding(14);
 
-        foreach (var (_, label) in ExportResolutions.All) _resolution.Items.Add(label);
+        foreach (var label in ExportResolutions.Labels(project.Shape)) _resolution.Items.Add(label);
+        // YouTube treats vertical videos up to 3 minutes as Shorts; longer ones upload as normal (vertical) videos.
+        if (project.Shape == CanvasShape.Vertical && TimelineOps.TotalDuration(project) > TimeSpan.FromMinutes(3))
+            _status.Text = $"Vertical, {TimelineOps.TotalDuration(project):m\\:ss} long: YouTube only treats vertical videos up to 3:00 as Shorts.";
         _resolution.SelectedIndex = (int)project.OutputResolution; // the size chosen at New project
         _path.Text = suggestedPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "My video.mp4");
 
@@ -114,7 +118,7 @@ public sealed class ExportForm : Form
         var details = CurrentDetails();
         _saveDetails?.Invoke(details); // remembered in the project, even if the export is cancelled
         var settings = new ExportSettings { Resolution = ExportResolutions.All[_resolution.SelectedIndex].Value };
-        var (w, h) = settings.Size;
+        var (w, h) = settings.SizeFor(_project.Shape);
         var temp = Path.Combine(Path.GetTempPath(), "Flyweight-export-" + Guid.NewGuid().ToString("N"));
 
         _cts = new CancellationTokenSource();

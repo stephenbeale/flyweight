@@ -8,6 +8,7 @@ namespace Flyweight.Core.Tests;
 /// <summary>Overlay tracks, separating a clip's audio, and inserting at the playhead.</summary>
 public class MultiTrackTests
 {
+    static readonly double Landscape = Canvas.Aspect(CanvasShape.Landscape);
     static TimeSpan S(double s) => TimeSpan.FromSeconds(s);
 
     static SourceMedia Video(string name, double secs, int w = 1920, int h = 1080, bool audio = true) => new()
@@ -341,7 +342,7 @@ public class MultiTrackTests
         Assert.Contains(o, p.Overlays);
         Assert.Contains(cam, p.Media);
         Assert.Equal((S(4), S(0), S(10), 1), (o.Start, o.In, o.Out, o.Track));
-        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam, Landscape);
         Assert.Equal(TimelineOps.DefaultOverlayScale, w, 3);
         Assert.Equal(w, h, 3); // 16:9 footage on a 16:9 canvas: same fraction both ways
         Assert.InRange(x + w, 0.95, 0.98);
@@ -354,7 +355,7 @@ public class MultiTrackTests
     {
         var phone = Video("phone.mp4", 5, 1080, 1920);
         var o = new OverlayClip { Scale = 0.2, X = 0.5, Y = 0.5 };
-        var (_, _, w, h) = OverlayLayout.Rect(o, phone);
+        var (_, _, w, h) = OverlayLayout.Rect(o, phone, Landscape);
         // 0.2 of 1920 px wide = 384 px; 9:16 → 682.7 px tall = 0.632 of 1080.
         Assert.Equal(0.2, w, 3);
         Assert.Equal(384.0 * 16 / 9 / 1080, h, 3);
@@ -508,7 +509,7 @@ public class MultiTrackTests
     {
         var p = new Project();
         var o = TimelineOps.AddOverlay(p, Video("cam.mp4", 10), S(0));
-        var box = OverlayLayout.Rect(o, p.FindMedia(o.SourceId));
+        var box = OverlayLayout.Rect(o, p.FindMedia(o.SourceId), Landscape);
         Assert.Equal((0.0, 0.0, 1.0, 1.0), OverlayLayout.CropRect(o));
         Assert.Equal("", OverlayLayout.CropFilter(o));
 
@@ -516,7 +517,7 @@ public class MultiTrackTests
         Assert.Equal((0.25, 0.25, 0.5, 0.5), OverlayLayout.CropRect(o)); // centred: the middle half each way
         TimelineOps.SetOverlayPan(p, o.Id, 1, 0);
         Assert.Equal((0.5, 0.0, 0.5, 0.5), OverlayLayout.CropRect(o));   // top-right quarter
-        Assert.Equal(box, OverlayLayout.Rect(o, p.FindMedia(o.SourceId))); // same box on screen
+        Assert.Equal(box, OverlayLayout.Rect(o, p.FindMedia(o.SourceId), Landscape)); // same box on screen
 
         TimelineOps.SetOverlayZoom(p, o.Id, 99);
         Assert.Equal(OverlayLayout.MaxZoom, o.Zoom);
@@ -592,10 +593,10 @@ public class MultiTrackTests
         var cam = Video("cam.mp4", 10);
         var o = TimelineOps.AddOverlay(p, cam, S(0));
         TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.4);
-        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam); // 0.3–0.7 across
+        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam, Landscape); // 0.3–0.7 across
 
         TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
-        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam, Landscape);
         Assert.Equal(x0 + 0.1, x, 6);       // the left edge moved in by a quarter of the picture
         Assert.Equal(x0 + w0, x + w, 6);    // the right edge stayed
         Assert.Equal((y0, h0), (y, h));     // height untouched
@@ -608,7 +609,7 @@ public class MultiTrackTests
         Assert.Equal(before, after, 6);
 
         TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
-        (x, _, w, _) = OverlayLayout.Rect(o, cam);
+        (x, _, w, _) = OverlayLayout.Rect(o, cam, Landscape);
         Assert.Equal((0.4, 0.6), (Math.Round(x, 6), Math.Round(x + w, 6)));
         Assert.Equal((0.25, 0.0, 0.5, 1.0), OverlayLayout.CropRect(o));
 
@@ -621,7 +622,7 @@ public class MultiTrackTests
     /// <summary>Where a source point (fractions of the source) appears on the canvas, or null if it's outside the box.</summary>
     static (double X, double Y)? ScreenOf(OverlayClip o, SourceMedia m, double u, double v)
     {
-        var (bx, by, bw, bh) = OverlayLayout.Rect(o, m);
+        var (bx, by, bw, bh) = OverlayLayout.Rect(o, m, Landscape);
         var (vx, vy, vw, vh) = OverlayLayout.CropRect(o);
         if (u < vx - 1e-9 || u > vx + vw + 1e-9 || v < vy - 1e-9 || v > vy + vh + 1e-9) return null;
         return (bx + (u - vx) / vw * bw, by + (v - vy) / vh * bh);
@@ -642,7 +643,7 @@ public class MultiTrackTests
         TimelineOps.SetOverlayLayout(p, o.Id, 0.77, 0.43, 0.48);
         o.CropLeft = 0.13; o.CropTop = 0.16; o.CropRight = 0.35; o.CropBottom = 0.27;
         TimelineOps.SetOverlayZoom(p, o.Id, 3.11);
-        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam);
+        var (x0, y0, w0, h0) = OverlayLayout.Rect(o, cam, Landscape);
         var (vx, vy, vw, vh) = OverlayLayout.CropRect(o);
         double zoom = o.Zoom, scale = o.Scale;
         // A source point that stays visible (inside the box after the trim too) before the drag.
@@ -653,7 +654,7 @@ public class MultiTrackTests
 
         TimelineOps.TrimOverlayEdge(p, o.Id, side, edge);
 
-        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam, Landscape);
         switch (side)
         {
             case CropSide.Left: Assert.Equal(edge, x, 6); Assert.Equal(x0 + w0, x + w, 6); Assert.Equal((y0, h0), (y, h)); break;
@@ -675,7 +676,7 @@ public class MultiTrackTests
         var o = TimelineOps.AddOverlay(p, cam, S(0));
         TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.5, 0.4); // 0.3–0.7 across
         TimelineOps.TrimOverlayEdge(p, o.Id, CropSide.Right, 0.0); // way past the left edge
-        var (x, _, w, _) = OverlayLayout.Rect(o, cam);
+        var (x, _, w, _) = OverlayLayout.Rect(o, cam, Landscape);
         Assert.Equal(0.3, x, 6);                                   // left edge untouched
         Assert.Equal(0.4 * (1 - ClipLook.MaxCropEach), w, 6);      // one side can take at most 45%
         Assert.Equal(ClipLook.MaxCropEach, o.CropRight, 6);
@@ -697,7 +698,7 @@ public class MultiTrackTests
         TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Left, 0.25);
         TimelineOps.SetOverlayCrop(p, o.Id, CropSide.Right, 0.25);
         TimelineOps.PlaceOverlay(p, o.Id, OverlayPosition.FullFrame);
-        var (x, y, w, h) = OverlayLayout.Rect(o, cam);
+        var (x, y, w, h) = OverlayLayout.Rect(o, cam, Landscape);
         Assert.Equal((0.25, 0.0, 0.5, 1.0), (Math.Round(x, 6), Math.Round(y, 6), Math.Round(w, 6), Math.Round(h, 6)));
     }
 

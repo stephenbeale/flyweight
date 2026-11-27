@@ -482,6 +482,22 @@ don't change. Toggle: clip right-click menu, "Blurred bars behind portrait clips
 - Proxies and thumbnails keep black bars (`Canvas.FitFilter`): the preview adds the blur at draw time, so toggling the
   setting never re-encodes anything.
 
+### D41. Vertical 9:16 projects for YouTube Shorts (2026-11-25)
+Owner: "can it also have vertical video for yt as a canvas/output option?" (previously out of scope; approved).
+- **`Project.Shape`** (`CanvasShape.Landscape` / `Vertical`), old files load as Landscape. Chosen at New project; can be
+  changed later via the preview right-click menu "Frame shape" (owner chose this over fixed-at-creation). Positions are
+  normalised, so a change keeps everything at the same fraction of the frame: arrows/boxes/overlays may need moving, so
+  the app warns first when there are any. One undo step (`TimelineOps.SetCanvasShape`).
+- **One aspect source:** `Canvas.Aspect(shape)`; `ExportSettings.SizeFor(shape)` turns 1920×1080 → 1080×1920 etc.
+  `OverlayLayout.Rect/Place` take the canvas aspect (PixelRect derives it from W×H; the preview from its canvas rect).
+  `ClipLook.BlursBars` compares the clip to the canvas shape, and the blur works in 36×64 when vertical.
+  Annotation sizes are "pixels at 1080p" of the SHORT side (landscape unchanged). Bitrate cap by the short side.
+- **Proxies stay 16:9** and shared between projects: the vertical preview cuts the picture out of the 960×540 proxy frame
+  (`PreviewCanvas.Upright`) and fits it into 540×960 before blur/crop/tone/zoom run. Nothing is re-encoded when switching.
+  A portrait clip's preview is therefore 304×540 of real pixels: fine for editing, and export uses the originals anyway.
+- **YouTube thumbnail preset is hidden** in vertical projects (Shorts don't use 16:9 custom thumbnails); Save frame
+  saves at the vertical size. Export shows a hint when a vertical video is over 3:00 (YouTube's Shorts limit).
+
 ### Annotation fade in / fade out (2026-11-24)
 Arrows, boxes and text can fade in and out (Properties → Timing: Fade in / Fade out, 0–5 s, default 0 so existing
 projects are unchanged). One rule everywhere, `TimelineOps.FadeFor` / `AnnotationOpacity`: for a run across cuts the
@@ -500,3 +516,33 @@ Also from the review: an edit left open by a wheel-zoom is committed before Undo
 scrolling undoes the zoom and keeps redo), and "Separate audio" on a sped-up overlay is disabled with the reason shown.
 Removing a file from the Media bin still ripple-deletes its clips with the tracks in sync, like deleting them by hand.
 
+### D42. Timeline layout: annotations on top, video + audio pinned at the bottom (2026-11-25)
+Owner: text boxes "dont show on timeline, at least when there are 4 other items in view" and "keep video files at bottom
+as they are core". The panel was a fixed ~290 px and annotation lanes stacked downwards under the audio track, so the 5th
+overlapping annotation was drawn off the bottom with no way to reach it.
+- **Layout, top to bottom:** ruler · annotation lanes (lane 0 lowest, stacking UP) · overlay tracks (V2 lowest) · main
+  video · audio. Lanes + overlays are one scroll region, bottom-anchored so V2 always sits right above the video; the
+  video and audio tracks are pinned and never scroll away (owner picked this over the other two layouts offered).
+- **Fits itself:** `TimelineControl.PreferredHeight` / `PreferredHeightChanged`; `MainForm` grows the panel to fit, up to
+  half the window, and shrinks it back as lanes go, never below the height the user last dragged the splitter to.
+  Past the cap a vertical scrollbar appears (also Shift+wheel). Selecting an annotation in the preview scrolls its bar
+  into view (`RevealAnnotation`; not when the click came from the timeline itself, and sideways only when the bar is
+  fully off screen). Items scrolled out of the region aren't hit-testable.
+- **When it refits:** synchronously on `ProjectSession.Changed` (so a new text box's inline editor opens on the final
+  layout), on window resize, and on mouse-up after a timeline drag, never mid-drag (`IsDragging`). The scrollbar
+  covers only the scroll region. Annotation bars and audio rows are computed once per paint.
+- **New annotations always get the full default length** (`CreateAnnotation`): near a cut they continue onto the next
+  clip(s) as a linked run, instead of being clamped to what was left of the clip (looked random to the owner).
+  Default looks (white text on black, yellow box) are set in `CreateAnnotation` BEFORE the run is built, so every
+  piece gets them (the App used to recolour only the first piece of a box).
+
+### D43. The VLC-time floor follows every seek (2026-11-25)
+Owner heard a crackle about every second after a cut. `playback.log` showed `drift resync` every ~1.1 s with the video
+estimate stuck at exactly seek target + 500 ms (the interpolation cap): every VLC time was being ignored. `Play()` sets
+`_ignoreVlcTimeBelowMs` to where playback started (to skip stale times after a resume), and only `Load` ever moved it.
+A cut onto EARLIER footage of the same file (seek in place, e.g. clip 2 = 0–20 s after playing from 17 s) therefore
+fell under the floor, `KeepVideoInStep` saw a frozen video, and resynced forever; each seek restarts the audio (the
+crackle). Now seek-in-place and drift resync set the floor to the seek target − 500 ms, like `Load` does, plus a
+ceiling of target + 2 s until the first reading inside that window is accepted (after a BACKWARD seek, VLC's stale old
+position is above the floor). The 250 ms
+drift limit (D24) is unchanged: a wider limit was tried first and only hid the symptom.

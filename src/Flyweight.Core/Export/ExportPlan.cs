@@ -43,7 +43,7 @@ public sealed class ExportPlan
     {
         if (p.Timeline.Count == 0) throw new InvalidOperationException("The timeline is empty.");
 
-        var (w, h) = settings.Size;
+        var (w, h) = settings.SizeFor(p.Shape);
         // Frame rate: the first VIDEO clip's (a still's nominal 30 fps shouldn't decide it).
         double fps = settings.FrameRate > 0 ? settings.FrameRate
                    : p.Timeline.Select(c => p.FindMedia(c.SourceId)).FirstOrDefault(m => m is { IsStill: false })?.Fps is > 0 and var f ? f : 30;
@@ -187,7 +187,7 @@ public sealed class ExportPlan
 
         var filter = graph.ToString();
         args.AddRange(new[] { "-filter_complex", filter, "-map", "[vout]", "-map", "[aout]" });
-        int kbps = YouTubeBitrateKbps(h, fps);
+        int kbps = YouTubeBitrateKbps(Math.Min(w, h), fps); // by the short side: vertical 1080x1920 is "1080p"
         List<string> Finish(IEnumerable<string> video)
         {
             var a = new List<string>(args);

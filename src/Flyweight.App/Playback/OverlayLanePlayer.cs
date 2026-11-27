@@ -224,7 +224,7 @@ public sealed class OverlayLanePlayer : IDisposable
     }
 
     /// <summary>
-    /// Draw the overlays showing at <paramref name="position"/> into the preview's 16:9 <paramref name="canvas"/>,
+    /// Draw the overlays showing at <paramref name="position"/> into the preview's <paramref name="canvas"/> (16:9 or 9:16),
     /// bottom track first. One still optimising shows as a dark box so you can still place it. UI thread.
     /// </summary>
     public void Draw(Graphics g, RectangleF canvas, Project p, TimeSpan position, Guid? selectedId, Font font)
@@ -332,7 +332,7 @@ public sealed class OverlayLanePlayer : IDisposable
     /// <summary>Where an overlay lands in the preview canvas (screen pixels).</summary>
     public static RectangleF Dest(RectangleF canvas, OverlayClip o, SourceMedia? media)
     {
-        var (x, y, w, h) = OverlayLayout.Rect(o, media);
+        var (x, y, w, h) = OverlayLayout.Rect(o, media, canvas.Width / (double)canvas.Height);
         return new RectangleF(canvas.X + (float)(x * canvas.Width), canvas.Y + (float)(y * canvas.Height),
             (float)(w * canvas.Width), (float)(h * canvas.Height));
     }

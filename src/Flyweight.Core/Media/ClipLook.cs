@@ -162,20 +162,27 @@ public static class ClipLook
     /// </summary>
     public static bool BlursBars(Project p, Clip c, SourceMedia? m) =>
         p.Background == BackgroundFill.Blur && m is { IsAudioOnly: false, Width: > 0, Height: > 0 } &&
-        !IsZoomed(c) && !IsCropped(c) && Math.Abs(m.Width / (double)m.Height - 16.0 / 9) > 0.01;
+        !IsZoomed(c) && !IsCropped(c) && Math.Abs(m.Width / (double)m.Height - Canvas.Aspect(p.Shape)) > 0.01;
+
+    /// <summary>The tiny frame the blur is made in: 64x36, or 36x64 for a vertical canvas.</summary>
+    public static (int W, int H) BlurSize(int canvasW, int canvasH) =>
+        canvasW >= canvasH ? (BlurWidth, BlurHeight) : (BlurHeight, BlurWidth);
 
     /// <summary>
     /// Replaces <see cref="Canvas.FitFilter"/> when <see cref="BlursBars"/>: the blurred fill behind the fitted
     /// picture. It splits the stream, so it needs labels unique within the graph: <paramref name="id"/> prefixes them.
     /// Like FitFilter it takes one input and leaves one W×H output, so it drops into a linear chain.
     /// </summary>
-    public static string BlurFitFilter(int w, int h, string id) =>
-        $"split=2[{id}b][{id}f];" +
-        $"[{id}b]scale={BlurWidth}:{BlurHeight}:force_original_aspect_ratio=increase:flags=area,crop={BlurWidth}:{BlurHeight}," +
+    public static string BlurFitFilter(int w, int h, string id)
+    {
+        var (bw, bh) = BlurSize(w, h);
+        return $"split=2[{id}b][{id}f];" +
+        $"[{id}b]scale={bw}:{bh}:force_original_aspect_ratio=increase:flags=area,crop={bw}:{bh}," +
         $"gblur=sigma=2,colorchannelmixer=rr={Num(BlurDim)}:gg={Num(BlurDim)}:bb={Num(BlurDim)}," +
         $"scale={w}:{h}:flags=bicubic,setsar=1[{id}bg];" +
         $"[{id}f]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=bicubic,setsar=1[{id}fg];" +
         $"[{id}bg][{id}fg]overlay=x=(W-w)/2:y=(H-h)/2,setsar=1";
+    }
 
     /// <summary>
     /// The preview's half of the blur, on the tiny frame (32-bit BGRA/BGRX rows, <paramref name="stride"/> bytes each):

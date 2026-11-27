@@ -1,6 +1,30 @@
 # Roadmap & status
 
-_Last updated: 2026-11-25 (blur fill on `feature/blur-fill`)_
+_Last updated: 2026-11-25 (blur fill merged; vertical 9:16 + annotation/timeline/crackle fixes on `feature/vertical-canvas`, PR #20 awaiting owner test)_
+
+### 2026-11-25 session close (b): annotation length, timeline layout, post-cut crackle (D42, D43), PR #20 open
+Branch `feature/vertical-canvas` (PR #20 into `main`, **open, not merged**); sub-PR #19 merged into it (97e6571).
+295 core tests pass, build 0 warnings / 0 errors. Dev build 18:43 is what the owner has open.
+- **Annotation length (D42):** new annotations always get the full 3 s default; near a cut they continue onto the next
+  clip as a linked run (before, they were clamped to the clip end). Default looks live in Core `CreateAnnotation`.
+- **Timeline layout (D42):** annotation lanes on top (stacking upward), overlay tracks below, main video + audio pinned
+  at the bottom. Scroll region with vertical scrollbar + Shift+wheel; panel auto-grows to half the window (never below
+  the user's dragged height). Selecting an annotation in the preview reveals its bar.
+- **Crackle after a cut (D43):** `PlaybackEngine._ignoreVlcTimeBelowMs` was only moved by Load, so a cut onto earlier
+  footage of the same file ignored every VLC time and resynced every ~1 s. Seek-in-place and drift resync now move the
+  floor and set a ceiling. Verified in `%LOCALAPPDATA%\Flyweight\playback.log` (no resyncs across the cut).
+- code-critic review done; must-fix and most nice-to-have items addressed in 32893c2.
+
+**Next steps:**
+1. Owner checks build 18:43: a box drawn just before a cut stays yellow; a text box added with 5+ overlapping lanes
+   opens its editor correctly. Then merge PR #20 into `main`.
+2. After that, delete the merged branch `fix/annotation-length-and-lanes` (local + remote).
+3. Investigate: one `drift resync` (possible small audio blip) when resuming from pause; pre-existing, seen in
+   playback.log right after `play from`.
+4. Idea only (owner said to ignore for now): no one-step way to add a video file's sound to the audio track. Workaround:
+   Add as overlay (O), right-click the overlay, Separate audio, delete the overlay.
+5. Code-critic nice-to-haves not done: replace `goto Scrub` in `TimelineControl.OnMouseDown` with a guard; the 2 px
+   band between the ruler and the scroll region draws bars that can't be clicked.
 
 ### 2026-11-25: blurred bars behind portrait clips (D40), branch `feature/blur-fill`
 Preview, export, Save frame and the YouTube thumbnail all fill the bars around non-16:9 clips with a dimmed blur of
@@ -8,8 +32,27 @@ the clip (new projects; toggle in the clip right-click menu). 271 core tests pas
 Claude checked a dev-build screenshot against an ffmpeg render of the export filter; **owner still to try it in-app.**
 Installed copy check: on 2026-11-25 `%LocalAppData%\Programs\Flyweight\Flyweight.exe` still reported 0.2.1 and there
 was no Start-menu "Flyweight" entry (only "Flyweight (dev)"), so the 0.3.1 install may not have happened yet.
-Idea parked: vertical (9:16) projects. Out of scope per CLAUDE.md; would make canvas shape a project setting
-(proxies, annotations, zoom, overlays, export all assume 16:9). Owner asked 2026-11-25, not yet decided.
+PR #18 merged (d29b47e).
+
+### 2026-11-25: vertical 9:16 projects for Shorts (D41), branch `feature/vertical-canvas`
+Owner approved: shape chosen at New project, changeable later from the preview right-click menu "Frame shape" (with a
+warning if there are annotations/overlays; one undo step); YouTube thumbnail preset hidden in vertical projects.
+Export sizes 1080×1920 / 1440×2560 / 2160×3840; bitrate by the short side; Shorts hint in Export when over 3:00.
+280 core tests pass (incl. a real 1080×1920 export pixel test). Dev-build screenshot matches an ffmpeg render of the
+export. **Owner still to try it in-app.**
+
+**Next steps:**
+1. Owner tries vertical in-app (dev build 07:20): New → Vertical 9:16; portrait fills, landscape gets blurred top/bottom
+   bars; annotations/overlay; preview right-click → Frame shape (warning + Ctrl+Z); export + Save frame are tall. Then
+   push `feature/vertical-canvas` and open the PR.
+2. Owner's installed copy still reported 0.2.1 on 2026-11-25 (no Start-menu "Flyweight" entry, only "Flyweight (dev)"):
+   re-run the installer from the stable link and verify the version.
+3. Consider a release (0.4.0-preview) once vertical is merged: blur fill + vertical.
+4. Housekeeping: add `.gitattributes` (git keeps warning LF→CRLF on many files). Stale branches cleaned up
+   2026-11-25 (`feature/frame-export`, `feature/youtube-chapters` deleted; their features are in `main`).
+5. **Annotation fade in / fade out**: kept on remote `feature/annotation-fades` (one unmerged commit `f206dd1`,
+   2026-11-24, ~260 lines, never in `main`). Owner chose to keep it: rebase onto `main` (expect conflicts with
+   D35–D41, e.g. AnnotationRenderer's short-side scale), finish, test in-app, PR.
 
 ## Where things stand
 
@@ -262,7 +305,7 @@ hurts search. They want something that says lean / light / fast / nimble.
 - Cross-project media library / proxy-cache manager → SQLite + Dapper (DECISIONS D13)
 
 ## Explicitly not planned (for now)
-Vertical / 9:16 output · real-time GPU effects · AI features · transitions library
+Real-time GPU effects · AI features · transitions library (vertical 9:16 is now supported, D41)
 
 ## Platform & distribution (owner asked 2026-11-24)
 

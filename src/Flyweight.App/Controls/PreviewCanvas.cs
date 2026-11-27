@@ -102,13 +102,14 @@ public sealed class PreviewCanvas : Control
         Invalidate();
     }
 
-    /// <summary>The 16:9 rectangle the video occupies inside the control.</summary>
+    /// <summary>The rectangle the video occupies inside the control: 16:9, or 9:16 for a vertical project (D41).</summary>
     public RectangleF CanvasRect
     {
         get
         {
             float w = ClientSize.Width, h = ClientSize.Height;
-            float cw = Math.Min(w, h * 16f / 9f), ch = cw * 9f / 16f;
+            float a = (float)Canvas.Aspect(_session?.Project.Shape ?? CanvasShape.Landscape);
+            float cw = Math.Min(w, h * a), ch = cw / a;
             return new RectangleF((w - cw) / 2, (h - ch) / 2, cw, ch);
         }
     }
@@ -140,6 +141,8 @@ public sealed class PreviewCanvas : Control
                 if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
                     Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
                     frame = Letterboxed(frame, pm.Width, pm.Height);
+                if (_session.Project.Shape == CanvasShape.Vertical && look is not null)
+                    frame = Upright(frame, _session.Project.FindMedia(look.SourceId));
                 if (look is not null && _session.Project.FindMedia(look.SourceId) is { } bm && ClipLook.BlursBars(_session.Project, look, bm))
                     frame = Blurred(frame, bm);
                 if (look is not null && ClipLook.IsCropped(look) &&
@@ -235,6 +238,38 @@ public sealed class PreviewCanvas : Control
         return _boxed;
     }
 
+    Bitmap? _upright;
+
+    /// <summary>
+    /// Vertical projects (D41): proxies are always 16:9 with the picture fitted in, so cut the picture back out and fit
+    /// it into a 9:16 frame of the same height (540x960 from a 960x540 proxy), with black bars like Canvas.FitFilter.
+    /// Everything after this (blur, crop mask, tone, zoom) then works on the vertical frame exactly as it does on a
+    /// landscape one. Call while holding FrameLock.
+    /// </summary>
+    Bitmap Upright(Bitmap frame, SourceMedia? media)
+    {
+        int w = frame.Height, h = frame.Width; // 540x960 from a 960x540 proxy: the same pixel count, turned upright
+        if (_upright is null || _upright.Width != w || _upright.Height != h)
+        {
+            _upright?.Dispose();
+            _upright = new Bitmap(w, h, PixelFormat.Format32bppRgb);
+        }
+        var full = new RectangleF(0, 0, frame.Width, frame.Height);
+        var pic = media is { Width: > 0, Height: > 0 } ? Fit(new Size(media.Width, media.Height), full) : full;
+        var dest = media is { Width: > 0, Height: > 0 } ? Fit(new Size(media.Width, media.Height), new RectangleF(0, 0, w, h)) : new RectangleF(0, 0, w, h);
+        using var g = Graphics.FromImage(_upright);
+        g.Clear(Color.Black);
+        g.InterpolationMode = InterpolationMode.Bilinear;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        using var attrs = new ImageAttributes();
+        attrs.SetWrapMode(WrapMode.TileFlipXY); // no soft dark edge where the picture meets the proxy's bars
+        // Inset the source by half a pixel on padded edges so the proxy's black bars never bleed in.
+        var src = RectangleF.FromLTRB(pic.Left > 0.5f ? pic.Left + 0.5f : pic.Left, pic.Top > 0.5f ? pic.Top + 0.5f : pic.Top,
+                                      pic.Right < frame.Width - 0.5f ? pic.Right - 0.5f : pic.Right, pic.Bottom < frame.Height - 0.5f ? pic.Bottom - 0.5f : pic.Bottom);
+        g.DrawImage(frame, Rectangle.Round(dest), src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel, attrs);
+        return _upright;
+    }
+
     Bitmap? _blurred, _blurSmall;
     byte[]? _blurPixels;
 
@@ -250,11 +285,17 @@ public sealed class PreviewCanvas : Control
             _blurred?.Dispose();
             _blurred = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
         }
-        _blurSmall ??= new Bitmap(ClipLook.BlurWidth, ClipLook.BlurHeight, PixelFormat.Format32bppRgb);
+        var (bw, bh) = ClipLook.BlurSize(frame.Width, frame.Height); // 64x36, or 36x64 when vertical
+        if (_blurSmall is null || _blurSmall.Width != bw || _blurSmall.Height != bh)
+        {
+            _blurSmall?.Dispose();
+            _blurSmall = new Bitmap(bw, bh, PixelFormat.Format32bppRgb);
+        }
 
-        // The picture inside the barred frame, and the centred 16:9 part of it that fills the background.
+        // The picture inside the barred frame, and the centred canvas-shaped part of it that fills the background.
         var pic = Fit(new Size(media.Width, media.Height), new RectangleF(0, 0, frame.Width, frame.Height));
-        float fillW = Math.Min(pic.Width, pic.Height * 16f / 9f), fillH = fillW * 9f / 16f;
+        float a = frame.Width / (float)frame.Height;
+        float fillW = Math.Min(pic.Width, pic.Height * a), fillH = fillW / a;
         var fill = new RectangleF(pic.X + (pic.Width - fillW) / 2, pic.Y + (pic.Height - fillH) / 2, fillW, fillH);
 
         using (var g = Graphics.FromImage(_blurSmall))
@@ -263,16 +304,16 @@ public sealed class PreviewCanvas : Control
             g.PixelOffsetMode = PixelOffsetMode.Half;
             using var attrs = new ImageAttributes();
             attrs.SetWrapMode(WrapMode.TileFlipXY);
-            g.DrawImage(frame, new Rectangle(0, 0, ClipLook.BlurWidth, ClipLook.BlurHeight), fill.X, fill.Y, fill.Width, fill.Height, GraphicsUnit.Pixel, attrs);
+            g.DrawImage(frame, new Rectangle(0, 0, bw, bh), fill.X, fill.Y, fill.Width, fill.Height, GraphicsUnit.Pixel, attrs);
         }
-        var rect = new Rectangle(0, 0, ClipLook.BlurWidth, ClipLook.BlurHeight);
+        var rect = new Rectangle(0, 0, bw, bh);
         var data = _blurSmall.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb);
         try
         {
             int bytes = data.Stride * data.Height;
             if (_blurPixels?.Length != bytes) _blurPixels = new byte[bytes];
             System.Runtime.InteropServices.Marshal.Copy(data.Scan0, _blurPixels, 0, bytes);
-            ClipLook.BlurSmall(_blurPixels, ClipLook.BlurWidth, ClipLook.BlurHeight, data.Stride);
+            ClipLook.BlurSmall(_blurPixels, bw, bh, data.Stride);
             System.Runtime.InteropServices.Marshal.Copy(_blurPixels, 0, data.Scan0, bytes);
         }
         finally { _blurSmall.UnlockBits(data); }
@@ -284,7 +325,7 @@ public sealed class PreviewCanvas : Control
             using (var attrs = new ImageAttributes())
             {
                 attrs.SetWrapMode(WrapMode.TileFlipXY); // edges repeat instead of fading to black
-                g.DrawImage(_blurSmall, new Rectangle(Point.Empty, frame.Size), 0, 0, ClipLook.BlurWidth, ClipLook.BlurHeight, GraphicsUnit.Pixel, attrs);
+                g.DrawImage(_blurSmall, new Rectangle(Point.Empty, frame.Size), 0, 0, bw, bh, GraphicsUnit.Pixel, attrs);
             }
             // The sharp picture back on top, pixel for pixel. Inset 1 px from any padded edge so the proxy's black
             // padding never shows as a hairline; edges that touch the frame stay put.
@@ -568,7 +609,7 @@ public sealed class PreviewCanvas : Control
     {
         if (SelectedOverlayNow() is not { } o) return;
         var m = _session.Project.FindMedia(o.SourceId);
-        var (x, y, w, h) = OverlayLayout.Rect(o, m);
+        var (x, y, w, h) = OverlayLayout.Rect(o, m, Canvas.Aspect(_session.Project.Shape));
         _gripBox = new RectangleF((float)x, (float)y, (float)w, (float)h);
         _gripCropW = ClipLook.CropBox(o.CropLeft, o.CropTop, o.CropRight, o.CropBottom).W;
         _grip = grip;
@@ -777,11 +818,8 @@ public sealed class PreviewCanvas : Control
             if (pxW + pxH > 8) // ignore accidental clicks
             {
                 Annotation? created = null;
-                _session.Execute(p =>
-                {
-                    created = TimelineOps.CreateAnnotation(p, _engine.Position, c.Kind, c.X1, c.Y1, c.X2, c.Y2);
-                    if (created is { Kind: AnnotationKind.Box }) created.StrokeColor = "#FFFFD600"; // yellow highlight box by default
-                });
+                // Default look (e.g. yellow box) is set in Core, so every piece of a run across a cut gets it.
+                _session.Execute(p => created = TimelineOps.CreateAnnotation(p, _engine.Position, c.Kind, c.X1, c.Y1, c.X2, c.Y2));
                 if (created is not null) Select(created.Id);
             }
             Tool = Tool.Select;
