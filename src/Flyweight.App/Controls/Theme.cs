@@ -183,7 +183,7 @@ static class Theme
             var old = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using var pen = new Pen(Enabled ? Color.Silver : Muted, 1.6f);
-            g.DrawLines(pen, new[] { new PointF(cx - a, cy - a / 2), new PointF(cx, cy + a / 2), new PointF(cx + a, cy - a / 2) });
+            g.DrawLines(pen, [new PointF(cx - a, cy - a / 2), new PointF(cx, cy + a / 2), new PointF(cx + a, cy - a / 2)]);
             g.SmoothingMode = old;
         }
 

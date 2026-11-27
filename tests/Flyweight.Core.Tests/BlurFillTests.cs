@@ -129,7 +129,7 @@ public sealed class BlurFillTests : IDisposable
 
     static bool FfmpegAvailable()
     {
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1") throw new InvalidOperationException("ffmpeg required", ex);
@@ -141,8 +141,8 @@ public sealed class BlurFillTests : IDisposable
     {
         var raw = Path.Combine(_dir, $"px-{Guid.NewGuid():N}.rgb");
         var args = new List<string>();
-        if (t > 0) args.AddRange(new[] { "-ss", FfmpegRunner.Num(t) });
-        args.AddRange(new[] { "-i", file, "-frames:v", "1", "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw });
+        if (t > 0) args.AddRange(["-ss", FfmpegRunner.Num(t)]);
+        args.AddRange(["-i", file, "-frames:v", "1", "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw]);
         await FfmpegRunner.RunFfmpegAsync(args);
         var b = await File.ReadAllBytesAsync(raw);
         return (b[0], b[1], b[2]);
@@ -154,11 +154,10 @@ public sealed class BlurFillTests : IDisposable
         if (!FfmpegAvailable()) return;
         // Portrait: top half red, bottom half blue, 360×640.
         var src = Path.Combine(_dir, "portrait.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=red:s=360x320:r=30:d=1", "-f", "lavfi", "-i", "color=c=blue:s=360x320:r=30:d=1",
             "-filter_complex", "[0:v][1:v]vstack=inputs=2[v]", "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", src,
-        });
+        ]);
         var p = new Project { Background = BackgroundFill.Blur };
         var m = await MediaProbe.ProbeAsync(src);
         p.Media.Add(m);

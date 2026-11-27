@@ -76,9 +76,9 @@ public sealed class ExportPlan
             if (media.IsStill)
                 // Decode the photo once a second, not at the output rate: the fps filter below repeats
                 // frames. Decoding a 12 MP image 30×/s was the slow part of exporting stills.
-                args.AddRange(new[] { "-loop", "1", "-framerate", "1", "-t", Sec(clip.Duration), "-i", media.OriginalPath });
+                args.AddRange(["-loop", "1", "-framerate", "1", "-t", Sec(clip.Duration), "-i", media.OriginalPath]);
             else
-                args.AddRange(new[] { "-ss", Sec(clip.In), "-t", Sec(clip.SourceLength), "-i", media.OriginalPath });
+                args.AddRange(["-ss", Sec(clip.In), "-t", Sec(clip.SourceLength), "-i", media.OriginalPath]);
             var d = Sec(clip.Duration); // length on the TIMELINE (after speed)
             double speed = media.IsStill ? 1 : clip.Speed;
             bool sped = Math.Abs(speed - 1) > 0.0005;
@@ -109,7 +109,7 @@ public sealed class ExportPlan
             // Silent or entirely after the video ends: nothing to hear, so don't even decode it.
             if (item.EffectiveVolume <= 0 || item.Start >= total || item.Duration < TimelineOps.MinClipLength) continue;
             var media = p.FindMedia(item.SourceId) ?? throw new InvalidOperationException("An audio item refers to missing media.");
-            args.AddRange(new[] { "-ss", Sec(item.In), "-t", Sec(item.Duration), "-i", media.OriginalPath });
+            args.AddRange(["-ss", Sec(item.In), "-t", Sec(item.Duration), "-i", media.OriginalPath]);
             var vol = Math.Abs(item.EffectiveVolume - 1) < 0.001 ? "" : $"volume={Num(Math.Round(item.EffectiveVolume, 3))},";
             long delayMs = (long)Math.Round(item.Start.TotalMilliseconds);
             var label = $"m{mix.Count}";
@@ -127,8 +127,8 @@ public sealed class ExportPlan
             var media = p.FindMedia(o.SourceId) ?? throw new InvalidOperationException("An overlay refers to missing media.");
             if (media.IsAudioOnly) continue;
             var d = Sec(o.Duration); // length on the TIMELINE (after speed)
-            if (media.IsStill) args.AddRange(new[] { "-loop", "1", "-framerate", "1", "-t", d, "-i", media.OriginalPath });
-            else args.AddRange(new[] { "-ss", Sec(o.In), "-t", Sec(o.SourceLength), "-i", media.OriginalPath });
+            if (media.IsStill) args.AddRange(["-loop", "1", "-framerate", "1", "-t", d, "-i", media.OriginalPath]);
+            else args.AddRange(["-ss", Sec(o.In), "-t", Sec(o.SourceLength), "-i", media.OriginalPath]);
             double ospeed = media.IsStill ? 1 : o.Speed;
             bool osped = Math.Abs(ospeed - 1) > 0.0005;
             var (px, py, pw, ph) = OverlayLayout.PixelRect(o, media, w, h);
@@ -179,7 +179,7 @@ public sealed class ExportPlan
             {
                 // Fading: loop the PNG for the piece's length, fade its alpha in/out, then shift it to its start time.
                 var len = range.End - range.Start;
-                args.AddRange(new[] { "-loop", "1", "-framerate", fpsStr, "-t", Sec(len), "-i", png });
+                args.AddRange(["-loop", "1", "-framerate", fpsStr, "-t", Sec(len), "-i", png]);
                 var fades = (fade.In > 0 ? $",fade=t=in:st=0:d={Num(fade.In)}:alpha=1" : "") +
                             (fade.Out > 0 ? $",fade=t=out:st={Num(len.TotalSeconds - fade.Out)}:d={Num(fade.Out)}:alpha=1" : "");
                 graph.Append($";\n[{input}:v]format=rgba{fades},setpts=PTS-STARTPTS+{Sec(range.Start)}/TB[af{k}]");
@@ -187,7 +187,7 @@ public sealed class ExportPlan
             }
             else
             {
-                args.AddRange(new[] { "-i", png });
+                args.AddRange(["-i", png]);
                 graph.Append($";\n[{last}][{input}:v]overlay=0:0:format=auto:enable='between(t,{Sec(range.Start)},{Sec(range.End)})'[{next}]");
             }
             last = next;
@@ -196,20 +196,19 @@ public sealed class ExportPlan
         graph.Append($";\n[{last}]format=yuv420p[vout]");
 
         var filter = graph.ToString();
-        args.AddRange(new[] { "-filter_complex", filter, "-map", "[vout]", "-map", "[aout]" });
+        args.AddRange(["-filter_complex", filter, "-map", "[vout]", "-map", "[aout]"]);
         int kbps = YouTubeBitrateKbps(Math.Min(w, h), fps); // by the short side: vertical 1080x1920 is "1080p"
         List<string> Finish(IEnumerable<string> video)
         {
             var a = new List<string>(args);
             a.AddRange(video);
-            a.AddRange(new[]
-            {
+            a.AddRange([
                 "-r", fpsStr,
                 "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2",
                 "-movflags", "+faststart",
                 "-write_tmcd", "0", // no camera timecode track: it crashed ffmpeg's mp4 writer on DJI proxies
                 outputPath,
-            });
+            ]);
             return a;
         }
         var x264 = Finish(X264Args(settings, kbps));
@@ -241,21 +240,21 @@ public sealed class ExportPlan
     }
 
     /// <summary>CPU encode: CRF 18 "veryfast" (it scored as well as "medium" on real footage at 2.6× the speed), capped.</summary>
-    static string[] X264Args(ExportSettings s, int kbps) => new[]
-    {
+    static string[] X264Args(ExportSettings s, int kbps) =>
+    [
         "-c:v", "libx264", "-profile:v", "high", "-preset", s.Preset, "-crf", s.Crf.ToString(),
         "-maxrate", $"{kbps}k", "-bufsize", $"{kbps * 2}k", "-pix_fmt", "yuv420p",
-    };
+    ];
 
     /// <summary>
     /// Intel Quick Sync (the graphics chip's H.264 encoder): about 6.6× faster than x264 "medium" on an i5-10400T.
     /// Its constant-quality modes ignored the bitrate cap, so it runs at a target bitrate with a ceiling.
     /// </summary>
-    static string[] QsvArgs(int kbps) => new[]
-    {
+    static string[] QsvArgs(int kbps) =>
+    [
         "-c:v", "h264_qsv", "-profile:v", "high",
         "-b:v", $"{kbps}k", "-maxrate", $"{kbps * 5 / 4}k", "-bufsize", $"{kbps * 5 / 2}k", "-pix_fmt", "nv12",
-    };
+    ];
 
     /// <summary>
     /// Start of every audio chain: reset timestamps, 48 kHz, float stereo. Mono is copied to both

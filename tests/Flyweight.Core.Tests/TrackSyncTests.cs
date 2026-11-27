@@ -53,7 +53,7 @@ public class TrackSyncTests
         var (p, cam, cue) = Setup();
         var b = Video("b.mp4", 6);
         var bc = TimelineOps.Append(p, b);                 // 20–26 s
-        var copy = TimelineOps.CopyClips(p, new[] { bc.Id })!;
+        var copy = TimelineOps.CopyClips(p, [bc.Id])!;
         TimelineOps.PasteClips(p, copy, 0);                // 6 s at the very start
         Assert.Equal(S(18), cam.Start);
         Assert.Equal(S(18), cue.Start);

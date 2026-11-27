@@ -16,9 +16,9 @@ public sealed class MainForm : Form
     static readonly string LockPath = Path.Combine(AppDataDir, "session.lock");
     static readonly string RecentPath = Path.Combine(AppDataDir, "recent.json");
     string? _lastRecent;
-    static readonly string[] VideoExtensions = { ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts", ".wmv", ".gif" };
-    static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff" };
-    static readonly string[] AudioExtensions = { ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma" };
+    static readonly string[] VideoExtensions = [".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts", ".wmv", ".gif"];
+    static readonly string[] ImageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"];
+    static readonly string[] AudioExtensions = [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"];
 
     readonly ProjectSession _session = new();
     Action _fitTimeline = () => { }; // set in the constructor once the split container exists
@@ -48,7 +48,7 @@ public sealed class MainForm : Form
     readonly ToolStripStatusLabel _statusText = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     readonly ToolStripButton _undoBtn = new("Undo");
     readonly ToolStripButton _redoBtn = new("Redo");
-    readonly Dictionary<Tool, ToolStripButton> _toolButtons = new();
+    readonly Dictionary<Tool, ToolStripButton> _toolButtons = [];
     readonly Theme.RoundButton _playBtn = new() { Text = "▶", Width = 52, Dock = DockStyle.Left, Primary = true };
     readonly System.Windows.Forms.Timer _autosave = new() { Interval = 10_000 };
 
@@ -111,8 +111,8 @@ public sealed class MainForm : Form
         _redoBtn.ToolTipText = "Redo (Ctrl+Y)";
         _undoBtn.ForeColor = _redoBtn.ForeColor = Theme.Text; // the renderer greys them out when disabled
 
-        tools.Items.AddRange(new ToolStripItem[]
-        {
+        tools.Items.AddRange(
+        [
             Btn("New", "New project", NewProject),
             OpenButton(),
             SaveButton(),
@@ -121,7 +121,7 @@ public sealed class MainForm : Form
             new ToolStripSeparator(),
             _undoBtn, _redoBtn,
             new ToolStripSeparator(),
-        });
+        ]);
         foreach (var (tool, label, tip) in new[]
         {
             (Tool.Select, "Select", "Select / move (V)"),
@@ -134,8 +134,8 @@ public sealed class MainForm : Form
             _toolButtons[tool] = b;
             tools.Items.Add(b);
         }
-        tools.Items.AddRange(new ToolStripItem[]
-        {
+        tools.Items.AddRange(
+        [
             new ToolStripSeparator(),
             Btn("Split", "Split at playhead (S): the selected overlay or audio item, else the main clip. Shift+S splits every track", Split),
             Btn("Freeze", "Freeze this frame: hold it for a few seconds (F)", () => _ = FreezeFrameAsync()),
@@ -148,7 +148,7 @@ public sealed class MainForm : Form
             new ToolStripSeparator(),
             Btn("Save frame", "Save the frame under the playhead as a PNG (with zoom, brightness and annotations) next to your footage (Ctrl+Shift+E). Right-click the preview for a YouTube thumbnail", () => _ = ExportFrameAsync(chooseLocation: false)),
             Btn("Export for YouTube…", "Export MP4 (Ctrl+E)", Export),
-        });
+        ]);
 
         // Right-click on the preview: freeze this frame, or drop a chapter marker here.
         var previewMenu = new ContextMenuStrip();
@@ -628,7 +628,7 @@ public sealed class MainForm : Form
         _engine.Pause();
         var p = _session.Project;
         int index = CurrentClipId() is { } anchor ? p.Timeline.FindIndex(c => c.Id == anchor) + 1 : p.Timeline.Count;
-        List<Core.Model.Clip> pasted = new();
+        List<Core.Model.Clip> pasted = [];
         _session.Execute(proj => pasted = TimelineOps.PasteClips(proj, copy, index));
         if (pasted.Count == 0) { _statusText.Text = "Nothing pasted: the copied clip's file was removed from the project."; return; }
         _timeline.SelectClips(pasted.Select(c => c.Id));
@@ -642,7 +642,7 @@ public sealed class MainForm : Form
         : TimelineOps.Locate(_session.Project, _engine.Position)?.Clip.Id;
 
     /// <summary>Insert a bin item before/after <paramref name="anchorClipId"/> (or at the end if none), then jump to it.</summary>
-    void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after) => InsertMedia(new[] { mediaId }, anchorClipId, after);
+    void InsertMedia(Guid mediaId, Guid? anchorClipId, bool after) => InsertMedia([mediaId], anchorClipId, after);
 
     /// <summary>
     /// Insert bin files, in order, before/after <paramref name="anchorClipId"/> (or at the end if none), as one undo
@@ -772,7 +772,7 @@ public sealed class MainForm : Form
         else _statusText.Text = $"Select a file in Media first, then press {key}.";
     }
 
-    void InsertAtPlayhead(Guid mediaId) => InsertAtPlayhead(new[] { mediaId });
+    void InsertAtPlayhead(Guid mediaId) => InsertAtPlayhead([mediaId]);
 
     /// <summary>
     /// Insert bin files at the playhead, in order, as one undo step: the clip there is split and the files go in
@@ -800,7 +800,7 @@ public sealed class MainForm : Form
         AfterBinInsert(inserted, audio, $" at {TimelineControl.FormatTime(at, tenths: true)}");
     }
 
-    void AddOverlayAtPlayhead(Guid mediaId) => AddOverlayAtPlayhead(new[] { mediaId });
+    void AddOverlayAtPlayhead(Guid mediaId) => AddOverlayAtPlayhead([mediaId]);
 
     /// <summary>
     /// Put bin files on the overlay tracks at the playhead, as picture-in-picture (one undo step). Several files stack
@@ -974,7 +974,7 @@ public sealed class MainForm : Form
     List<Guid> SelectedClips()
     {
         var ids = _timeline.SelectedClipIds;
-        return _session.Project.Timeline.Where(c => ids.Contains(c.Id)).Select(c => c.Id).ToList();
+        return [.. _session.Project.Timeline.Where(c => ids.Contains(c.Id)).Select(c => c.Id)];
     }
 
     void ToggleMute(Guid? clipId)
@@ -1441,7 +1441,7 @@ public sealed class MainForm : Form
                 b.DropDownItems.Add(item);
             }
             b.DropDownItems.Add(new ToolStripSeparator());
-            b.DropDownItems.Add("Clear recent list", null, (_, _) => { RecentProjects.Save(RecentPath, Array.Empty<string>()); _lastRecent = null; });
+            b.DropDownItems.Add("Clear recent list", null, (_, _) => { RecentProjects.Save(RecentPath, []); _lastRecent = null; });
         };
         return b;
     }

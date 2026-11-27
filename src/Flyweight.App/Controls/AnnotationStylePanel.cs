@@ -110,7 +110,7 @@ public sealed class AnnotationStylePanel : PropertySheet
             Row("Text", _text);
 
             _font = new Theme.DarkCombo { Dock = DockStyle.Fill, IntegralHeight = false, MaxDropDownItems = 20 };
-            _font.Items.AddRange(FontFamily.Families.Select(f => (object)f.Name).ToArray());
+            _font.Items.AddRange([.. FontFamily.Families.Select(f => (object)f.Name)]);
             _font.SelectedIndexChanged += (_, _) =>
             {
                 if (_font.SelectedItem is string name) Raise(a => a.FontFamily = name);

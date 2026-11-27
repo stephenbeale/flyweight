@@ -109,7 +109,7 @@ public static class FfmpegRunner
         var firstLine = "";
         try
         {
-            await RunAsync(FfmpegLocator.Ffmpeg, new[] { "-hide_banner", "-version" },
+            await RunAsync(FfmpegLocator.Ffmpeg, ["-hide_banner", "-version"],
                 line => { if (firstLine.Length == 0) firstLine = line; }, CancellationToken.None);
         }
         catch { return false; }

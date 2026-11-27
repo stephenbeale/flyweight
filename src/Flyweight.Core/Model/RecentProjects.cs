@@ -14,23 +14,23 @@ public static class RecentProjects
     public static List<string> Add(IEnumerable<string> list, string path)
     {
         var full = Path.GetFullPath(path);
-        return list.Where(p => !string.Equals(p, full, StringComparison.OrdinalIgnoreCase))
-                   .Prepend(full).Take(Max).ToList();
+        return [.. list.Where(p => !string.Equals(p, full, StringComparison.OrdinalIgnoreCase))
+                   .Prepend(full).Take(Max)];
     }
 
     public static List<string> Remove(IEnumerable<string> list, string path) =>
-        list.Where(p => !string.Equals(p, path, StringComparison.OrdinalIgnoreCase)).ToList();
+        [.. list.Where(p => !string.Equals(p, path, StringComparison.OrdinalIgnoreCase))];
 
     /// <summary>Read the list; a missing or damaged file is just an empty list.</summary>
     public static List<string> Load(string file)
     {
         try
         {
-            if (!File.Exists(file)) return new();
-            var paths = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(file)) ?? new();
-            return paths.Where(p => !string.IsNullOrWhiteSpace(p)).Take(Max).ToList();
+            if (!File.Exists(file)) return [];
+            var paths = JsonSerializer.Deserialize<List<string>>(File.ReadAllText(file)) ?? [];
+            return [.. paths.Where(p => !string.IsNullOrWhiteSpace(p)).Take(Max)];
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return new(); }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return []; }
     }
 
     public static void Save(string file, IEnumerable<string> list)

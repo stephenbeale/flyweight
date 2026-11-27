@@ -503,13 +503,13 @@ public sealed class PreviewCanvas : Control
     /// <summary>Handles in order: P1, P2, then for boxes the other two corners (X1,Y2) and (X2,Y1).</summary>
     static PointF[] Handles(Annotation a, RectangleF canvas) => a.Kind switch
     {
-        AnnotationKind.Arrow => new[] { AnnotationRenderer.ToCanvas(canvas, a.X1, a.Y1), AnnotationRenderer.ToCanvas(canvas, a.X2, a.Y2) },
-        AnnotationKind.Box => new[]
-        {
+        AnnotationKind.Arrow => [AnnotationRenderer.ToCanvas(canvas, a.X1, a.Y1), AnnotationRenderer.ToCanvas(canvas, a.X2, a.Y2)],
+        AnnotationKind.Box =>
+        [
             AnnotationRenderer.ToCanvas(canvas, a.X1, a.Y1), AnnotationRenderer.ToCanvas(canvas, a.X2, a.Y2),
             AnnotationRenderer.ToCanvas(canvas, a.X1, a.Y2), AnnotationRenderer.ToCanvas(canvas, a.X2, a.Y1),
-        },
-        _ => Array.Empty<PointF>(),
+        ],
+        _ => [],
     };
 
     /// <summary>Resize cursor when hovering a handle of the selected annotation, else null.</summary>

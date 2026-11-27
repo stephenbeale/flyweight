@@ -70,7 +70,7 @@ public sealed class VerticalCanvasTests : IDisposable
         var p = new Project { Shape = CanvasShape.Vertical, Background = BackgroundFill.Blur };
         var portrait = Media(1080, 1920);
         var wide = Media(1920, 1080);
-        p.Media.AddRange(new[] { portrait, wide });
+        p.Media.AddRange([portrait, wide]);
         var c1 = TimelineOps.Append(p, portrait);
         var c2 = TimelineOps.Append(p, wide);
         Assert.False(ClipLook.BlursBars(p, c1, portrait));
@@ -116,7 +116,7 @@ public sealed class VerticalCanvasTests : IDisposable
 
     static bool FfmpegAvailable()
     {
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1") throw new InvalidOperationException("ffmpeg required", ex);
@@ -127,7 +127,7 @@ public sealed class VerticalCanvasTests : IDisposable
     async Task<string> Clip(string name, int w, int h, string color)
     {
         var path = Path.Combine(_dir, name);
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", $"color=c={color}:s={w}x{h}:r=30:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", path });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "lavfi", "-i", $"color=c={color}:s={w}x{h}:r=30:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", path]);
         return path;
     }
 
@@ -135,8 +135,8 @@ public sealed class VerticalCanvasTests : IDisposable
     {
         var raw = Path.Combine(_dir, $"px-{Guid.NewGuid():N}.rgb");
         var args = new List<string>();
-        if (t > 0) args.AddRange(new[] { "-ss", FfmpegRunner.Num(t) });
-        args.AddRange(new[] { "-i", file, "-frames:v", "1", "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw });
+        if (t > 0) args.AddRange(["-ss", FfmpegRunner.Num(t)]);
+        args.AddRange(["-i", file, "-frames:v", "1", "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw]);
         await FfmpegRunner.RunFfmpegAsync(args);
         var b = await File.ReadAllBytesAsync(raw);
         return (b[0], b[1], b[2]);
@@ -154,7 +154,7 @@ public sealed class VerticalCanvasTests : IDisposable
         var mP = await MediaProbe.ProbeAsync(portrait);
         var mW = await MediaProbe.ProbeAsync(wide);
         var mC = await MediaProbe.ProbeAsync(cam);
-        p.Media.AddRange(new[] { mP, mW, mC });
+        p.Media.AddRange([mP, mW, mC]);
         TimelineOps.Append(p, mP);
         TimelineOps.Append(p, mW);
         var o = TimelineOps.AddOverlay(p, mC, S(0), 1);

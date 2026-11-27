@@ -36,7 +36,7 @@ public sealed class ClipPropertiesPanel : PropertySheet
         Text = "Crop cuts edges off (the rest is fitted to the frame); zoom magnifies. Both work on the original footage, so 4K clips stay sharp. Annotations aren't zoomed.",
     };
     readonly SpeedBox _speed = new();
-    readonly List<Control> _speedControls = new();
+    readonly List<Control> _speedControls = [];
 
     /// <summary>Stills only: how long the image shows (seconds). Videos get Speed instead.</summary>
     readonly NumericUpDown _length = new()
@@ -45,7 +45,7 @@ public sealed class ClipPropertiesPanel : PropertySheet
         Minimum = 0.1m, Maximum = (decimal)TimelineOps.MaxGapLength.TotalSeconds, DecimalPlaces = 1, Increment = 1,
         BackColor = Color.FromArgb(46, 46, 54), ForeColor = Fg, BorderStyle = BorderStyle.FixedSingle, Width = 80,
     };
-    readonly List<Control> _lengthControls = new();
+    readonly List<Control> _lengthControls = [];
 
     /// <summary>A still's length on the timeline was changed (seconds). Later clips and the other tracks move along.</summary>
     public event Action<double>? StillLengthChanged;

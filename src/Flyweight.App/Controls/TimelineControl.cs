@@ -84,7 +84,7 @@ public sealed class TimelineControl : Control
     ProjectSession _session = null!;
     MediaLibrary _library = null!;
     Func<TimeSpan> _playhead = () => TimeSpan.Zero;
-    readonly Dictionary<Guid, Image> _thumbs = new();
+    readonly Dictionary<Guid, Image> _thumbs = [];
 
     double _pps = 40;       // pixels per second
     float _scrollX;         // pixels
@@ -184,7 +184,7 @@ public sealed class TimelineControl : Control
     }
 
     Guid? _primaryClip;
-    readonly HashSet<Guid> _selectedClips = new();
+    readonly HashSet<Guid> _selectedClips = [];
 
     /// <summary>
     /// The MAIN selected clip (the one the Properties panel shows). Setting it selects just that clip; use
@@ -252,7 +252,7 @@ public sealed class TimelineControl : Control
     // One "main" item per kind (what the Properties panel shows; setting it selects just that one), plus everything a
     // drag-select box picked up (the *Ids sets, which include the main one). Delete acts on all of them.
     Guid? _primaryAudio, _primaryOverlay, _primaryAnnotation;
-    readonly HashSet<Guid> _selAudio = new(), _selOverlays = new(), _selAnnotations = new();
+    readonly HashSet<Guid> _selAudio = [], _selOverlays = [], _selAnnotations = [];
 
     static void SetOne(ref Guid? primary, HashSet<Guid> set, Guid? value)
     {
@@ -565,7 +565,7 @@ public sealed class TimelineControl : Control
         float px = X(_playhead());
         using (var pen = new Pen(Color.FromArgb(255, 70, 70), 2)) g.DrawLine(pen, px, 0, px, Height);
         using (var b = new SolidBrush(Color.FromArgb(255, 70, 70)))
-            g.FillPolygon(b, new[] { new PointF(px - 6, 0), new PointF(px + 6, 0), new PointF(px, 9) });
+            g.FillPolygon(b, [new PointF(px - 6, 0), new PointF(px + 6, 0), new PointF(px, 9)]);
     }
 
     protected override void OnResize(EventArgs e)
@@ -615,7 +615,7 @@ public sealed class TimelineControl : Control
         using var bg = new SolidBrush(Color.FromArgb(38, 38, 44));
         g.FillRectangle(bg, 0, 0, Width, RulerH);
         // Pick a label step that leaves ~80px between labels.
-        double[] steps = { 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600 };
+        double[] steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
         double step = steps.FirstOrDefault(s => s * _pps >= 80, 600);
         double first = Math.Floor(_scrollX / _pps / step) * step;
         using var pen = new Pen(Color.FromArgb(90, 90, 100));
@@ -827,7 +827,7 @@ public sealed class TimelineControl : Control
     }
 
     /// <summary>Thumbnails pre-scaled to a row height, so tiling them is a 1:1 copy instead of a resample per tile.</summary>
-    readonly Dictionary<(Guid, int), Bitmap> _tiles = new();
+    readonly Dictionary<(Guid, int), Bitmap> _tiles = [];
 
     /// <summary>
     /// Tile a poster thumbnail along an item, but ONLY across the part that's on screen. Zoomed in, a long clip is
@@ -989,7 +989,7 @@ public sealed class TimelineControl : Control
         // A plain click (no drag) clears the selection and moves the playhead, as before.
         bool additive = (ModifierKeys & (Keys.Shift | Keys.Control)) != 0;
         if (!additive) ClearSelection();
-        _marqueeBase = (new(_selectedClips), new(_selAudio), new(_selOverlays), new(_selAnnotations));
+        _marqueeBase = ([.. _selectedClips], new(_selAudio), new(_selOverlays), new(_selAnnotations));
         _marqueeFrom = _marqueeTo = e.Location;
         _downY = e.Y;
         _drag = Drag.Marquee;

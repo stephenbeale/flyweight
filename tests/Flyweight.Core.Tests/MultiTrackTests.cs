@@ -28,7 +28,7 @@ public class MultiTrackTests
 
         var inserted = TimelineOps.InsertMediaAt(p, b, S(6));
 
-        Assert.Equal(new[] { a.Id, b.Id, a.Id }, p.Timeline.Select(c => c.SourceId));
+        Assert.Equal([a.Id, b.Id, a.Id], p.Timeline.Select(c => c.SourceId));
         Assert.Equal(S(6), p.Timeline[0].Out);
         Assert.Equal(S(6), p.Timeline[2].In);
         Assert.Equal(S(6), TimelineOps.ClipStart(p, inserted.Id));

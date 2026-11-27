@@ -14,7 +14,7 @@ public sealed class FrameExportTests : IDisposable
     static bool FfmpegAvailable()
     {
         // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1") throw new InvalidOperationException("ffmpeg required", ex);
@@ -25,7 +25,7 @@ public sealed class FrameExportTests : IDisposable
     async Task<(int R, int G, int B)> Pixel(string image, int x, int y)
     {
         var raw = Path.Combine(_dir, $"px-{Guid.NewGuid():N}.rgb");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-i", image, "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw });
+        await FfmpegRunner.RunFfmpegAsync(["-i", image, "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw]);
         var b = await File.ReadAllBytesAsync(raw);
         return (b[0], b[1], b[2]);
     }
@@ -36,18 +36,17 @@ public sealed class FrameExportTests : IDisposable
         if (!FfmpegAvailable()) return;
         // 2 s: left half red, right half blue, then 2 s dark grey.
         var halves = Path.Combine(_dir, "halves.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=red:s=640x720:r=30:d=2", "-f", "lavfi", "-i", "color=c=blue:s=640x720:r=30:d=2",
             "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]", "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", halves,
-        });
+        ]);
         var grey = Path.Combine(_dir, "grey.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", "color=c=0x404040:s=1280x720:r=30:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", grey });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "lavfi", "-i", "color=c=0x404040:s=1280x720:r=30:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", grey]);
 
         var p = new Project();
         var mH = await MediaProbe.ProbeAsync(halves);
         var mG = await MediaProbe.ProbeAsync(grey);
-        p.Media.AddRange(new[] { mH, mG });
+        p.Media.AddRange([mH, mG]);
         var c1 = TimelineOps.Append(p, mH);
         var c2 = TimelineOps.Append(p, mG);
         TimelineOps.SetClipZoom(p, c1.Id, 2);

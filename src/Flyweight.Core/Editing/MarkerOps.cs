@@ -39,12 +39,11 @@ public static class MarkerOps
 
     /// <summary>All visible markers in timeline order.</summary>
     public static List<(Marker Marker, TimeSpan Time)> Visible(Project p) =>
-        p.Markers
+        [.. p.Markers
             .Select(m => (Marker: m, Time: TimelineTime(p, m)))
             .Where(x => x.Time is not null)
             .Select(x => (x.Marker, x.Time!.Value))
-            .OrderBy(x => x.Item2)
-            .ToList();
+            .OrderBy(x => x.Item2)];
 
     public static string NextDefaultTitle(Project p) => $"Chapter {p.Markers.Count + 1}";
 

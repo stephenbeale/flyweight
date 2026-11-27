@@ -62,7 +62,7 @@ public static class YouTubeText
     }
 
     public static List<string> SplitTags(string tags) =>
-        tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+        [.. tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
 
     /// <summary>The text file: labelled sections, so each can be copied straight into Studio's matching box.</summary>
     public static string FileText(YouTubeDetails d, string videoFileName, ChapterList? chapters = null)

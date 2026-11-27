@@ -79,7 +79,7 @@ public sealed class ExportDoneForm : Form
         };
         var support = Row(enjoying, coffee);
 
-        stack.Controls.AddRange(new Control[] { heading, file, detailLabel, body, buttons, divider, support });
+        stack.Controls.AddRange([heading, file, detailLabel, body, buttons, divider, support]);
         Controls.Add(stack);
         AcceptButton = studio;
         CancelButton = close;

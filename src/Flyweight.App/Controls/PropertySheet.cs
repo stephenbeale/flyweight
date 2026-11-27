@@ -10,7 +10,7 @@ namespace Flyweight.App.Controls;
 public abstract class PropertySheet : UserControl
 {
     const int Pad = 6, Gap = 8;
-    readonly List<PropertyGroup> _groups = new();
+    readonly List<PropertyGroup> _groups = [];
     readonly string _key;
     PropertyGroup? _current;
 
@@ -271,7 +271,7 @@ public sealed class PropertyGroup : Panel
             pen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
             var pts = _expanded
                 ? new[] { new PointF(cx - a, cy - a / 2), new PointF(cx, cy + a / 2), new PointF(cx + a, cy - a / 2) }
-                : new[] { new PointF(cx - a / 2, cy - a), new PointF(cx + a / 2, cy), new PointF(cx - a / 2, cy + a) };
+                : [new PointF(cx - a / 2, cy - a), new PointF(cx + a / 2, cy), new PointF(cx - a / 2, cy + a)];
             g.DrawLines(pen, pts);
         }
         g.SmoothingMode = old;
@@ -303,10 +303,10 @@ static class UiState
             try
             {
                 _collapsed = File.Exists(FilePath)
-                    ? JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(FilePath)) ?? new()
-                    : new();
+                    ? JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(FilePath)) ?? []
+                    : [];
             }
-            catch { _collapsed = new(); } // a damaged file just means everything starts open
+            catch { _collapsed = []; } // a damaged file just means everything starts open
             return _collapsed;
         }
     }

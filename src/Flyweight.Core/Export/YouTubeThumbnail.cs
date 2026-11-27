@@ -16,7 +16,7 @@ public static class YouTubeThumbnail
     public const long MaxBytes = 2L * 1024 * 1024;
 
     /// <summary>ffmpeg JPEG quality steps, best first (2 = best, 31 = worst).</summary>
-    static readonly int[] Qualities = { 2, 3, 4, 5, 7, 9, 12, 16, 20, 25, 31 };
+    static readonly int[] Qualities = [2, 3, 4, 5, 7, 9, 12, 16, 20, 25, 31];
 
     /// <summary>"Holiday thumbnail 1m23s.jpg", next to the Save frame naming.</summary>
     public static string DefaultFileName(Project p, string? projectFilePath, TimeSpan t) =>
@@ -33,11 +33,10 @@ public static class YouTubeThumbnail
         {
             foreach (var q in Qualities)
             {
-                await FfmpegRunner.RunFfmpegAsync(new[]
-                {
+                await FfmpegRunner.RunFfmpegAsync([
                     "-i", png, "-frames:v", "1", "-vf", $"scale={Width}:{Height}:flags=bicubic,setsar=1",
                     "-q:v", q.ToString(), "-f", "image2", "-update", "1", tmp,
-                }, ct: ct);
+                ], ct: ct);
                 if (new FileInfo(tmp).Length <= maxBytes)
                 {
                     File.Move(tmp, jpg, overwrite: true);

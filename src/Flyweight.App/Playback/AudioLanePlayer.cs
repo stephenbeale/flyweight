@@ -43,7 +43,7 @@ sealed class AudioLanePlayer : IDisposable
 
     readonly LibVLC _vlc;
     readonly ProjectSession _session;
-    readonly Dictionary<Guid, Voice> _voices = new();
+    readonly Dictionary<Guid, Voice> _voices = [];
 
     public AudioLanePlayer(LibVLC vlc, ProjectSession session)
     {

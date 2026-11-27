@@ -52,7 +52,7 @@ public sealed class FreezeFrameForm : Form
         layout.Controls.Add(hint, 0, 2);
         layout.SetColumnSpan(hint, 3);
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        buttons.Controls.AddRange(new Control[] { cancel, ok });
+        buttons.Controls.AddRange([cancel, ok]);
         layout.Controls.Add(buttons, 0, 3);
         layout.SetColumnSpan(buttons, 3);
         Controls.Add(layout);

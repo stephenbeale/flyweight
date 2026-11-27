@@ -142,7 +142,7 @@ public static class TimelineOps
         if (!still.IsStill) throw new ArgumentException("Freeze frames must be still images.", nameof(still));
         if (Locate(p, t) is not { } hit) return null;
         // What's on screen at the frozen moment, captured before the split below moves things around.
-        var onScreen = copyAnnotations ? VisibleAt(p, t).Select(a => a.Clone()).ToList() : new List<Annotation>();
+        var onScreen = copyAnnotations ? [.. VisibleAt(p, t).Select(a => a.Clone())] : new List<Annotation>();
 
         int insertAt = OpenGapAt(p, t, hit);
 
@@ -230,12 +230,12 @@ public static class TimelineOps
     /// </summary>
     public static List<AudioItem> UnlinkedSoundOf(Project p, Guid clipId)
     {
-        if (p.FindClip(clipId) is not { IsGap: false } c || Math.Abs(c.Speed - 1) > 0.0005) return new();
+        if (p.FindClip(clipId) is not { IsGap: false } c || Math.Abs(c.Speed - 1) > 0.0005) return [];
         var start = ClipStart(p, clipId);
         var end = start + c.Duration;
         var origin = start - c.In; // timeline time of the file's 0:00 for this clip
-        return p.AudioTrack.Where(a => a.SourceId == c.SourceId && a.Start < end && a.End > start &&
-                                       ((a.Start - a.In) - origin).Duration() <= LinkTolerance).ToList();
+        return [.. p.AudioTrack.Where(a => a.SourceId == c.SourceId && a.Start < end && a.End > start &&
+                                       ((a.Start - a.In) - origin).Duration() <= LinkTolerance)];
     }
 
     /// <summary>Why <see cref="LinkAudio"/> would refuse this clip, or null if it can be done.</summary>
@@ -463,7 +463,7 @@ public static class TimelineOps
 
     /// <summary>Overlays showing at timeline time <paramref name="t"/>, bottom first (track, then the order they were added).</summary>
     public static List<OverlayClip> OverlaysAt(Project p, TimeSpan t) =>
-        p.Overlays.Where(o => o.Start <= t && t < o.End).OrderBy(o => o.Track).ToList(); // OrderBy is stable
+        [.. p.Overlays.Where(o => o.Start <= t && t < o.End).OrderBy(o => o.Track)]; // OrderBy is stable
 
     /// <summary>
     /// Ripple delete: remove the clip and close the gap. Its annotations and markers go too. With
@@ -762,7 +762,7 @@ public static class TimelineOps
     /// <summary>Snapshot the tracks before trimming <paramref name="clipId"/>, so the drag can keep them in sync.</summary>
     public static TrackSnapshot? CaptureTracks(Project p, Guid clipId) =>
         p.FindClip(clipId) is { } c
-            ? new TrackSnapshot(p.Overlays.Select(o => o.Clone()).ToList(), p.AudioTrack.Select(a => a.Clone()).ToList(), clipId, c.Duration)
+            ? new TrackSnapshot([.. p.Overlays.Select(o => o.Clone())], [.. p.AudioTrack.Select(a => a.Clone())], clipId, c.Duration)
             : null;
 
     /// <summary>Restore the tracks from the snapshot, then cut or open the gap the trim made, at the trimmed edge.</summary>
@@ -835,10 +835,10 @@ public static class TimelineOps
     /// The speeds offered in the UI: fine steps near normal speed (owner: "1.25 is quite fast"), coarser further out.
     /// </summary>
     public static readonly double[] SpeedPresets =
-    {
+    [
         0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1,
         1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2, 2.5, 3, 4,
-    };
+    ];
 
     /// <summary>
     /// Play a clip faster or slower (clamped to 0.25–4). Its In/Out don't change, so its annotations stay on the same
@@ -1251,7 +1251,7 @@ public static class TimelineOps
     /// <summary>All pieces of <paramref name="a"/>'s run (just <paramref name="a"/> if it isn't linked), in timeline order.</summary>
     public static List<Annotation> LinkedPieces(Project p, Annotation a) =>
         a.LinkId is not { } link ? new List<Annotation> { a }
-        : p.Annotations.Where(x => x.LinkId == link).OrderBy(x => ClipIndex(p, x.ClipId)).ThenBy(x => x.Start).ToList();
+        : [.. p.Annotations.Where(x => x.LinkId == link).OrderBy(x => ClipIndex(p, x.ClipId)).ThenBy(x => x.Start)];
 
     /// <summary>Copy look and position from one piece to the rest of its run (not times or clip).</summary>
     public static void SyncLinked(Project p, Guid annotationId)
@@ -1435,7 +1435,7 @@ public static class TimelineOps
             for (int i = 1; i < pieces.Count; i++)
             {
                 int gap = ClipIndex(p, pieces[i].ClipId) - ClipIndex(p, pieces[i - 1].ClipId);
-                if (gap <= 1) chains[^1].Add(pieces[i]); else chains.Add(new() { pieces[i] });
+                if (gap <= 1) chains[^1].Add(pieces[i]); else chains.Add([pieces[i]]);
             }
             for (int c = 0; c < chains.Count; c++)
             {

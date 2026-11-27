@@ -89,7 +89,7 @@ public sealed class AnnotationFadeTests : IDisposable
     static bool FfmpegAvailable()
     {
         // Task.Run: blocking one of xUnit's few test threads here deadlocks parallel test classes.
-        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(new[] { "-version" })).Wait(); return true; }
+        try { Task.Run(() => FfmpegRunner.RunFfmpegAsync(["-version"])).Wait(); return true; }
         catch (Exception ex)
         {
             if (Environment.GetEnvironmentVariable("FLYWEIGHT_REQUIRE_FFMPEG") == "1")
@@ -101,11 +101,10 @@ public sealed class AnnotationFadeTests : IDisposable
     async Task<(int R, int G, int B)> Pixel(string file, double t, int x, int y)
     {
         var raw = Path.Combine(_dir, $"px-{Guid.NewGuid():N}.rgb");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-ss", FfmpegRunner.Num(t), "-i", file, "-frames:v", "1",
             "-vf", $"format=rgb24,crop=1:1:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", raw,
-        });
+        ]);
         var b = await File.ReadAllBytesAsync(raw);
         return (b[0], b[1], b[2]);
     }
@@ -115,7 +114,7 @@ public sealed class AnnotationFadeTests : IDisposable
     {
         if (!FfmpegAvailable()) return;
         var video = Path.Combine(_dir, "red.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", video });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", video]);
 
         var p = new Project();
         var m = await MediaProbe.ProbeAsync(video);
@@ -128,11 +127,10 @@ public sealed class AnnotationFadeTests : IDisposable
 
         // Stand-in for the UI's renderer: opaque white square top-left, transparent elsewhere.
         var png = Path.Combine(_dir, "box.png");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=white@1.0:s=300x300,format=rgba",
             "-vf", "pad=1920:1080:0:0:color=black@0.0", "-frames:v", "1", png,
-        });
+        ]);
 
         var output = Path.Combine(_dir, "faded.mp4");
         await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false },
@@ -155,7 +153,7 @@ public sealed class AnnotationFadeTests : IDisposable
     {
         if (!FfmpegAvailable()) return;
         var video = Path.Combine(_dir, "portrait.mp4");
-        await FfmpegRunner.RunFfmpegAsync(new[] { "-f", "lavfi", "-i", "color=c=red:s=360x640:r=30:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", video });
+        await FfmpegRunner.RunFfmpegAsync(["-f", "lavfi", "-i", "color=c=red:s=360x640:r=30:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", video]);
 
         var p = new Project { Shape = CanvasShape.Vertical };
         var m = await MediaProbe.ProbeAsync(video);
@@ -169,11 +167,10 @@ public sealed class AnnotationFadeTests : IDisposable
         var (w, h) = settings.SizeFor(p.Shape);
         Assert.Equal((1080, 1920), (w, h));
         var png = Path.Combine(_dir, "vbox.png");
-        await FfmpegRunner.RunFfmpegAsync(new[]
-        {
+        await FfmpegRunner.RunFfmpegAsync([
             "-f", "lavfi", "-i", "color=c=white@1.0:s=300x300,format=rgba",
             "-vf", $"pad={w}:{h}:0:0:color=black@0.0", "-frames:v", "1", png,
-        });
+        ]);
 
         var output = Path.Combine(_dir, "vertical.mp4");
         await ExportPlan.Build(p, settings, new Dictionary<Guid, string> { [box.Id] = png }, output).RunAsync();

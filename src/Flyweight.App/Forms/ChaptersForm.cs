@@ -56,7 +56,7 @@ public sealed class ChaptersForm : Form
         save.Click += (_, _) => SaveTxt();
 
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        buttons.Controls.AddRange(new Control[] { close, save, copy });
+        buttons.Controls.AddRange([close, save, copy]);
 
         var layout = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
         foreach (var c in new Control[] { intro, text, check, _status, buttons }) layout.Controls.Add(c);

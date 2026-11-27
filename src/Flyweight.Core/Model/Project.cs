@@ -30,28 +30,28 @@ public sealed class Project
     public CanvasShape Shape { get; set; } = CanvasShape.Landscape;
 
     /// <summary>Every source file imported into the media bin.</summary>
-    public List<SourceMedia> Media { get; set; } = new();
+    public List<SourceMedia> Media { get; set; } = [];
 
     /// <summary>Single video track. Order in the list = order on the timeline.</summary>
-    public List<Clip> Timeline { get; set; } = new();
+    public List<Clip> Timeline { get; set; } = [];
 
     /// <summary>Arrows, boxes and text. Each is anchored to a clip.</summary>
-    public List<Annotation> Annotations { get; set; } = new();
+    public List<Annotation> Annotations { get; set; } = [];
 
     /// <summary>
     /// Music and narration: pure audio files placed at TIMELINE times, mixed over the clips' own sound.
     /// Older project files load with none.
     /// </summary>
-    public List<AudioItem> AudioTrack { get; set; } = new();
+    public List<AudioItem> AudioTrack { get; set; } = [];
 
     /// <summary>
     /// Video on the overlay tracks (V2, V3…): picture-in-picture or full-frame cutaways placed at TIMELINE times over
     /// the main track, like the audio track. Higher <see cref="OverlayClip.Track"/> draws on top. Older files load with none.
     /// </summary>
-    public List<OverlayClip> Overlays { get; set; } = new();
+    public List<OverlayClip> Overlays { get; set; } = [];
 
     /// <summary>Chapter markers (for YouTube timestamps). Each is anchored to a clip, like annotations.</summary>
-    public List<Marker> Markers { get; set; } = new();
+    public List<Marker> Markers { get; set; } = [];
 
     /// <summary>Title, description and tags for YouTube Studio. Older project files load empty.</summary>
     public Export.YouTubeDetails YouTube { get; set; } = new();

@@ -14,8 +14,8 @@ public sealed class MediaBinControl : UserControl
     readonly BinList _list;
     readonly Theme.PanelHeader _header = new("Media");
     readonly Label _empty;
-    readonly Dictionary<Guid, Bitmap> _thumbs = new();
-    readonly Dictionary<Guid, CardInfo> _info = new();
+    readonly Dictionary<Guid, Bitmap> _thumbs = [];
+    readonly Dictionary<Guid, CardInfo> _info = [];
     int _hot = -1;
 
     /// <summary>What a card shows besides the name (kept here: the ListViewItem only carries the media id).</summary>
@@ -49,7 +49,7 @@ public sealed class MediaBinControl : UserControl
 
     /// <summary>The selected files, in bin order (empty if none).</summary>
     public IReadOnlyList<Guid> SelectedMediaIds =>
-        _list.SelectedItems.Cast<ListViewItem>().OrderBy(i => i.Index).Select(i => (Guid)i.Tag!).ToList();
+        [.. _list.SelectedItems.Cast<ListViewItem>().OrderBy(i => i.Index).Select(i => (Guid)i.Tag!)];
 
     /// <summary>The selected file when exactly one is selected.</summary>
     public Guid? SelectedMediaId => _list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is Guid id ? id : null;
@@ -262,7 +262,7 @@ public sealed class MediaBinControl : UserControl
         foreach (var m in project.Media)
         {
             var key = m.Id.ToString();
-            var item = _list.Items[key] ?? _list.Items.Add(new ListViewItem(new[] { m.DisplayName, "" }) { Name = key, Tag = m.Id });
+            var item = _list.Items[key] ?? _list.Items.Add(new ListViewItem([m.DisplayName, ""]) { Name = key, Tag = m.Id });
             var st = library.GetState(m.Id);
             string status = st.Status switch
             {

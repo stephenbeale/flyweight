@@ -15,7 +15,7 @@ public class YouTubeChaptersTests
         var p = new Project();
         var a = new SourceMedia { OriginalPath = "a.mp4", Duration = S(60), Fps = 30 };
         var b = new SourceMedia { OriginalPath = "b.mp4", Duration = S(120), Fps = 30 };
-        p.Media.AddRange(new[] { a, b });
+        p.Media.AddRange([a, b]);
         TimelineOps.Append(p, a);
         TimelineOps.Append(p, b);
         return p;
