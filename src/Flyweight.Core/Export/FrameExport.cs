@@ -28,9 +28,7 @@ public static class FrameExport
         else
         {
             var media = p.FindMedia(clip.SourceId) ?? throw new InvalidOperationException("The clip's media is missing.");
-            var fit = ClipLook.IsZoomed(clip) ? ClipLook.ZoomFilter(clip, width, height)
-                    : ClipLook.BlursBars(p, clip, media) ? ClipLook.BlurFitFilter(width, height, "bf")
-                    : Canvas.FitFilter(width, height);
+            var fit = ClipLook.FrameFilter(p, clip, media, width, height, "bf");
             if (!media.IsStill) args.AddRange(["-ss", Sec(hit.SourceTime)]); // input seek: fast, and exact when decoding
             args.AddRange(["-i", media.OriginalPath]);
             baseChain = $"{ClipLook.MaskFilter(clip)}{fit},{ClipLook.ToneFilter(clip)}".TrimEnd(',');

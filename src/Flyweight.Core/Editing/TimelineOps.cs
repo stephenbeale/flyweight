@@ -882,6 +882,19 @@ public static class TimelineOps
         if (panY is { } y) c.PanY = double.IsFinite(y) ? Math.Clamp(y, 0, 1) : 0.5;
     }
 
+    /// <summary>Vertical projects (D45): where the 9:16 frame sits across a wider picture, 0 = left … 1 = right.</summary>
+    public static void SetClipFrameX(Project p, Guid clipId, double frameX)
+    {
+        if (p.FindClip(clipId) is { } c) c.FrameX = ClipLook.CleanFrameX(frameX);
+    }
+
+    /// <summary>Show the whole picture with bars (true) or fill the frame (false), for the given clips.</summary>
+    public static void SetClipFitWhole(Project p, IEnumerable<Guid> clipIds, bool fitWhole)
+    {
+        foreach (var id in clipIds)
+            if (p.FindClip(id) is { } c) c.FitWhole = fitWhole;
+    }
+
     /// <summary>Brightness -1…+1 (0 = as shot).</summary>
     public static void SetClipBrightness(Project p, Guid clipId, double brightness)
     {
@@ -911,6 +924,8 @@ public static class TimelineOps
         to.CropTop = from.CropTop;
         to.CropRight = from.CropRight;
         to.CropBottom = from.CropBottom;
+        to.FrameX = from.FrameX;
+        to.FitWhole = from.FitWhole;
     }
 
     // ---------------- Crop (main clips and overlays) ----------------

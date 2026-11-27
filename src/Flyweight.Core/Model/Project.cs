@@ -146,6 +146,15 @@ public sealed class Clip
     public double CropBottom { get; set; }
 
     /// <summary>
+    /// Vertical projects (D45): a picture wider than the 9:16 frame fills it, full height, and this says where the frame
+    /// sits across it: 0 = left edge, 0.5 = centre, 1 = right edge. See <see cref="Media.ClipLook.Fills"/>.
+    /// </summary>
+    public double FrameX { get; set; } = 0.5;
+
+    /// <summary>Show the whole picture inside the frame (with the project's black or blurred bars) instead of filling it.</summary>
+    public bool FitWhole { get; set; }
+
+    /// <summary>
     /// Playback speed: 1 = as shot, 0.25–4. Older project files load as 1. Stills are always 1.
     /// In/Out stay in SOURCE time; the clip's length on the timeline is <see cref="Duration"/>.
     /// </summary>
