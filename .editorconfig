@@ -1,0 +1,22 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# House style: short object initializers keep several members on one line
+# (e.g. `new Clip { SourceId = id, Start = t, In = a, Out = b }`).
+csharp_new_line_before_members_in_object_initializers = false
+csharp_new_line_before_members_in_anonymous_types = false
+# `case X: { ... }` blocks sit level with the case label; goto labels keep their indent.
+csharp_indent_case_contents_when_block = false
+csharp_indent_labels = no_change
+
+[*.{csproj,props,targets,json,yml,yaml}]
+indent_style = space
+indent_size = 2

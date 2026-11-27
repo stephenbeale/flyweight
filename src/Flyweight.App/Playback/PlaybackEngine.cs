@@ -172,7 +172,7 @@ public sealed class PlaybackEngine : IDisposable
     }
 
     /// <summary>Re-show the frame at the current position (after an edit or a proxy finishing).</summary>
-    public void Refresh() => ApplySeek(Position, force: true);
+    public void Refresh() => ApplySeek(Position);
 
     public void TogglePlay()
     {
@@ -199,7 +199,7 @@ public sealed class PlaybackEngine : IDisposable
             _ignoreVlcTimeAboveMs = long.MaxValue;
             _sinceLastSeek.Restart();
         }
-        else ApplySeek(Position, force: true);
+        else ApplySeek(Position);
         PlayingChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -239,7 +239,7 @@ public sealed class PlaybackEngine : IDisposable
         return TimelineOps.Locate(p, t);
     }
 
-    void ApplySeek(TimeSpan t, bool force = false)
+    void ApplySeek(TimeSpan t)
     {
         _pendingSeek = null;
         _sinceLastSeek.Restart();
@@ -392,7 +392,7 @@ public sealed class PlaybackEngine : IDisposable
         {
             if (hit.Clip.IsGap)
             {
-                if (hit.Clip.Id != _clipId) ApplySeek(t, force: true); // into a gap: stop the video, show black
+                if (hit.Clip.Id != _clipId) ApplySeek(t); // into a gap: stop the video, show black
             }
             else if (hit.Clip.Id != _clipId)
             {
@@ -401,7 +401,7 @@ public sealed class PlaybackEngine : IDisposable
                                 Math.Abs((hit.Clip.In - prev.Out).TotalMilliseconds) < 50 && prev.Speed == hit.Clip.Speed &&
                                 _loadedSourceId == hit.Clip.SourceId && _player.State == VLCState.Playing;
                 if (seamless) _clipId = hit.Clip.Id; // adjacent halves of a split: keep playing
-                else ApplySeek(t, force: true);       // a cut: load the next clip where the clock is NOW
+                else ApplySeek(t);       // a cut: load the next clip where the clock is NOW
             }
             else if (!WaitingForProxy || PlayingOriginal)
             {

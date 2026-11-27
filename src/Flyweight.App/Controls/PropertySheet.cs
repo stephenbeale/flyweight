@@ -265,9 +265,10 @@ public sealed class PropertyGroup : Panel
         float cx = btn.X + bs / 2, cy = btn.Y + bs / 2, a = LogicalToDeviceUnits(9) / 2f;
         var old = g.SmoothingMode;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        using (var pen = new Pen(_hover ? Color.White : Color.FromArgb(215, 215, 225), LogicalToDeviceUnits(2))
-               { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round, LineJoin = System.Drawing.Drawing2D.LineJoin.Round })
+        using (var pen = new Pen(_hover ? Color.White : Color.FromArgb(215, 215, 225), LogicalToDeviceUnits(2)))
         {
+            pen.StartCap = pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+            pen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
             var pts = _expanded
                 ? new[] { new PointF(cx - a, cy - a / 2), new PointF(cx, cy + a / 2), new PointF(cx + a, cy - a / 2) }
                 : new[] { new PointF(cx - a / 2, cy - a), new PointF(cx + a / 2, cy), new PointF(cx - a / 2, cy + a) };

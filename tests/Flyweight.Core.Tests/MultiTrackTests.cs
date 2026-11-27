@@ -135,7 +135,7 @@ public class MultiTrackTests
         startsInside.Out = S(5);
         var inside = TimelineOps.AddOverlay(p, Video("z.mp4", 30), S(11));       // 11–13
         inside.Out = S(2);
-        var song = TimelineOps.AddAudio(p, Song(60), S(5));        // 5–65: spans the whole cut
+        TimelineOps.AddAudio(p, Song(60), S(5));                   // 5–65: spans the whole cut
 
         TimelineOps.Delete(p, mid.Id);
 
@@ -160,7 +160,7 @@ public class MultiTrackTests
         TimelineOps.Append(p, Video("b.mp4", 10));                 // 10–20
         var over = TimelineOps.AddOverlay(p, Video("cam.mp4", 30), S(8)); // 8–12: across the cut
         over.Out = S(4);
-        var later = TimelineOps.AddAudio(p, Song(3), S(15));       // 15–18
+        TimelineOps.AddAudio(p, Song(3), S(15));                   // 15–18
 
         var snap = TimelineOps.CaptureTracks(p, a.Id);
         TimelineOps.TrimOut(p, a.Id, S(7), snap);                  // a is now 0–7: its 7–10 is gone

@@ -33,12 +33,18 @@ public sealed class MainForm : Form
     readonly AnnotationStylePanel _props = new() { Dock = DockStyle.Fill, Visible = false };
     readonly ClipPropertiesPanel _clipProps = new() { Dock = DockStyle.Fill, Visible = false };
     readonly OverlayPropertiesPanel _overlayProps = new() { Dock = DockStyle.Fill, Visible = false };
-    readonly Label _propsEmpty = new() { Dock = DockStyle.Fill, ForeColor = Color.Gray, TextAlign = ContentAlignment.MiddleCenter,
+    readonly Label _propsEmpty = new()
+    {
+        Dock = DockStyle.Fill, ForeColor = Color.Gray, TextAlign = ContentAlignment.MiddleCenter,
         Text = "Select an arrow, box or text\nto edit its style,\nor a clip for its volume.\n\nA  arrow    R  box    T  text\nShift+M  mute clip\n\n" +
-               "With a file selected in Media:\nI  insert at playhead\nO  add as overlay" };
+               "With a file selected in Media:\nI  insert at playhead\nO  add as overlay",
+    };
     // AutoSize: a fixed pixel width clipped "/ total" once Windows display scaling enlarged the font.
-    readonly Label _timecode = new() { AutoSize = true, Padding = new Padding(12, 0, 12, 0), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
-        Font = new Font("Consolas", 11f), Dock = DockStyle.Left };
+    readonly Label _timecode = new()
+    {
+        AutoSize = true, Padding = new Padding(12, 0, 12, 0), TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.Gainsboro,
+        Font = new Font("Consolas", 11f), Dock = DockStyle.Left,
+    };
     readonly ToolStripStatusLabel _statusText = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     readonly ToolStripButton _undoBtn = new("Undo");
     readonly ToolStripButton _redoBtn = new("Redo");
@@ -352,10 +358,9 @@ public sealed class MainForm : Form
         void ApplySound(Action<Project, Guid, bool> set, StyleEditPhase phase)
         {
             var clips = SelectedClips();
-            Action<Project>? apply =
-                _timeline.SelectedAudioId is { } aid ? p => set(p, aid, true)
-                : clips.Count > 0 ? p => { foreach (var cid in clips) set(p, cid, false); } // every selected clip, one undo step
-                : null;
+            Action<Project>? apply = null;
+            if (_timeline.SelectedAudioId is { } aid) apply = p => set(p, aid, true);
+            else if (clips.Count > 0) apply = p => { foreach (var cid in clips) set(p, cid, false); }; // every selected clip, one undo step
             if (apply is null) return;
             switch (phase)
             {
@@ -879,7 +884,9 @@ public sealed class MainForm : Form
         menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(o.Start); });
         menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, _engine.Position)));
         menu.Items.Add(new ToolStripMenuItem("Split at playhead (S)", null, (_, _) => Split())
-            { Enabled = _engine.Position - o.Start >= TimelineOps.MinClipLength && o.End - _engine.Position >= TimelineOps.MinClipLength });
+        {
+            Enabled = _engine.Position - o.Start >= TimelineOps.MinClipLength && o.End - _engine.Position >= TimelineOps.MinClipLength,
+        });
         var place = new ToolStripMenuItem("Place");
         foreach (var (pos, label) in new[]
         {
@@ -890,9 +897,13 @@ public sealed class MainForm : Form
             place.DropDownItems.Add(label, null, (_, _) => { _session.Execute(p => TimelineOps.PlaceOverlay(p, overlayId, pos)); ShowOverlayUnderPlayhead(overlayId); });
         menu.Items.Add(place);
         menu.Items.Add(new ToolStripMenuItem("Move up a track", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, o.Start, o.Track + 1)))
-            { Enabled = o.Track < TimelineOps.MaxOverlayTracks });
+        {
+            Enabled = o.Track < TimelineOps.MaxOverlayTracks,
+        });
         menu.Items.Add(new ToolStripMenuItem("Move down a track", null, (_, _) => _session.Execute(p => TimelineOps.MoveOverlay(p, overlayId, o.Start, o.Track - 1)))
-            { Enabled = o.Track > 1 });
+        {
+            Enabled = o.Track > 1,
+        });
         menu.Items.Add(new ToolStripSeparator());
         bool hasAudio = media is { HasAudio: true, IsStill: false };
         menu.Items.Add(new ToolStripMenuItem("Mute (Shift+M)", null, (_, _) => ToggleMute(null)) { Checked = o.Muted, Enabled = hasAudio });
@@ -901,8 +912,11 @@ public sealed class MainForm : Form
             AudioItem? item = null;
             _session.Execute(p => item = TimelineOps.SeparateOverlayAudio(p, overlayId));
             if (item is not null) _statusText.Text = "Separated the overlay's audio onto the audio track; the overlay is muted.";
-        }) { Enabled = hasAudio && TimelineOps.CannotSeparateOverlayAudio(_session.Project, overlayId) is null,
-             ToolTipText = TimelineOps.CannotSeparateOverlayAudio(_session.Project, overlayId) });
+        })
+        {
+            Enabled = hasAudio && TimelineOps.CannotSeparateOverlayAudio(_session.Project, overlayId) is null,
+            ToolTipText = TimelineOps.CannotSeparateOverlayAudio(_session.Project, overlayId),
+        });
         menu.Items.Add("Remove overlay (Del)", null, (_, _) => DeleteSelection());
         menu.Show(screen);
     }
@@ -941,7 +955,9 @@ public sealed class MainForm : Form
         menu.Items.Add("Move to playhead", null, (_, _) => _session.Execute(p => TimelineOps.MoveAudio(p, audioId, _engine.Position)));
         menu.Items.Add("Jump to its start", null, (_, _) => { _engine.Pause(); _engine.Seek(a.Start); });
         menu.Items.Add(new ToolStripMenuItem("Split at playhead (S)", null, (_, _) => Split())
-            { Enabled = _engine.Position - a.Start >= TimelineOps.MinClipLength && a.End - _engine.Position >= TimelineOps.MinClipLength });
+        {
+            Enabled = _engine.Position - a.Start >= TimelineOps.MinClipLength && a.End - _engine.Position >= TimelineOps.MinClipLength,
+        });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Mute (Shift+M)", null, (_, _) => ToggleMute(null)) { Checked = a.Muted });
         if (TimelineOps.LinkedClipOf(_session.Project, audioId) is { } owner)

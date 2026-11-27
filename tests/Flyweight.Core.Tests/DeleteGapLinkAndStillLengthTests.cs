@@ -239,7 +239,7 @@ public class DeleteGapLinkAndStillLengthTests
     {
         var p2 = new Project();
         var v = TimelineOps.Append(p2, Video("v.mp4", 10));
-        var s2 = TimelineOps.SeparateAudio(p2, v.Id)!;         // 0–10
+        TimelineOps.SeparateAudio(p2, v.Id);                   // 0–10
         TimelineOps.TrimOut(p2, v.Id, S(6));                   // picture 0–6; sound still 0–10 and in sync
         Assert.Equal(1, TimelineOps.LinkAudio(p2, v.Id));
         var rest = Assert.Single(p2.AudioTrack);               // 6–10 stays on the audio track
