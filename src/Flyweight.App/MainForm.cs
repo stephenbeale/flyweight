@@ -487,9 +487,13 @@ public sealed class MainForm : Form
         {
             // "Flyweight.exe My video.flyweight" (Open with…, or a shortcut) opens that project.
             var arg = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(f => f.EndsWith(ProjectSerializer.FileExtension, StringComparison.OrdinalIgnoreCase));
-            bool crashed = ClaimSession();
-            if (arg is not null && File.Exists(arg)) LoadProject(arg);
-            else if (crashed) OfferCrashRecovery();
+            if (arg is not null && !File.Exists(arg)) arg = null;
+            // Recovery comes first, even when a project was double-clicked: loading it first and letting autosave run
+            // would overwrite the crashed session's autosave, losing that work for good.
+            bool recovered = ClaimSession() && OfferCrashRecovery(arg);
+            if (recovered && arg is not null)
+                _statusText.Text = $"Recovered your autosaved work. Save it, then open \"{Path.GetFileName(arg)}\" with File > Open.";
+            else if (arg is not null) LoadProject(arg);
             if (!_ownsSession) _statusText.Text = "Another Flyweight window is open, so this one doesn't autosave. Save with Ctrl+S.";
         };
         FormClosing += (_, e) =>
@@ -1579,14 +1583,21 @@ public sealed class MainForm : Form
         }
     }
 
-    void OfferCrashRecovery()
+    /// <summary>
+    /// After a crash, offer the autosave. <paramref name="openingInstead"/> is a project the user asked to open
+    /// (double-clicked); the prompt says that No opens it. Returns true if the autosave was loaded.
+    /// </summary>
+    bool OfferCrashRecovery(string? openingInstead)
     {
-        if (!File.Exists(AutosavePath)) return;
+        if (!File.Exists(AutosavePath)) return false;
 
-        var r = MessageBox.Show(this,
-            $"Flyweight didn't close properly last time.\n\nRecover the autosaved project from {File.GetLastWriteTime(AutosavePath):g}?",
-            "Recover work", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        if (r == DialogResult.Yes) LoadProject(AutosavePath, asRecovery: true);
+        var msg = $"Flyweight didn't close properly last time.\n\nRecover the autosaved project from {File.GetLastWriteTime(AutosavePath):g}?";
+        if (openingInstead is not null)
+            msg += $"\n\nNo opens \"{Path.GetFileName(openingInstead)}\" instead, and the autosaved work is discarded.";
+        var r = MessageBox.Show(this, msg, "Recover work", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (r != DialogResult.Yes) return false;
+        LoadProject(AutosavePath, asRecovery: true);
+        return true;
     }
 
     static void TryDelete(string path)

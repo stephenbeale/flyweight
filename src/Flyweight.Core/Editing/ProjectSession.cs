@@ -25,11 +25,20 @@ public sealed class ProjectSession
     /// <summary>Raised after any change to <see cref="Project"/> (edit, undo, redo, load).</summary>
     public event EventHandler? Changed;
 
-    /// <summary>Apply a discrete edit as one undo step.</summary>
+    /// <summary>
+    /// Apply a discrete edit as one undo step. If the edit throws, the project is put back exactly as it was
+    /// (a half-applied edit would otherwise stay on screen with no undo step), and the exception is rethrown.
+    /// </summary>
     public void Execute(Action<Project> edit)
     {
         var before = ProjectSerializer.Serialize(Project);
-        edit(Project);
+        try { edit(Project); }
+        catch
+        {
+            Project = ProjectSerializer.Deserialize(before);
+            Changed?.Invoke(this, EventArgs.Empty);
+            throw;
+        }
         if (ProjectSerializer.Serialize(Project) != before) PushUndo(before);
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -40,8 +49,14 @@ public sealed class ProjectSession
     /// </summary>
     public void BeginEdit() => _pendingSnapshot ??= ProjectSerializer.Serialize(Project);
 
+    /// <summary>
+    /// One step of a continuous edit. Opens the edit itself if none is open: Undo/Redo commit an open edit, so a drag
+    /// that carries on after Ctrl+Z would otherwise change the project with no undo step and without marking it dirty
+    /// (no autosave, no save prompt).
+    /// </summary>
     public void Preview(Action<Project> edit)
     {
+        BeginEdit();
         edit(Project);
         Changed?.Invoke(this, EventArgs.Empty);
     }
