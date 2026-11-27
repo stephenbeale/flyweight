@@ -92,8 +92,11 @@ public static class ClipLook
     /// The frame then takes a full-height, 9:16 slice of the picture at <see cref="Clip.FrameX"/>; nothing else of the
     /// picture is exported.
     /// </summary>
-    public static bool Fills(Project p, Clip c, SourceMedia? m) =>
-        p.Shape == CanvasShape.Vertical && !c.FitWhole && !IsCropped(c) &&
+    public static bool Fills(Project p, Clip c, SourceMedia? m) => !c.FitWhole && !IsCropped(c) && CanFill(p, m);
+
+    /// <summary>The project is vertical and this picture is wider than its frame, so a clip of it can fill the frame.</summary>
+    public static bool CanFill(Project p, SourceMedia? m) =>
+        p.Shape == CanvasShape.Vertical &&
         m is { IsAudioOnly: false, Width: > 0, Height: > 0 } && m.Width / (double)m.Height > Canvas.Aspect(p.Shape) + 0.01;
 
     public static double CleanFrameX(double v) => double.IsFinite(v) ? Math.Clamp(v, 0, 1) : 0.5;

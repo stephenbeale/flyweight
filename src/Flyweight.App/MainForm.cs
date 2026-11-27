@@ -760,18 +760,19 @@ public sealed class MainForm : Form
             });
         menu.Items.Add(new ToolStripSeparator());
         // Vertical projects (D45): a wide clip fills the 9:16 frame; this shows all of it with bars instead.
-        if (_session.Project.Shape == CanvasShape.Vertical && _session.Project.FindClip(clipId) is { } fc &&
-            _session.Project.FindMedia(fc.SourceId) is { IsAudioOnly: false, Width: > 0, Height: > 0 } fm &&
-            fm.Width / (double)fm.Height > Canvas.Aspect(CanvasShape.Vertical) + 0.01)
+        if (_session.Project.FindClip(clipId) is { } fc && ClipLook.CanFill(_session.Project, _session.Project.FindMedia(fc.SourceId)))
         {
             var targets = SelectedClips() is { } sel && sel.Contains(clipId) ? sel : [clipId];
-            bool fitWhole = fc.FitWhole;
+            bool fitWhole = fc.FitWhole, cropped = ClipLook.IsCropped(fc);
             menu.Items.Add(new ToolStripMenuItem("Fit whole picture (bars)", null, (_, _) =>
                 _session.Execute(p => TimelineOps.SetClipFitWhole(p, targets, !fitWhole)))
             {
-                Checked = fitWhole,
-                ToolTipText = "Off: the picture fills the vertical frame (drag the preview to choose which part). " +
-                              "On: the whole picture fits inside, with black or blurred bars above and below.",
+                Checked = fitWhole || cropped, // a cropped clip always shows its whole (cropped) picture
+                Enabled = !cropped,
+                ToolTipText = cropped
+                    ? "This clip is cropped, so it shows the whole cropped picture with bars. Reset the crop to fill the frame again."
+                    : "Off: the picture fills the vertical frame (drag the preview to choose which part). " +
+                      "On: the whole picture fits inside, with black or blurred bars above and below.",
             });
         }
         bool blur = _session.Project.Background == BackgroundFill.Blur;

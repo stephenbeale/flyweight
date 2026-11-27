@@ -604,7 +604,10 @@ more", with the frame cut around the video like a window; blurred bars stay avai
   area with the 9:16 frame over it and the outside dimmed, and the frame follows the mouse. One undo step. Release
   returns to the 9:16 result. Zoom/pan then work inside the slice.
 - **Opt out per clip:** clip right-click "Fit whole picture (bars)" (`Clip.FitWhole`) shows all of it with the
-  project's black or blurred bars (D40). Cropped clips keep their own framing (fit), as with blur.
+  project's black or blurred bars (D40). Cropped clips keep their own framing (fit), as with blur; for them the menu
+  item shows checked and disabled, with a tooltip saying to reset the crop to fill again (`ClipLook.CanFill`).
+- **No migration:** vertical projects (D41) were never in a release, so files saved before this load with
+  `FitWhole = false` and fill, which is the behaviour the owner asked for.
 - **One rule:** `ClipLook.FrameFilter` picks zoom / fill / blur / fit for both ExportPlan and FrameExport; the preview
   uses the same `Fills` and `FrameSlice`. Split, freeze frame and Reset look copy `FrameX`/`FitWhole` (`CopyLook`).
 - **Preview sharpness:** the slice comes from the 960x540 proxy, so it's about 304 px wide before scaling; soft in

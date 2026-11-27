@@ -228,6 +228,14 @@ public sealed class PreviewCanvas : Control
         return m is not null && ClipLook.Fills(_session.Project, c, m) ? (c, m) : null;
     }
 
+    /// <summary>The clip being reframed, found by id (not by the playhead, which could cross a cut mid-drag).</summary>
+    (Clip Clip, SourceMedia Media)? ReframeTarget()
+    {
+        if (_session?.Project.FindClip(_reframeOrigin.Id) is not { } c) return null;
+        var m = _session.Project.FindMedia(c.SourceId);
+        return m is not null && ClipLook.Fills(_session.Project, c, m) ? (c, m) : null;
+    }
+
     /// <summary>While reframing, the whole landscape picture is shown in a 16:9 area (not the result's 9:16 frame).</summary>
     RectangleF ReframeStage()
     {
@@ -242,7 +250,7 @@ public sealed class PreviewCanvas : Control
     /// </summary>
     bool PaintReframe(Graphics g)
     {
-        if (!_engine.HasFrame || FillClipNow() is not { } fc) return false;
+        if (!_engine.HasFrame || ReframeTarget() is not { } fc) return false;
         var stage = ReframeStage();
         var pic = Fit(new Size(fc.Media.Width, fc.Media.Height), stage);
         lock (_engine.FrameLock)
@@ -799,15 +807,15 @@ public sealed class PreviewCanvas : Control
         }
         Select(hit?.Id);
         if (hit is null) OverlayClicked?.Invoke(null);
-        if (hit is null && FillClipNow() is { } fc)
+        if (hit is null && _engine.HasFrame && canvas.Contains(e.Location) && FillClipNow() is { } fc)
         {
             // Empty picture of a clip that fills a vertical frame: drag to move the frame across it (D45). The whole-
-            // picture view only appears once the mouse moves, so a plain click (to deselect) doesn't flash it.
+            // picture view (and the edit: Preview opens it) only start once the mouse moves, so a plain click to
+            // deselect neither flashes the view nor makes an empty edit. Needs a frame on screen to drag against.
             _drag = DragMode.Reframe;
-            _reframeOrigin = (fc.Clip.Id, fc.Clip.FrameX);
+            _reframeOrigin = (fc.Clip.Id, ClipLook.CleanFrameX(fc.Clip.FrameX));
             _reframeStartX = e.X;
             _reframeMoved = false;
-            _session.BeginEdit();
             return;
         }
         if (hit is not null)
@@ -832,7 +840,7 @@ public sealed class PreviewCanvas : Control
                 Cursor = HandleCursorAt(e.Location) ?? (grip != Grip.None ? GripCursor(grip) : null) ?? (TimelineOps.VisibleAt(_session.Project, _engine.Position)
                     .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location)) || OverlayAt(e.Location) is not null
                     ? Cursors.SizeAll
-                    : CanvasRect.Contains(e.Location) && FillClipNow() is not null ? Cursors.SizeWE : Cursors.Default);
+                    : _engine.HasFrame && CanvasRect.Contains(e.Location) && FillClipNow() is not null ? Cursors.SizeWE : Cursors.Default);
             }
             return;
         }
@@ -841,7 +849,7 @@ public sealed class PreviewCanvas : Control
         {
             if (!_reframeMoved && Math.Abs(e.X - _reframeStartX) < 4) return;
             _reframeMoved = true;
-            if (FillClipNow() is not { } fc) return;
+            if (ReframeTarget() is not { } fc) return;
             // The frame follows the mouse across the whole picture, as drawn in the reframe view.
             var pic = Fit(new Size(fc.Media.Width, fc.Media.Height), ReframeStage());
             float travel = pic.Width - FrameSliceOf(pic, fc.Clip, fc.Media).Width;
