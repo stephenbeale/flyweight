@@ -65,7 +65,7 @@ public sealed class VerticalCanvasTests : IDisposable
     // ---------------- Fitting and blur ----------------
 
     [Fact]
-    public void In_a_vertical_project_portrait_clips_fill_and_landscape_clips_get_blurred_bars()
+    public void In_a_vertical_project_landscape_clips_fill_the_frame_and_portrait_clips_fit()
     {
         var p = new Project { Shape = CanvasShape.Vertical, Background = BackgroundFill.Blur };
         var portrait = Media(1080, 1920);
@@ -73,12 +73,86 @@ public sealed class VerticalCanvasTests : IDisposable
         p.Media.AddRange([portrait, wide]);
         var c1 = TimelineOps.Append(p, portrait);
         var c2 = TimelineOps.Append(p, wide);
+        Assert.False(ClipLook.Fills(p, c1, portrait));
         Assert.False(ClipLook.BlursBars(p, c1, portrait));
-        Assert.True(ClipLook.BlursBars(p, c2, wide));
+        Assert.True(ClipLook.Fills(p, c2, wide));
+        Assert.False(ClipLook.BlursBars(p, c2, wide)); // nothing to fill: the picture covers the frame
+
+        var g = ExportPlan.Build(p, new ExportSettings(), new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
+        Assert.Contains("crop=w='min(iw,2*trunc(ih*0.5625/2))'", g); // a 9:16 slice of the original, full height
+        Assert.DoesNotContain("scale=36:64", g);                   // no blur anywhere
+    }
+
+    [Fact]
+    public void Fit_whole_picture_brings_back_the_bars_and_the_blur()
+    {
+        var p = new Project { Shape = CanvasShape.Vertical, Background = BackgroundFill.Blur };
+        var wide = Media(1920, 1080);
+        p.Media.Add(wide);
+        var c = TimelineOps.Append(p, wide);
+        TimelineOps.SetClipFitWhole(p, [c.Id], true);
+        Assert.False(ClipLook.Fills(p, c, wide));
+        Assert.True(ClipLook.BlursBars(p, c, wide));
 
         var g = ExportPlan.Build(p, new ExportSettings(), new Dictionary<Guid, string>(), "out.mp4").FilterGraph;
         Assert.Contains("scale=36:64:force_original_aspect_ratio=increase", g); // the tiny blur frame stands upright too
         Assert.Contains("scale=1080:1920:force_original_aspect_ratio=decrease", g);
+    }
+
+    [Fact]
+    public void Only_vertical_projects_fill_and_a_crop_keeps_its_own_framing()
+    {
+        var wide = Media(1920, 1080);
+        var tall = Media(1080, 1920);
+        var landscape = new Project { Shape = CanvasShape.Landscape };
+        landscape.Media.AddRange([wide, tall]);
+        Assert.False(ClipLook.Fills(landscape, TimelineOps.Append(landscape, wide), wide));
+        Assert.False(ClipLook.Fills(landscape, TimelineOps.Append(landscape, tall), tall));
+
+        var p = new Project { Shape = CanvasShape.Vertical };
+        p.Media.Add(wide);
+        var c = TimelineOps.Append(p, wide);
+        c.CropLeft = 0.2;
+        Assert.False(ClipLook.Fills(p, c, wide));
+    }
+
+    [Theory]
+    [InlineData(0.0, 0.0)]
+    [InlineData(0.5, 0.5 * (1 - 0.31640625))]
+    [InlineData(1.0, 1 - 0.31640625)]
+    [InlineData(7.0, 1 - 0.31640625)] // clamped
+    public void The_frame_slice_moves_across_the_picture(double frameX, double left)
+    {
+        var p = new Project { Shape = CanvasShape.Vertical };
+        var wide = Media(1920, 1080);
+        p.Media.Add(wide);
+        var c = TimelineOps.Append(p, wide);
+        TimelineOps.SetClipFrameX(p, c.Id, frameX);
+        var (x, w) = ClipLook.FrameSlice(c, 16.0 / 9, Vertical);
+        Assert.Equal(0.31640625, w, 6); // (9/16) / (16/9)
+        Assert.Equal(left, x, 6);
+    }
+
+    [Fact]
+    public void Frame_position_survives_save_split_and_undo()
+    {
+        var s = new ProjectSession();
+        s.New(shape: CanvasShape.Vertical);
+        var wide = Media(1920, 1080);
+        s.Execute(p => { p.Media.Add(wide); TimelineOps.Append(p, wide); });
+        var id = s.Project.Timeline[0].Id;
+        s.Execute(p => TimelineOps.SetClipFrameX(p, id, 0.2));
+        s.Execute(p => TimelineOps.SplitAt(p, S(5)));
+        Assert.Equal(2, s.Project.Timeline.Count);
+        Assert.All(s.Project.Timeline, c => Assert.Equal(0.2, c.FrameX)); // both halves keep the framing
+
+        var loaded = ProjectSerializer.Deserialize(ProjectSerializer.Serialize(s.Project));
+        Assert.Equal(0.2, loaded.Timeline[0].FrameX);
+        Assert.Equal(0.5, ProjectSerializer.Deserialize("{ \"Timeline\": [ { } ] }").Timeline[0].FrameX); // old files: centred
+
+        s.Undo();
+        s.Undo();
+        Assert.Equal(0.5, s.Project.Timeline[0].FrameX);
     }
 
     // ---------------- Overlays keep square pixels on a tall canvas ----------------
@@ -143,7 +217,7 @@ public sealed class VerticalCanvasTests : IDisposable
     }
 
     [Fact]
-    public async Task Vertical_export_is_1080x1920_portrait_fills_landscape_gets_bars_overlay_lands_in_place()
+    public async Task Vertical_export_is_1080x1920_portrait_fills_fitted_landscape_gets_bars_overlay_lands_in_place()
     {
         if (!FfmpegAvailable()) return;
         var portrait = await Clip("portrait.mp4", 360, 640, "blue");
@@ -156,7 +230,8 @@ public sealed class VerticalCanvasTests : IDisposable
         var mC = await MediaProbe.ProbeAsync(cam);
         p.Media.AddRange([mP, mW, mC]);
         TimelineOps.Append(p, mP);
-        TimelineOps.Append(p, mW);
+        var cW = TimelineOps.Append(p, mW);
+        TimelineOps.SetClipFitWhole(p, [cW.Id], true); // the bars case; filling has its own test below
         var o = TimelineOps.AddOverlay(p, mC, S(0), 1);
         TimelineOps.SetOverlayLayout(p, o.Id, 0.5, 0.25, 0.5); // half the width, a quarter of the way down
 
@@ -184,5 +259,52 @@ public sealed class VerticalCanvasTests : IDisposable
         Assert.Equal((1080, 1920), (info.Width, info.Height));
         var bar = await Pixel(png, 0, 540, 1800);
         Assert.True(bar.R > 80 && bar.R < 200 && bar.G < 60, $"bar should be dim red blur, was {bar}");
+    }
+
+    [Fact]
+    public async Task A_landscape_clip_fills_the_vertical_export_with_only_the_chosen_slice()
+    {
+        if (!FfmpegAvailable()) return;
+        // 640x360: left half red, right half blue. A 9:16 slice of it is 202 px wide.
+        var halves = Path.Combine(_dir, "halves.mp4");
+        await FfmpegRunner.RunFfmpegAsync([
+            "-f", "lavfi", "-i", "color=c=red:s=320x360:r=30:d=1", "-f", "lavfi", "-i", "color=c=blue:s=320x360:r=30:d=1",
+            "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]", "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", halves,
+        ]);
+        var m = await MediaProbe.ProbeAsync(halves);
+        var p = new Project { Shape = CanvasShape.Vertical, Background = BackgroundFill.Black };
+        p.Media.Add(m);
+        var left = TimelineOps.Append(p, m);
+        TimelineOps.Append(p, m); // centred (the default)
+        var right = TimelineOps.Append(p, m);
+        var zoomed = TimelineOps.Append(p, m);
+        TimelineOps.SetClipFrameX(p, left.Id, 0);
+        TimelineOps.SetClipFrameX(p, right.Id, 1);
+        TimelineOps.SetClipFrameX(p, zoomed.Id, 1);
+        TimelineOps.SetClipZoom(p, zoomed.Id, 2);
+        TimelineOps.SetClipPan(p, zoomed.Id, 0, 0.5); // left half of the right-hand slice: still blue
+
+        var output = Path.Combine(_dir, "fill.mp4");
+        await ExportPlan.Build(p, new ExportSettings { Preset = "ultrafast", UseHardwareEncoder = false }, new Dictionary<Guid, string>(), output).RunAsync();
+        var probed = await MediaProbe.ProbeAsync(output);
+        Assert.Equal((1080, 1920), (probed.Width, probed.Height)); // exactly the vertical shape, nothing more
+
+        static bool IsRed((int R, int G, int B) c) => c.R > 200 && c.G < 60 && c.B < 60;
+        static bool IsBlue((int R, int G, int B) c) => c.B > 200 && c.R < 60 && c.G < 60;
+        foreach (var y in new[] { 20, 960, 1900 }) // full height: no bars top or bottom
+        {
+            Assert.True(IsRed(await Pixel(output, 0.5, 30, y)), $"left slice is all red (left edge, y={y})");
+            Assert.True(IsRed(await Pixel(output, 0.5, 1050, y)), $"left slice is all red (right edge, y={y})");
+        }
+        Assert.True(IsRed(await Pixel(output, 1.5, 100, 960)), "centred slice: red on the left");
+        Assert.True(IsBlue(await Pixel(output, 1.5, 980, 960)), "centred slice: blue on the right");
+        Assert.True(IsBlue(await Pixel(output, 2.5, 30, 960)), "right slice is all blue");
+        Assert.True(IsBlue(await Pixel(output, 2.5, 1050, 960)), "right slice is all blue");
+        Assert.True(IsBlue(await Pixel(output, 3.5, 30, 960)), "zoom works inside the slice");
+
+        // Save frame takes the same slice.
+        var png = Path.Combine(_dir, "fill-frame.png");
+        await FfmpegRunner.RunFfmpegAsync(FrameExport.BuildArgs(p, FrameExport.LocateFrame(p, S(0.5))!.Value, 1080, 1920, png));
+        Assert.True(IsRed(await Pixel(png, 0, 1050, 960)), "Save frame shows the left slice too");
     }
 }

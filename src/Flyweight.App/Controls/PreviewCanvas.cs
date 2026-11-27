@@ -32,7 +32,7 @@ public sealed class PreviewCanvas : Control
     Image? _standIn;
 
     // Drag state
-    enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21, MoveOverlay, CropOverlay, ResizeOverlay }
+    enum DragMode { None, Create, Move, Handle1, Handle2, Corner12, Corner21, MoveOverlay, CropOverlay, ResizeOverlay, Reframe }
     DragMode _drag;
     (Guid Id, double X, double Y) _overlayOrigin;
 
@@ -127,6 +127,7 @@ public sealed class PreviewCanvas : Control
         var g = e.Graphics;
         g.Clear(BackColor);
         if (_session is null) return;
+        if (_drag == DragMode.Reframe && _reframeMoved && PaintReframe(g)) return;
         var canvas = CanvasRect;
 
         using (var b = new SolidBrush(Color.Black)) g.FillRectangle(b, canvas);
@@ -142,7 +143,10 @@ public sealed class PreviewCanvas : Control
                     Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
                     frame = Letterboxed(frame, pm.Width, pm.Height);
                 if (_session.Project.Shape == CanvasShape.Vertical && look is not null)
-                    frame = Upright(frame, _session.Project.FindMedia(look.SourceId));
+                {
+                    var lm = _session.Project.FindMedia(look.SourceId);
+                    frame = Upright(frame, lm, ClipLook.Fills(_session.Project, look, lm) ? look : null);
+                }
                 if (look is not null && _session.Project.FindMedia(look.SourceId) is { } bm && ClipLook.BlursBars(_session.Project, look, bm))
                     frame = Blurred(frame, bm);
                 if (look is not null && ClipLook.IsCropped(look) &&
@@ -210,6 +214,58 @@ public sealed class PreviewCanvas : Control
         }
     }
 
+    // ---------------- Reframe: where a wide clip's vertical frame sits (D45) ----------------
+
+    (Guid Id, double FrameX) _reframeOrigin;
+    int _reframeStartX;
+    bool _reframeMoved;
+
+    /// <summary>The clip under the playhead if it fills a vertical frame (so it has a slice to move), with its media.</summary>
+    (Clip Clip, SourceMedia Media)? FillClipNow()
+    {
+        if (_session is null || TimelineOps.Locate(_session.Project, _engine.Position)?.Clip is not { } c) return null;
+        var m = _session.Project.FindMedia(c.SourceId);
+        return m is not null && ClipLook.Fills(_session.Project, c, m) ? (c, m) : null;
+    }
+
+    /// <summary>While reframing, the whole landscape picture is shown in a 16:9 area (not the result's 9:16 frame).</summary>
+    RectangleF ReframeStage()
+    {
+        float w = ClientSize.Width, h = ClientSize.Height, a = 16f / 9;
+        float cw = Math.Min(w, h * a), ch = cw / a;
+        return new RectangleF((w - cw) / 2, (h - ch) / 2, cw, ch);
+    }
+
+    /// <summary>
+    /// The reframe view: the whole picture, the 9:16 frame over it, everything outside dimmed. Only the frame is ever
+    /// exported; this view exists just while dragging. False if there's nothing to show (falls back to normal paint).
+    /// </summary>
+    bool PaintReframe(Graphics g)
+    {
+        if (!_engine.HasFrame || FillClipNow() is not { } fc) return false;
+        var stage = ReframeStage();
+        var pic = Fit(new Size(fc.Media.Width, fc.Media.Height), stage);
+        lock (_engine.FrameLock)
+        {
+            Bitmap frame = _engine.Frame;
+            if (_engine.PlayingOriginal && _engine.PlayingMedia is { Width: > 0, Height: > 0 } pm &&
+                Math.Abs(pm.Width / (double)pm.Height - 16.0 / 9) > 0.01)
+                frame = Letterboxed(frame, pm.Width, pm.Height);
+            g.InterpolationMode = InterpolationMode.Bilinear;
+            g.DrawImage(frame, stage);
+        }
+        var win = FrameSliceOf(pic, fc.Clip, fc.Media);
+        using (var dim = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))
+        using (var outside = new Region(stage))
+        {
+            outside.Exclude(win);
+            g.FillRegion(dim, outside);
+        }
+        using (var pen = new Pen(Theme.Accent, 2)) g.DrawRectangle(pen, win.X, win.Y, win.Width, win.Height);
+        Badge(g, stage, "Drag to choose what's in the vertical frame");
+        return true;
+    }
+
     void Badge(Graphics g, RectangleF canvas, string text)
     {
         var size = TextRenderer.MeasureText(g, text, Font);
@@ -244,9 +300,10 @@ public sealed class PreviewCanvas : Control
     /// Vertical projects (D41): proxies are always 16:9 with the picture fitted in, so cut the picture back out and fit
     /// it into a 9:16 frame of the same height (540x960 from a 960x540 proxy), with black bars like Canvas.FitFilter.
     /// Everything after this (blur, crop mask, tone, zoom) then works on the vertical frame exactly as it does on a
-    /// landscape one. Call while holding FrameLock.
+    /// landscape one. A clip that FILLS the frame (D45) gets its full-height 9:16 slice instead, as the export cuts it.
+    /// Call while holding FrameLock.
     /// </summary>
-    Bitmap Upright(Bitmap frame, SourceMedia? media)
+    Bitmap Upright(Bitmap frame, SourceMedia? media, Clip? fill)
     {
         int w = frame.Height, h = frame.Width; // 540x960 from a 960x540 proxy: the same pixel count, turned upright
         if (_upright is null || _upright.Width != w || _upright.Height != h)
@@ -257,6 +314,11 @@ public sealed class PreviewCanvas : Control
         var full = new RectangleF(0, 0, frame.Width, frame.Height);
         var pic = media is { Width: > 0, Height: > 0 } ? Fit(new Size(media.Width, media.Height), full) : full;
         var dest = media is { Width: > 0, Height: > 0 } ? Fit(new Size(media.Width, media.Height), new RectangleF(0, 0, w, h)) : new RectangleF(0, 0, w, h);
+        if (fill is not null && media is { Width: > 0, Height: > 0 })
+        {
+            pic = FrameSliceOf(pic, fill, media);
+            dest = new RectangleF(0, 0, w, h);
+        }
         using var g = Graphics.FromImage(_upright);
         g.Clear(Color.Black);
         g.InterpolationMode = InterpolationMode.Bilinear;
@@ -268,6 +330,13 @@ public sealed class PreviewCanvas : Control
                                       pic.Right < frame.Width - 0.5f ? pic.Right - 0.5f : pic.Right, pic.Bottom < frame.Height - 0.5f ? pic.Bottom - 0.5f : pic.Bottom);
         g.DrawImage(frame, Rectangle.Round(dest), src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel, attrs);
         return _upright;
+    }
+
+    /// <summary>The part of <paramref name="picture"/> (where the clip's picture is drawn) that a filling clip shows (D45).</summary>
+    static RectangleF FrameSliceOf(RectangleF picture, Clip clip, SourceMedia media)
+    {
+        var (x, w) = ClipLook.FrameSlice(clip, media.Width / (double)media.Height, Canvas.Aspect(CanvasShape.Vertical));
+        return new RectangleF(picture.X + (float)x * picture.Width, picture.Y, (float)w * picture.Width, picture.Height);
     }
 
     Bitmap? _blurred, _blurSmall;
@@ -730,6 +799,17 @@ public sealed class PreviewCanvas : Control
         }
         Select(hit?.Id);
         if (hit is null) OverlayClicked?.Invoke(null);
+        if (hit is null && FillClipNow() is { } fc)
+        {
+            // Empty picture of a clip that fills a vertical frame: drag to move the frame across it (D45). The whole-
+            // picture view only appears once the mouse moves, so a plain click (to deselect) doesn't flash it.
+            _drag = DragMode.Reframe;
+            _reframeOrigin = (fc.Clip.Id, fc.Clip.FrameX);
+            _reframeStartX = e.X;
+            _reframeMoved = false;
+            _session.BeginEdit();
+            return;
+        }
         if (hit is not null)
         {
             _drag = DragMode.Move;
@@ -751,8 +831,25 @@ public sealed class PreviewCanvas : Control
                 var grip = HandleCursorAt(e.Location) is null ? OverlayGripAt(e.Location) : Grip.None;
                 Cursor = HandleCursorAt(e.Location) ?? (grip != Grip.None ? GripCursor(grip) : null) ?? (TimelineOps.VisibleAt(_session.Project, _engine.Position)
                     .Any(a => AnnotationRenderer.HitTest(a, CanvasRect, e.Location)) || OverlayAt(e.Location) is not null
-                    ? Cursors.SizeAll : Cursors.Default);
+                    ? Cursors.SizeAll
+                    : CanvasRect.Contains(e.Location) && FillClipNow() is not null ? Cursors.SizeWE : Cursors.Default);
             }
+            return;
+        }
+
+        if (_drag == DragMode.Reframe)
+        {
+            if (!_reframeMoved && Math.Abs(e.X - _reframeStartX) < 4) return;
+            _reframeMoved = true;
+            if (FillClipNow() is not { } fc) return;
+            // The frame follows the mouse across the whole picture, as drawn in the reframe view.
+            var pic = Fit(new Size(fc.Media.Width, fc.Media.Height), ReframeStage());
+            float travel = pic.Width - FrameSliceOf(pic, fc.Clip, fc.Media).Width;
+            if (travel < 1) return;
+            var (rid, startX) = _reframeOrigin;
+            double fx = startX + (e.X - _reframeStartX) / travel;
+            _session.Preview(p => TimelineOps.SetClipFrameX(p, rid, fx));
+            Invalidate();
             return;
         }
 
@@ -829,8 +926,11 @@ public sealed class PreviewCanvas : Control
         {
             _session.CommitEdit();
         }
+        bool wasReframing = _drag == DragMode.Reframe && _reframeMoved;
         _drag = DragMode.None;
         _dragOrigin = null;
+        _reframeMoved = false;
+        if (wasReframing) Invalidate(); // back to the 9:16 result
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)

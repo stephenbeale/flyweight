@@ -84,6 +84,39 @@ public static class ClipLook
         return s;
     }
 
+    // ---------------- Fill: a wide picture fills a vertical frame (D45) ----------------
+
+    /// <summary>
+    /// True when this clip FILLS a vertical frame instead of being fitted inside it: the project is 9:16, the picture
+    /// is wider than that, and the clip isn't set to show the whole picture or cropped (a crop keeps its own framing).
+    /// The frame then takes a full-height, 9:16 slice of the picture at <see cref="Clip.FrameX"/>; nothing else of the
+    /// picture is exported.
+    /// </summary>
+    public static bool Fills(Project p, Clip c, SourceMedia? m) =>
+        p.Shape == CanvasShape.Vertical && !c.FitWhole && !IsCropped(c) &&
+        m is { IsAudioOnly: false, Width: > 0, Height: > 0 } && m.Width / (double)m.Height > Canvas.Aspect(p.Shape) + 0.01;
+
+    public static double CleanFrameX(double v) => double.IsFinite(v) ? Math.Clamp(v, 0, 1) : 0.5;
+
+    /// <summary>
+    /// The slice of the picture a filling clip shows, as fractions of the picture's width: left edge and width (the
+    /// height is always the whole picture). The preview's reframe view draws this as the frame over the whole video.
+    /// </summary>
+    public static (double X, double W) FrameSlice(Clip c, double pictureAspect, double canvasAspect)
+    {
+        double w = Math.Min(1, canvasAspect / pictureAspect);
+        return (CleanFrameX(c.FrameX) * (1 - w), w);
+    }
+
+    /// <summary>
+    /// Replaces <see cref="Canvas.FitFilter"/> when <see cref="Fills"/>: cut the frame-shaped slice out of the ORIGINAL
+    /// (full height, so a 4K clip stays sharp), then scale it to W×H. Even pixel sizes and offsets for yuv420p.
+    /// </summary>
+    public static string FillFilter(Clip c, int w, int h) => FillCrop(c, w, h) + $"scale={w}:{h}:flags=bicubic,setsar=1";
+
+    static string FillCrop(Clip c, int w, int h) =>
+        $"crop=w='min(iw,2*trunc(ih*{Num(w / (double)h)}/2))':h='2*trunc(ih/2)':x='2*trunc((iw-ow)*{Num(Math.Round(CleanFrameX(c.FrameX), 6))}/2)':y=0,";
+
     /// <summary>The visible part of the canvas, normalised 0–1: always 16:9 and always inside the frame.</summary>
     public static (double X, double Y, double W, double H) ViewRect(Clip c)
     {
@@ -130,14 +163,29 @@ public static class ClipLook
     }
 
     /// <summary>
+    /// How a clip's picture becomes the W×H frame, for the export and Save frame alike: zoomed, filling a vertical
+    /// frame, fitted with blurred bars, or fitted with black bars. One rule, so the two can't disagree.
+    /// </summary>
+    public static string FrameFilter(Project p, Clip c, SourceMedia m, int w, int h, string blurId)
+    {
+        bool fills = Fills(p, c, m);
+        return IsZoomed(c) ? ZoomFilter(c, w, h, fills)
+             : fills ? FillFilter(c, w, h)
+             : BlursBars(p, c, m) ? BlurFitFilter(w, h, blurId)
+             : Canvas.FitFilter(w, h);
+    }
+
+    /// <summary>
     /// Replaces <see cref="Canvas.FitFilter"/> for a zoomed clip: pad the source to W:H at its own
     /// resolution (the same geometry as fit-and-pad), crop <see cref="ViewRect"/>, then scale to W×H.
     /// </summary>
-    public static string ZoomFilter(Clip c, int w, int h)
+    /// <param name="fills">The clip <see cref="Fills"/> the frame: start from its frame-shaped slice instead of padding.</param>
+    public static string ZoomFilter(Clip c, int w, int h, bool fills = false)
     {
         var (x, y, rw, rh) = ViewRect(c);
         string r = Num(w / (double)h), ir = Num(h / (double)w);
-        return $"pad=w='max(iw,ih*{r})':h='max(ih,iw*{ir})':x=(ow-iw)/2:y=(oh-ih)/2:color=black," +
+        var frame = fills ? FillCrop(c, w, h) : $"pad=w='max(iw,ih*{r})':h='max(ih,iw*{ir})':x=(ow-iw)/2:y=(oh-ih)/2:color=black,";
+        return frame +
                $"crop=w=iw*{Num(rw)}:h=ih*{Num(rh)}:x=iw*{Num(x)}:y=ih*{Num(y)}," +
                $"scale={w}:{h}:flags=bicubic,setsar=1";
     }
@@ -162,7 +210,7 @@ public static class ClipLook
     /// </summary>
     public static bool BlursBars(Project p, Clip c, SourceMedia? m) =>
         p.Background == BackgroundFill.Blur && m is { IsAudioOnly: false, Width: > 0, Height: > 0 } &&
-        !IsZoomed(c) && !IsCropped(c) && Math.Abs(m.Width / (double)m.Height - Canvas.Aspect(p.Shape)) > 0.01;
+        !IsZoomed(c) && !IsCropped(c) && !Fills(p, c, m) && Math.Abs(m.Width / (double)m.Height - Canvas.Aspect(p.Shape)) > 0.01;
 
     /// <summary>The tiny frame the blur is made in: 64x36, or 36x64 for a vertical canvas.</summary>
     public static (int W, int H) BlurSize(int canvasW, int canvasH) =>
