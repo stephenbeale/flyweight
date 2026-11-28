@@ -5,8 +5,8 @@ namespace Flyweight.App.Forms;
 
 /// <summary>
 /// "Your video is ready", shown once after a successful export. Our own dark dialog (it replaced a TaskDialog, whose
-/// buttons can't be coloured) so the support button can be yellow. Open YouTube Studio is the default (Enter);
-/// Show in Explorer and the coffee button do their thing and leave the dialog open.
+/// buttons can't be coloured) so the support button can be yellow. "Show file and open YouTube Studio" is the default
+/// (Enter); the coffee button opens its page and leaves the dialog open.
 /// </summary>
 public sealed class ExportDoneForm : Form
 {

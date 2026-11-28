@@ -117,7 +117,7 @@ public sealed class MainForm : Form
             OpenButton(),
             SaveButton(),
             new ToolStripSeparator(),
-            Btn("Import…", "Import video, images or audio (Ctrl+I)", ImportDialog),
+            ImportButton(),
             new ToolStripSeparator(),
             _undoBtn, _redoBtn,
             new ToolStripSeparator(),
@@ -1474,6 +1474,20 @@ public sealed class MainForm : Form
             MessageBox.Show(this, $"The new project couldn't be saved there:\n\n{ex.Message}\n\nIt's open as Untitled; use Save to choose another place.",
                 "New project", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    /// <summary>"Import…" with a ▾ for "Find free sound effects…" (links to libraries; SoundEffectsForm).</summary>
+    ToolStripSplitButton ImportButton()
+    {
+        var b = new ToolStripSplitButton("Import…") { ToolTipText = "Import video, images or audio (Ctrl+I) · ▾ Find free sound effects", ForeColor = Theme.Text, DisplayStyle = ToolStripItemDisplayStyle.Text };
+        b.ButtonClick += (_, _) => { ImportDialog(); b.Owner?.Invalidate(); };
+        b.DropDownItems.Add(new ToolStripMenuItem("Find free sound effects…", null, (_, _) =>
+        {
+            using var dlg = new SoundEffectsForm();
+            dlg.ShowDialog(this);
+        }));
+        b.DropDownClosed += (_, _) => b.Owner?.Invalidate();
+        return b;
     }
 
     /// <summary>"Save" with a ▾ for "Save as…" (a copy under a new name or folder; Ctrl+Shift+S).</summary>
