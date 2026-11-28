@@ -117,7 +117,7 @@ public sealed class MainForm : Form
             OpenButton(),
             SaveButton(),
             new ToolStripSeparator(),
-            Btn("Import…", "Import video, images or audio (Ctrl+I)", ImportDialog),
+            ImportButton(),
             new ToolStripSeparator(),
             _undoBtn, _redoBtn,
             new ToolStripSeparator(),
@@ -292,6 +292,7 @@ public sealed class MainForm : Form
             // Any playhead move (play, step, seek, clip jump) brings it back into view. Scrolling or
             // zooming the timeline alone doesn't move the playhead, so it doesn't fight the user.
             _timeline.EnsurePlayheadVisible();
+            FollowPlayheadClip();
             _preview.Invalidate();
         };
         _engine.PlayingChanged += (_, _) => UpdateTimecode(); // flips the ▶ / ❚❚ button
@@ -547,6 +548,9 @@ public sealed class MainForm : Form
             case Keys.Right: _engine.StepFrames(1); return true;
             case Keys.Shift | Keys.Left: _engine.Seek(_engine.Position - TimeSpan.FromSeconds(1)); return true;
             case Keys.Shift | Keys.Right: _engine.Seek(_engine.Position + TimeSpan.FromSeconds(1)); return true;
+            // Bigger jumps for moving around inside a long clip.
+            case Keys.Control | Keys.Left: case Keys.PageUp: _engine.Seek(_engine.Position - TimeSpan.FromSeconds(10)); return true;
+            case Keys.Control | Keys.Right: case Keys.PageDown: _engine.Seek(_engine.Position + TimeSpan.FromSeconds(10)); return true;
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
@@ -639,6 +643,23 @@ public sealed class MainForm : Form
         _engine.Seek(TimelineOps.ClipStart(_session.Project, pasted[0].Id));
         UpdatePropertyGrid();
         _statusText.Text = $"Pasted {(pasted.Count == 1 ? "1 clip" : $"{pasted.Count} clips")} (Ctrl+Z to undo)";
+    }
+
+    Guid? _playheadClipId;
+
+    /// <summary>
+    /// With one clip selected, moving the playhead into another clip selects that one, so the Properties panel always
+    /// shows the clip you're looking at (owner, 2026-11-28). Only when the playhead CROSSES into another clip, so
+    /// clicking a clip elsewhere (e.g. to trim it) isn't undone by the next position update. Gaps don't take it.
+    /// </summary>
+    void FollowPlayheadClip()
+    {
+        var under = TimelineOps.Locate(_session.Project, _engine.Position)?.Clip;
+        if (under?.Id == _playheadClipId) return;
+        _playheadClipId = under?.Id;
+        if (under is null || under.IsGap || _timeline.IsDragging) return;
+        if (_timeline.SelectedClipIds.Count != 1 || _timeline.SelectedClipId is not { } cur || cur == under.Id) return;
+        _timeline.SelectClips([under.Id]); // raises ClipSelected: the Properties panel follows
     }
 
     Guid? CurrentClipId() =>
@@ -1060,6 +1081,15 @@ public sealed class MainForm : Form
             _statusText.Text = $"Split the audio at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
             return;
         }
+        // Main track. It used to fail silently when the playhead was too near a clip end (owner, 2026-11-28: "having
+        // issues splitting at full zoom"); say why instead.
+        if (TimelineOps.Locate(p, at) is { } hit && !hit.Clip.IsGap
+            && (hit.SourceTime - hit.Clip.In < TimelineOps.MinClipLength || hit.Clip.Out - hit.SourceTime < TimelineOps.MinClipLength))
+        {
+            _statusText.Text = $"Can't split within {TimelineOps.MinClipLength.TotalMilliseconds:0} ms of a clip's start or end (pieces that short "
+                             + "can't be exported). To shave a few frames off, drag the clip's edge instead.";
+            return;
+        }
         _session.Execute(proj => TimelineOps.SplitAt(proj, at));
     }
 
@@ -1102,8 +1132,10 @@ public sealed class MainForm : Form
         SourceMedia still;
         try
         {
-            // Saved next to the footage (not hidden in AppData), so it travels with the project.
-            var png = await _library.ExtractFrameAsync(media, hit.SourceTime, FrameExport.DefaultFolder(p));
+            // Saved in the project's "Freeze frames" folder (owner, 2026-11-28), not hidden in AppData, so it travels
+            // with the project. An unsaved project has no folder yet: next to the footage, as before.
+            var folder = _session.FilePath is { } projectFile ? ProjectFolders.FreezeFramesDirectory(projectFile) : FrameExport.DefaultFolder(p);
+            var png = await _library.ExtractFrameAsync(media, hit.SourceTime, folder);
             still = await _library.ProbeAsync(png);
         }
         catch (Exception ex)
@@ -1268,6 +1300,11 @@ public sealed class MainForm : Form
 
     async Task ImportAsync(IEnumerable<string> paths)
     {
+        // A project that already has an edit: import into the media bin only, and let the owner place the files
+        // (double-click, I, O). Appending to the end of an edited timeline was rarely what was wanted (owner,
+        // 2026-11-28). An empty project still fills the timeline in one go, so starting a video stays one step.
+        bool binOnly = _session.Project.Timeline.Count > 0;
+        int toBin = 0;
         foreach (var path in paths)
         {
             _statusText.Text = $"Reading {Path.GetFileName(path)}…";
@@ -1278,7 +1315,12 @@ public sealed class MainForm : Form
                 MessageBox.Show(this, $"Couldn't read {Path.GetFileName(path)}:\n\n{ex.Message}", "Import", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 continue;
             }
-            if (media.IsAudioOnly)
+            if (binOnly)
+            {
+                _session.Execute(p => p.Media.Add(media));
+                toBin++;
+            }
+            else if (media.IsAudioOnly)
             {
                 AddAudioAtPlayhead(media); // music / narration goes on the audio track, not the video timeline
             }
@@ -1290,6 +1332,9 @@ public sealed class MainForm : Form
             StartProxy(media);
         }
         UpdateStatus();
+        if (toBin > 0)
+            _statusText.Text = $"Added {toBin} file{(toBin == 1 ? "" : "s")} to Media. Double-click to add to the end, or select and press "
+                             + "I to insert at the playhead (O for an overlay).";
     }
 
     bool _exportingFrame;
@@ -1310,7 +1355,11 @@ public sealed class MainForm : Form
 
         var t = _engine.Position;
         var name = thumbnail ? YouTubeThumbnail.DefaultFileName(project, _session.FilePath, t) : FrameExport.DefaultFileName(project, _session.FilePath, t);
-        var path = FrameExport.Unique(Path.Combine(FrameExport.DefaultFolder(project), name));
+        // YouTube thumbnails go in the project's Thumbnails folder (owner, 2026-11-28); frames still go beside the
+        // footage they came from. An unsaved project has no folder yet, so its thumbnails go beside the footage too.
+        var folder = thumbnail && _session.FilePath is { } projectFile ? ProjectFolders.ThumbnailsDirectory(projectFile) : FrameExport.DefaultFolder(project);
+        try { Directory.CreateDirectory(folder); } catch (Exception) { folder = FrameExport.DefaultFolder(project); }
+        var path = FrameExport.Unique(Path.Combine(folder, name));
         if (chooseLocation)
         {
             using var dlg = new SaveFileDialog
@@ -1416,14 +1465,29 @@ public sealed class MainForm : Form
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(dlg.ProjectPath)!);
+            ProjectFolders.CreateSubfolders(dlg.ProjectPath);
             _session.Save(dlg.ProjectPath);
-            _statusText.Text = $"Created {Path.GetFileName(dlg.ProjectPath)}";
+            _statusText.Text = $"Created {Path.GetFileName(dlg.ProjectPath)} in its own folder: {ProjectFolders.ProjectDirectory(dlg.ProjectPath)}";
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, $"The new project couldn't be saved there:\n\n{ex.Message}\n\nIt's open as Untitled; use Save to choose another place.",
                 "New project", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    /// <summary>"Import…" with a ▾ for "Find free sound effects…" (links to libraries; SoundEffectsForm).</summary>
+    ToolStripSplitButton ImportButton()
+    {
+        var b = new ToolStripSplitButton("Import…") { ToolTipText = "Import video, images or audio (Ctrl+I) · ▾ Find free sound effects", ForeColor = Theme.Text, DisplayStyle = ToolStripItemDisplayStyle.Text };
+        b.ButtonClick += (_, _) => { ImportDialog(); b.Owner?.Invalidate(); };
+        b.DropDownItems.Add(new ToolStripMenuItem("Find free sound effects…", null, (_, _) =>
+        {
+            using var dlg = new SoundEffectsForm();
+            dlg.ShowDialog(this);
+        }));
+        b.DropDownClosed += (_, _) => b.Owner?.Invalidate();
+        return b;
     }
 
     /// <summary>"Save" with a ▾ for "Save as…" (a copy under a new name or folder; Ctrl+Shift+S).</summary>

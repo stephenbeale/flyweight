@@ -110,6 +110,9 @@ public sealed class TimelineControl : Control
     /// <summary>Clip-body drag past the end of the other clips: the time it will start at (a gap fills the space before it).</summary>
     TimeSpan? _dropTime;
     TimeSpan _dragClipStart;
+    /// <summary>Scrubbing with the mouse past the left/right edge keeps the view scrolling (and the playhead with it).</summary>
+    readonly System.Windows.Forms.Timer _edgeScroll = new() { Interval = 30 };
+    Point _dragMouse; // last mouse position during a drag, replayed as the view auto-scrolls under it
 
     public TimelineControl()
     {
@@ -120,6 +123,7 @@ public sealed class TimelineControl : Control
         // The bar's top is the top of the content, so its value counts DOWN from the top (our scroll counts up).
         _vScroll.Scroll += (_, _) => { _scrollY = MaxScrollY() - _vScroll.Value; Invalidate(); };
         Controls.Add(_vScroll);
+        _edgeScroll.Tick += (_, _) => EdgeScrollTick();
     }
 
     // ---------------- Vertical scroll / preferred height ----------------
@@ -480,9 +484,13 @@ public sealed class TimelineControl : Control
         base.OnMouseWheel(e);
         if ((ModifierKeys & Keys.Control) != 0)
         {
-            var at = T(e.X);
+            // Zoom around the PLAYHEAD, not the mouse (owner, 2026-11-28): it stays where it is on screen, or is
+            // brought to the middle if it was scrolled out of view.
+            var at = _playhead();
+            float px = X(at);
+            float anchor = px >= 0 && px <= ScrubRight ? px : ScrubRight / 2;
             _pps = Math.Clamp(_pps * (e.Delta > 0 ? 1.25 : 0.8), 0.5, 400);
-            _scrollX = Math.Max(0, (float)(at.TotalSeconds * _pps) - e.X);
+            _scrollX = Math.Max(0, (float)(at.TotalSeconds * _pps) - anchor);
         }
         else if ((ModifierKeys & Keys.Shift) != 0)
         {
@@ -643,37 +651,108 @@ public sealed class TimelineControl : Control
 
         Theme.FillRounded(g, ClipColor, r);
 
-        // Tile the poster thumbnail along the clip, inside its rounded outline.
-        if (Thumb(c.SourceId, state.ThumbnailPath) is { } img)
+        // ONE thumbnail of the clip's first frame (its In point) at its left end, not the poster tiled all along:
+        // after cuts, every piece showed the same picture and they were hard to tell apart (owner, 2026-11-28).
+        // The poster stands in until that frame has been grabbed from the proxy.
+        float textX = r.X + 6;
+        if ((FirstFrame(c) ?? Thumb(c.SourceId, state.ThumbnailPath)) is { } img && r.Width > 24)
         {
             var region = g.Clip;
             g.SetClip(shape, CombineMode.Intersect);
-            TileThumb(g, c.SourceId, img, r, TrackH);
-            using var shade = new SolidBrush(Color.FromArgb(90, ClipColor));
-            g.FillRectangle(shade, r);
-            // Darker strip behind the label so it stays readable on bright thumbnails.
-            using var strip = new LinearGradientBrush(new RectangleF(r.X, r.Y, r.Width, 26), Color.FromArgb(150, 10, 14, 22), Color.FromArgb(0, 10, 14, 22), LinearGradientMode.Vertical);
-            g.FillRectangle(strip, r.X, r.Y, r.Width, 26);
+            float h = TrackH - 8, w = h * img.Width / img.Height;
+            var dest = new RectangleF(r.X + 4, r.Y + 4, Math.Min(w, r.Width - 8), h);
+            var saved = g.Save();
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            // Crop (not squash) when the clip is narrower than the picture.
+            g.DrawImage(img, dest, new RectangleF(0, 0, img.Width * dest.Width / w, img.Height), GraphicsUnit.Pixel);
+            g.Restore(saved);
+            using (var edge = new Pen(Color.FromArgb(140, 0, 0, 0), 1)) g.DrawRectangle(edge, dest.X, dest.Y, dest.Width, dest.Height);
             g.Clip = region;
+            if (r.Width - dest.Width > 60) textX = dest.Right + 6; // label beside the picture when there's room
         }
 
         var label = media?.DisplayName ?? "(missing)";
-        if (Math.Abs(c.Speed - 1) > 0.0005) label = $"{c.Speed:0.##}×  ·  {label}";
         if (state.Status is ProxyStatus.Optimising or ProxyStatus.Queued) label += $"  ·  optimising {state.Progress:P0}";
         if (state.Status == ProxyStatus.Failed) label += "  ·  failed";
-        if (media is { HasAudio: true })
-        {
-            if (c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0) label += "  ·  sound unlinked";
-            else if (c.Muted) label += "  ·  muted";
-            else if (Math.Abs(c.Volume - 1) >= 0.005) label += $"  ·  vol {c.Volume:P0}";
-        }
-        TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y + 4, r.Width - 12, 18)),
+        TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(textX, r.Y + 4, r.Right - textX - 6, Font.Height + 2)),
             Color.White, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
+        // Speed / mute / volume as small icon badges along the bottom, over the thumbnail if need be, so even a short
+        // clip shows them (owner, 2026-11-28: they were the end of a long text label and got cut off). Hover for words.
+        var region2 = g.Clip;
+        g.SetClip(shape, CombineMode.Intersect);
+        float bx = r.X + 6, by = r.Bottom - BadgeH - 4;
+        foreach (var (glyph, text, colour) in ClipBadges(p, c, media))
+            bx = DrawBadge(g, bx, by, glyph, text, colour) + 4;
+        g.Clip = region2;
+
         bool sel = _selectedClips.Contains(c.Id);
-        if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
-        else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
+        // Thick outlines so neighbouring clips read as separate blocks (owner, 2026-11-28).
+        if (sel) Theme.DrawRounded(g, Accent, 3.5f, r);
+        else Theme.DrawRounded(g, Color.FromArgb(170, 255, 255, 255), 2f, r);
         Grips(g, r, TrackH, 20, sel);
+    }
+
+    // Segoe MDL2 Assets ships with Windows 10 and 11; GDI+ falls back to a default font if it's ever missing.
+    static readonly Font IconFont = new("Segoe MDL2 Assets", 9f);
+    const string GlyphVolume = "\uE767", GlyphMute = "\uE74F", GlyphSpeed = "\uEC4A";
+    int BadgeH => Font.Height + 4; // follows the font, so display scaling doesn't cut the text off
+
+    /// <summary>The badges a clip shows: speed, then muted (or its sound unlinked) or a volume that isn't 100%.</summary>
+    static List<(string? Glyph, string? Text, Color Colour)> ClipBadges(Project p, Clip c, SourceMedia? media)
+    {
+        var list = new List<(string?, string?, Color)>();
+        if (Math.Abs(c.Speed - 1) > 0.0005) list.Add((GlyphSpeed, $"{c.Speed:0.##}×", Color.FromArgb(150, 110, 20)));
+        if (media is { HasAudio: true })
+        {
+            if (c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0) list.Add((GlyphMute, "unlinked", Color.FromArgb(70, 80, 110)));
+            else if (c.Muted) list.Add((GlyphMute, null, Color.FromArgb(160, 50, 50)));
+            else if (Math.Abs(c.Volume - 1) >= 0.005) list.Add((GlyphVolume, $"{c.Volume:P0}", Color.FromArgb(40, 110, 70)));
+        }
+        return list;
+    }
+
+    /// <summary>A small rounded pill with an icon and optional text. Returns its right edge.</summary>
+    float DrawBadge(Graphics g, float x, float y, string? glyph, string? text, Color colour)
+    {
+        const TextFormatFlags f = TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter;
+        int gw = glyph is null ? 0 : TextRenderer.MeasureText(g, glyph, IconFont, Size.Empty, f).Width;
+        int tw = text is null ? 0 : TextRenderer.MeasureText(g, text, Font, Size.Empty, f).Width;
+        float w = 6 + gw + (gw > 0 && tw > 0 ? 3 : 0) + tw + 6;
+        var pill = new RectangleF(x, y, w, BadgeH);
+        var mode = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        Theme.FillRounded(g, Color.FromArgb(230, colour), pill, BadgeH / 2f);
+        g.SmoothingMode = mode;
+        float cx = x + 6;
+        if (glyph is not null)
+        {
+            TextRenderer.DrawText(g, glyph, IconFont, new Rectangle((int)cx, (int)y, gw + 2, BadgeH), Color.White, f);
+            cx += gw + 3;
+        }
+        if (text is not null)
+            TextRenderer.DrawText(g, text, Font, new Rectangle((int)cx, (int)y, tw + 2, BadgeH), Color.White, f);
+        return pill.Right;
+    }
+
+    /// <summary>Hover text for a clip: everything the badges abbreviate.</summary>
+    string ClipSummary(Clip c)
+    {
+        var p = _session.Project;
+        var media = p.FindMedia(c.SourceId);
+        var lines = new List<string>
+        {
+            media?.DisplayName ?? "(missing file)",
+            $"{FormatTime(TimelineOps.ClipStart(p, c.Id), tenths: true)} – {FormatTime(TimelineOps.ClipStart(p, c.Id) + c.Duration, tenths: true)}  ({c.Duration.TotalSeconds:0.0}s)" +
+            $"  ·  from {FormatTime(c.In, tenths: true)} in the file",
+        };
+        if (Math.Abs(c.Speed - 1) > 0.0005) lines.Add($"Speed {c.Speed:0.##}×");
+        if (media is { HasAudio: true })
+            lines.Add(c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0 ? "Sound unlinked (it's on the audio track)"
+                : c.Muted ? "Muted"
+                : $"Volume {c.Volume:P0}");
+        else if (media is not null) lines.Add("No sound");
+        return string.Join("\n", lines);
     }
 
     /// <summary>A gap on the main track: an empty dashed slot (black in the video), selectable so Delete can close it.</summary>
@@ -681,7 +760,7 @@ public sealed class TimelineControl : Control
     {
         bool sel = _selectedClips.Contains(c.Id);
         Theme.FillRounded(g, Color.FromArgb(sel ? 40 : 24, 255, 255, 255), r);
-        using (var pen = new Pen(sel ? Accent : Color.FromArgb(110, 255, 255, 255), sel ? 2.5f : 1f) { DashStyle = DashStyle.Dash })
+        using (var pen = new Pen(sel ? Accent : Color.FromArgb(150, 255, 255, 255), sel ? 3.5f : 2f) { DashStyle = DashStyle.Dash })
         {
             using var shape = Theme.Rounded(r);
             g.DrawPath(pen, shape);
@@ -747,8 +826,8 @@ public sealed class TimelineControl : Control
         TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y, r.Width - 12, r.Height)),
             Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         bool sel = _selOverlays.Contains(o.Id);
-        if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
-        else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
+        if (sel) Theme.DrawRounded(g, Accent, 3f, r);
+        else Theme.DrawRounded(g, Color.FromArgb(150, 255, 255, 255), 1.5f, r);
         Grips(g, r, r.Height, 14, sel);
     }
 
@@ -852,6 +931,35 @@ public sealed class TimelineControl : Control
         float from = Math.Max(r.X, r.X + (float)Math.Floor((-tw - r.X) / tw) * tw); // first tile that reaches the screen
         float to = Math.Min(r.Right, Width);
         for (float x = from; x < to; x += tw) g.DrawImageUnscaled(tile, (int)x, (int)r.Y);
+    }
+
+    /// <summary>Clip first-frame thumbnails, keyed by source + In point. Requested once each; null until ready.</summary>
+    readonly Dictionary<(Guid, long), Image> _frames = [];
+    readonly HashSet<(Guid, long)> _framesRequested = [];
+
+    Image? FirstFrame(Clip c)
+    {
+        var key = (c.SourceId, (long)c.In.TotalMilliseconds);
+        if (_frames.TryGetValue(key, out var img)) return img;
+        if (_library.GetState(c.SourceId).ProxyPath is null || !_framesRequested.Add(key)) return null;
+        _ = LoadFrameAsync(key, c.In);
+        return null;
+    }
+
+    async Task LoadFrameAsync((Guid Source, long Ms) key, TimeSpan at)
+    {
+        var path = await _library.FrameThumbnailAsync(key.Source, at); // ffmpeg runs off the UI thread
+        if (path is null || IsDisposed) return; // stays requested: the poster stands in, no retry storm
+        try
+        {
+            Bitmap img;
+            using (var fs = File.OpenRead(path))
+            using (var tmp = Image.FromStream(fs))
+                img = new Bitmap(tmp);
+            void Store() { if (IsDisposed) { img.Dispose(); return; } _frames[key] = img; Invalidate(); }
+            if (InvokeRequired) BeginInvoke(Store); else Store();
+        }
+        catch (Exception e) when (e is IOException or ArgumentException or InvalidOperationException) { }
     }
 
     Image? Thumb(Guid sourceId, string? path)
@@ -962,6 +1070,9 @@ public sealed class TimelineControl : Control
             return;
         }
 
+        // The playhead line itself, anywhere below the ruler (it used to be grabbable only on the ruler).
+        if (OnPlayheadLine(e.Location)) goto Scrub;
+
         // Clips
         for (int i = 0; i < p.Timeline.Count; i++)
         {
@@ -999,7 +1110,72 @@ public sealed class TimelineControl : Control
         Scrub:
         ClearSelection();
         _drag = Drag.Scrub;
-        SeekRequested?.Invoke(this, T(e.X));
+        Scrub(e.X);
+    }
+
+    // ---------------- Scrub with edge auto-scroll ----------------
+
+    /// <summary>
+    /// Within a few pixels of the playhead line, but not on a clip's trim handle: after a split the playhead sits
+    /// exactly on the cut, and grabbing the edge there must still trim.
+    /// </summary>
+    bool OnPlayheadLine(Point pt)
+    {
+        if (pt.Y < RulerH || Math.Abs(pt.X - X(_playhead())) > 4) return false;
+        for (int i = 0; i < _session.Project.Timeline.Count; i++)
+        {
+            var r = ClipRect(i);
+            if (r.Contains(pt) && (pt.X <= r.Left + Grab(r) || pt.X >= r.Right - Grab(r))) return false;
+        }
+        return true;
+    }
+
+    float ScrubRight => Math.Max(1, ClientSize.Width - 21); // matches EnsurePlayheadVisible's margin, so it never jumps
+
+    /// <summary>
+    /// Auto-scroll starts this close to an edge, not only past it: with the window maximised or against the screen
+    /// edge the mouse can't leave the timeline, so "past the edge" never happened (owner, 2026-11-28).
+    /// </summary>
+    const float EdgeZone = 40;
+
+    /// <summary>Move the playhead to the mouse (held at the edge of the view while the mouse is beyond it).</summary>
+    void Scrub(int x) => SeekRequested?.Invoke(this, T(Math.Clamp(x, 0, ScrubRight)));
+
+    /// <summary>How far into the edge zone (negative = left) the drag is, or 0 when the view shouldn't scroll.</summary>
+    float EdgeOverlap()
+    {
+        // Not for a box select (its corner is in screen space), and not until the mouse has really moved, so a
+        // click near an edge doesn't set the view sliding.
+        if (_drag is Drag.None or Drag.Marquee || (!_dragMoved)) return 0;
+        float x = _dragMouse.X;
+        if (x < EdgeZone) return _scrollX > 0 ? x - EdgeZone : 0;
+        if (x > ScrubRight - EdgeZone) return x - (ScrubRight - EdgeZone);
+        return 0;
+    }
+
+    void UpdateEdgeScroll()
+    {
+        if (EdgeOverlap() != 0) { if (!_edgeScroll.Enabled) _edgeScroll.Start(); }
+        else _edgeScroll.Stop();
+    }
+
+    void EdgeScrollTick()
+    {
+        float over = _session is null ? 0 : EdgeOverlap();
+        if (over == 0) { _edgeScroll.Stop(); return; }
+        // Deeper into the zone / further past the edge = faster, like drag-selecting text in an editor.
+        float step = Math.Sign(over) * Math.Clamp(Math.Abs(over) * 0.4f, 3, 120);
+        // Stop at the end of the project plus a little room (half a screen when moving or trimming, so a clip
+        // can still be dragged out past the end), not off into empty space forever.
+        float room = _drag == Drag.Scrub ? 40 : ScrubRight / 2;
+        float maxScroll = Math.Max(0, (float)(TimelineOps.TotalDuration(_session!.Project).TotalSeconds * _pps) - ScrubRight + room);
+        float next = Math.Clamp(_scrollX + step, 0, Math.Max(maxScroll, _scrollX));
+        if (next == _scrollX) return;
+        // The content moved under a still mouse: shift the drag origin with it, then replay the move.
+        _downX -= (int)Math.Round(next - _scrollX);
+        _scrollX = next;
+        OnMouseMove(new MouseEventArgs(MouseButtons.Left, 0, _dragMouse.X, _dragMouse.Y, 0));
+        Invalidate();
     }
 
     void ClearSelection()
@@ -1060,6 +1236,7 @@ public sealed class TimelineControl : Control
         if (_session is null) return;
         if (_drag == Drag.None) { UpdateCursor(e.Location); return; }
 
+        _dragMouse = e.Location;
         var dt = TimeSpan.FromSeconds((e.X - _downX) / _pps);
         if (Math.Abs(e.X - _downX) > 3) _dragMoved = true;
         if (_drag == Drag.Marquee && Math.Abs(e.Y - _downY) > 3) _dragMoved = true; // a box can be dragged straight up/down
@@ -1067,11 +1244,12 @@ public sealed class TimelineControl : Control
         // A click is not a drag: nothing changes until the mouse has really moved (a stray 1 px move
         // used to "move" an annotation piece and break its link).
         if (!_dragMoved && _drag is not Drag.Scrub) return;
+        UpdateEdgeScroll();
 
         switch (_drag)
         {
             case Drag.Scrub:
-                SeekRequested?.Invoke(this, T(e.X));
+                Scrub(e.X);
                 break;
             case Drag.Marquee:
                 _marqueeTo = e.Location;
@@ -1155,6 +1333,7 @@ public sealed class TimelineControl : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        _edgeScroll.Stop();
         if (_drag == Drag.Marquee)
         {
             _marqueeBase = null;
@@ -1245,20 +1424,29 @@ public sealed class TimelineControl : Control
             }
             return;
         }
-        if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
+        if (OnPlayheadLine(pt))
+        {
+            if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
+            Cursor = Cursors.SizeWE;
+            return;
+        }
         for (int i = 0; i < p.Timeline.Count; i++)
         {
             var r = ClipRect(i);
             if (!r.Contains(pt)) continue;
             Cursor = pt.X <= r.Left + Grab(r) || pt.X >= r.Right - Grab(r) ? Cursors.SizeWE : Cursors.Hand;
-            if (p.Timeline[i] is { IsGap: true } gap && _tipFor != gap.Id)
+            var c = p.Timeline[i];
+            if (_tipFor != c.Id)
             {
-                _tipFor = gap.Id;
-                _tip.SetToolTip(this, $"Gap ({gap.Duration.TotalSeconds:0.0}s): black, with only the audio track and overlays playing\n" +
-                                      "Click it and press Del to close it up · drag its edges to make it shorter or longer");
+                _tipFor = c.Id;
+                _tip.SetToolTip(this, c.IsGap
+                    ? $"Gap ({c.Duration.TotalSeconds:0.0}s): black, with only the audio track and overlays playing\n" +
+                      "Click it and press Del to close it up · drag its edges to make it shorter or longer"
+                    : ClipSummary(c));
             }
             return;
         }
+        if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
         Cursor = Cursors.Default;
     }
 
@@ -1363,6 +1551,8 @@ public sealed class TimelineControl : Control
         {
             foreach (var img in _thumbs.Values) img.Dispose();
             foreach (var t in _tiles.Values) t.Dispose();
+            foreach (var f in _frames.Values) f.Dispose();
+            _edgeScroll.Dispose();
         }
         base.Dispose(disposing);
     }

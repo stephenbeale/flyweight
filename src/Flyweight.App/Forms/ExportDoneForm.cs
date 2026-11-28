@@ -5,8 +5,8 @@ namespace Flyweight.App.Forms;
 
 /// <summary>
 /// "Your video is ready", shown once after a successful export. Our own dark dialog (it replaced a TaskDialog, whose
-/// buttons can't be coloured) so the support button can be yellow. Open YouTube Studio is the default (Enter);
-/// Show in Explorer and the coffee button do their thing and leave the dialog open.
+/// buttons can't be coloured) so the support button can be yellow. "Show file and open YouTube Studio" is the default
+/// (Enter); the coffee button opens its page and leaves the dialog open.
 /// </summary>
 public sealed class ExportDoneForm : Form
 {
@@ -48,18 +48,14 @@ public sealed class ExportDoneForm : Form
         var detailLabel = new Label { Text = details, AutoSize = true, ForeColor = Color.Silver, Margin = new Padding(0, 2, 0, LogicalToDeviceUnits(10)) };
         var body = new Label { Text = instructions, AutoSize = true, MaximumSize = new Size(wrap, 0), Margin = new Padding(0, 0, 0, LogicalToDeviceUnits(14)) };
 
-        var studio = Button("Open YouTube Studio", 170);
+        // One button does both (owner, 2026-11-28): "Open YouTube Studio" already selected the file in Explorer, so a
+        // separate "Show in Explorer" next to it read as a second, different step.
+        var studio = Button("Show file and open YouTube Studio", 280);
         studio.Primary = true;
         studio.Click += (_, _) => { OpenStudio = true; Close(); };
-        var explorer = Button("Show in Explorer", 140);
-        explorer.Click += (_, _) =>
-        {
-            try { Process.Start("explorer.exe", $"/select,\"{output}\""); }
-            catch (Exception ex) { MessageBox.Show(this, $"Couldn't open Explorer:\n\n{ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Information); }
-        };
         var close = Button("Close", 90);
         close.Click += (_, _) => Close();
-        var buttons = Row(studio, explorer, close);
+        var buttons = Row(studio, close);
 
         // Support: only here, only after a successful export, never a pop-up (see DECISIONS "Support link").
         var divider = new Panel { Height = 1, Width = wrap, BackColor = Theme.Border, Margin = new Padding(0, LogicalToDeviceUnits(16), 0, LogicalToDeviceUnits(12)) };
