@@ -1353,7 +1353,11 @@ public sealed class MainForm : Form
 
         var t = _engine.Position;
         var name = thumbnail ? YouTubeThumbnail.DefaultFileName(project, _session.FilePath, t) : FrameExport.DefaultFileName(project, _session.FilePath, t);
-        var path = FrameExport.Unique(Path.Combine(FrameExport.DefaultFolder(project), name));
+        // YouTube thumbnails go in the project's Thumbnails folder (owner, 2026-11-28); frames still go beside the
+        // footage they came from. An unsaved project has no folder yet, so its thumbnails go beside the footage too.
+        var folder = thumbnail && _session.FilePath is { } projectFile ? ProjectFolders.ThumbnailsDirectory(projectFile) : FrameExport.DefaultFolder(project);
+        try { Directory.CreateDirectory(folder); } catch (Exception) { folder = FrameExport.DefaultFolder(project); }
+        var path = FrameExport.Unique(Path.Combine(folder, name));
         if (chooseLocation)
         {
             using var dlg = new SaveFileDialog
@@ -1459,8 +1463,9 @@ public sealed class MainForm : Form
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(dlg.ProjectPath)!);
+            ProjectFolders.CreateSubfolders(dlg.ProjectPath);
             _session.Save(dlg.ProjectPath);
-            _statusText.Text = $"Created {Path.GetFileName(dlg.ProjectPath)}";
+            _statusText.Text = $"Created {Path.GetFileName(dlg.ProjectPath)} in its own folder: {ProjectFolders.ProjectDirectory(dlg.ProjectPath)}";
         }
         catch (Exception ex)
         {

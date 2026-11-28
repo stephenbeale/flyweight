@@ -26,13 +26,12 @@ public sealed class NewProjectForm : Form
     public BackgroundFill Background => _blur.Checked ? BackgroundFill.Blur : BackgroundFill.Black;
 
     /// <summary>Full path of the project file to create (valid once the dialog returns OK).</summary>
-    public string ProjectPath => Path.Combine(_folder.Text.Trim(), _name.Text.Trim() + ProjectSerializer.FileExtension);
+    /// <remarks>Inside a folder of its own named after the project, with a Thumbnails folder beside it (<see cref="ProjectFolders"/>).</remarks>
+    public string ProjectPath => ProjectFolders.NewProjectPath(_folder.Text.Trim(), _name.Text.Trim());
 
-    /// <summary>Projects go in Documents\Flyweight unless the current project lives somewhere else.</summary>
+    /// <summary>Projects go in Documents\Flyweight unless the current project lives somewhere else (then beside its folder).</summary>
     public static string DefaultFolder(string? currentProjectPath) =>
-        currentProjectPath is not null && Path.GetDirectoryName(currentProjectPath) is { Length: > 0 } dir
-            ? dir
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Flyweight");
+        ProjectFolders.DefaultParent(currentProjectPath, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Flyweight"));
 
     public NewProjectForm(string folder)
     {
@@ -70,7 +69,7 @@ public sealed class NewProjectForm : Form
         {
             AutoSize = true,
             ForeColor = Color.DimGray,
-            Text = "You can still pick a different size when exporting.",
+            Text = "Makes a folder named after the project, with a Thumbnails folder inside.\nYou can still pick a different size when exporting.",
         };
         var ok = new Button { Text = "Create", AutoSize = true, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
@@ -126,7 +125,9 @@ public sealed class NewProjectForm : Form
         for (int n = 1; ; n++)
         {
             var name = n == 1 ? stem : $"{stem} {n}";
-            if (!File.Exists(Path.Combine(folder, name + ProjectSerializer.FileExtension))) return name;
+            // Taken if either the new layout or an old loose project file uses the name.
+            if (!File.Exists(ProjectFolders.NewProjectPath(folder, name)) && !File.Exists(Path.Combine(folder, name + ProjectSerializer.FileExtension)))
+                return name;
         }
     }
 }
