@@ -94,6 +94,36 @@ public sealed class FfmpegIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Frame_thumbnail_grabs_the_frame_at_the_requested_time_and_caches_it()
+    {
+        if (!FfmpegAvailable()) return;
+        // 1 s green then 1 s red: a frame at 1.5 s must be red (each cut piece shows its own first frame).
+        var green = await MakeClip("g.mp4", 640, 360, 1, "green", audio: false);
+        var red = await MakeClip("r.mp4", 640, 360, 1, "red", audio: false);
+        var both = Path.Combine(_dir, "gr.mp4");
+        await FfmpegRunner.RunFfmpegAsync(["-i", green, "-i", red, "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", both]);
+        var lib = new MediaLibrary(Path.Combine(_dir, "cache"));
+        var m = await lib.ProbeAsync(both);
+
+        Assert.Null(await lib.FrameThumbnailAsync(m.Id, TimeSpan.FromSeconds(1.5))); // no proxy yet
+        await lib.EnsureProxyAsync(m);
+        var path = await lib.FrameThumbnailAsync(m.Id, TimeSpan.FromSeconds(1.5));
+        Assert.True(File.Exists(path));
+        var px = await PixelOf(path!);
+        Assert.True(px.R > 150 && px.G < 80, $"expected red, got {px}");
+        Assert.Equal(path, await lib.FrameThumbnailAsync(m.Id, TimeSpan.FromSeconds(1.5))); // cached
+    }
+
+    async Task<(int R, int G, int B)> PixelOf(string image)
+    {
+        var raw = Path.Combine(_dir, Guid.NewGuid() + ".rgb");
+        // Centre pixel (the proxy pads to 16:9, so the edges may be black bars).
+        await FfmpegRunner.RunFfmpegAsync(["-i", image, "-frames:v", "1", "-vf", "format=rgb24,crop=1:1:100:60", "-f", "rawvideo", "-pix_fmt", "rgb24", raw]);
+        var b = await File.ReadAllBytesAsync(raw);
+        return (b[0], b[1], b[2]);
+    }
+
+    [Fact]
     public async Task Export_concats_trims_pads_and_overlays_annotations_at_the_right_time()
     {
         if (!FfmpegAvailable()) return;

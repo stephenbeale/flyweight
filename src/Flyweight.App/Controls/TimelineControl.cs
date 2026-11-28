@@ -110,6 +110,9 @@ public sealed class TimelineControl : Control
     /// <summary>Clip-body drag past the end of the other clips: the time it will start at (a gap fills the space before it).</summary>
     TimeSpan? _dropTime;
     TimeSpan _dragClipStart;
+    /// <summary>Scrubbing with the mouse past the left/right edge keeps the view scrolling (and the playhead with it).</summary>
+    readonly System.Windows.Forms.Timer _edgeScroll = new() { Interval = 30 };
+    int _scrubX;
 
     public TimelineControl()
     {
@@ -120,6 +123,7 @@ public sealed class TimelineControl : Control
         // The bar's top is the top of the content, so its value counts DOWN from the top (our scroll counts up).
         _vScroll.Scroll += (_, _) => { _scrollY = MaxScrollY() - _vScroll.Value; Invalidate(); };
         Controls.Add(_vScroll);
+        _edgeScroll.Tick += (_, _) => EdgeScrollTick();
     }
 
     // ---------------- Vertical scroll / preferred height ----------------
@@ -480,9 +484,13 @@ public sealed class TimelineControl : Control
         base.OnMouseWheel(e);
         if ((ModifierKeys & Keys.Control) != 0)
         {
-            var at = T(e.X);
+            // Zoom around the PLAYHEAD, not the mouse (owner, 2026-11-28): it stays where it is on screen, or is
+            // brought to the middle if it was scrolled out of view.
+            var at = _playhead();
+            float px = X(at);
+            float anchor = px >= 0 && px <= ScrubRight ? px : ScrubRight / 2;
             _pps = Math.Clamp(_pps * (e.Delta > 0 ? 1.25 : 0.8), 0.5, 400);
-            _scrollX = Math.Max(0, (float)(at.TotalSeconds * _pps) - e.X);
+            _scrollX = Math.Max(0, (float)(at.TotalSeconds * _pps) - anchor);
         }
         else if ((ModifierKeys & Keys.Shift) != 0)
         {
@@ -643,18 +651,24 @@ public sealed class TimelineControl : Control
 
         Theme.FillRounded(g, ClipColor, r);
 
-        // Tile the poster thumbnail along the clip, inside its rounded outline.
-        if (Thumb(c.SourceId, state.ThumbnailPath) is { } img)
+        // ONE thumbnail of the clip's first frame (its In point) at its left end, not the poster tiled all along:
+        // after cuts, every piece showed the same picture and they were hard to tell apart (owner, 2026-11-28).
+        // The poster stands in until that frame has been grabbed from the proxy.
+        float textX = r.X + 6;
+        if ((FirstFrame(c) ?? Thumb(c.SourceId, state.ThumbnailPath)) is { } img && r.Width > 24)
         {
             var region = g.Clip;
             g.SetClip(shape, CombineMode.Intersect);
-            TileThumb(g, c.SourceId, img, r, TrackH);
-            using var shade = new SolidBrush(Color.FromArgb(90, ClipColor));
-            g.FillRectangle(shade, r);
-            // Darker strip behind the label so it stays readable on bright thumbnails.
-            using var strip = new LinearGradientBrush(new RectangleF(r.X, r.Y, r.Width, 26), Color.FromArgb(150, 10, 14, 22), Color.FromArgb(0, 10, 14, 22), LinearGradientMode.Vertical);
-            g.FillRectangle(strip, r.X, r.Y, r.Width, 26);
+            float h = TrackH - 8, w = h * img.Width / img.Height;
+            var dest = new RectangleF(r.X + 4, r.Y + 4, Math.Min(w, r.Width - 8), h);
+            var saved = g.Save();
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            // Crop (not squash) when the clip is narrower than the picture.
+            g.DrawImage(img, dest, new RectangleF(0, 0, img.Width * dest.Width / w, img.Height), GraphicsUnit.Pixel);
+            g.Restore(saved);
+            using (var edge = new Pen(Color.FromArgb(140, 0, 0, 0), 1)) g.DrawRectangle(edge, dest.X, dest.Y, dest.Width, dest.Height);
             g.Clip = region;
+            if (r.Width - dest.Width > 60) textX = dest.Right + 6; // label beside the picture when there's room
         }
 
         var label = media?.DisplayName ?? "(missing)";
@@ -667,12 +681,13 @@ public sealed class TimelineControl : Control
             else if (c.Muted) label += "  ·  muted";
             else if (Math.Abs(c.Volume - 1) >= 0.005) label += $"  ·  vol {c.Volume:P0}";
         }
-        TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y + 4, r.Width - 12, 18)),
+        TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(textX, r.Y + 4, r.Right - textX - 6, 18)),
             Color.White, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
         bool sel = _selectedClips.Contains(c.Id);
-        if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
-        else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
+        // Thick outlines so neighbouring clips read as separate blocks (owner, 2026-11-28).
+        if (sel) Theme.DrawRounded(g, Accent, 3.5f, r);
+        else Theme.DrawRounded(g, Color.FromArgb(170, 255, 255, 255), 2f, r);
         Grips(g, r, TrackH, 20, sel);
     }
 
@@ -681,7 +696,7 @@ public sealed class TimelineControl : Control
     {
         bool sel = _selectedClips.Contains(c.Id);
         Theme.FillRounded(g, Color.FromArgb(sel ? 40 : 24, 255, 255, 255), r);
-        using (var pen = new Pen(sel ? Accent : Color.FromArgb(110, 255, 255, 255), sel ? 2.5f : 1f) { DashStyle = DashStyle.Dash })
+        using (var pen = new Pen(sel ? Accent : Color.FromArgb(150, 255, 255, 255), sel ? 3.5f : 2f) { DashStyle = DashStyle.Dash })
         {
             using var shape = Theme.Rounded(r);
             g.DrawPath(pen, shape);
@@ -747,8 +762,8 @@ public sealed class TimelineControl : Control
         TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(r.X + 6, r.Y, r.Width - 12, r.Height)),
             Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         bool sel = _selOverlays.Contains(o.Id);
-        if (sel) Theme.DrawRounded(g, Accent, 2.5f, r);
-        else Theme.DrawRounded(g, Color.FromArgb(70, 255, 255, 255), 1f, r);
+        if (sel) Theme.DrawRounded(g, Accent, 3f, r);
+        else Theme.DrawRounded(g, Color.FromArgb(150, 255, 255, 255), 1.5f, r);
         Grips(g, r, r.Height, 14, sel);
     }
 
@@ -852,6 +867,35 @@ public sealed class TimelineControl : Control
         float from = Math.Max(r.X, r.X + (float)Math.Floor((-tw - r.X) / tw) * tw); // first tile that reaches the screen
         float to = Math.Min(r.Right, Width);
         for (float x = from; x < to; x += tw) g.DrawImageUnscaled(tile, (int)x, (int)r.Y);
+    }
+
+    /// <summary>Clip first-frame thumbnails, keyed by source + In point. Requested once each; null until ready.</summary>
+    readonly Dictionary<(Guid, long), Image> _frames = [];
+    readonly HashSet<(Guid, long)> _framesRequested = [];
+
+    Image? FirstFrame(Clip c)
+    {
+        var key = (c.SourceId, (long)c.In.TotalMilliseconds);
+        if (_frames.TryGetValue(key, out var img)) return img;
+        if (_library.GetState(c.SourceId).ProxyPath is null || !_framesRequested.Add(key)) return null;
+        _ = LoadFrameAsync(key, c.In);
+        return null;
+    }
+
+    async Task LoadFrameAsync((Guid Source, long Ms) key, TimeSpan at)
+    {
+        var path = await _library.FrameThumbnailAsync(key.Source, at); // ffmpeg runs off the UI thread
+        if (path is null || IsDisposed) return; // stays requested: the poster stands in, no retry storm
+        try
+        {
+            Bitmap img;
+            using (var fs = File.OpenRead(path))
+            using (var tmp = Image.FromStream(fs))
+                img = new Bitmap(tmp);
+            void Store() { if (IsDisposed) { img.Dispose(); return; } _frames[key] = img; Invalidate(); }
+            if (InvokeRequired) BeginInvoke(Store); else Store();
+        }
+        catch (Exception e) when (e is IOException or ArgumentException or InvalidOperationException) { }
     }
 
     Image? Thumb(Guid sourceId, string? path)
@@ -962,6 +1006,9 @@ public sealed class TimelineControl : Control
             return;
         }
 
+        // The playhead line itself, anywhere below the ruler (it used to be grabbable only on the ruler).
+        if (OnPlayheadLine(e.Location)) goto Scrub;
+
         // Clips
         for (int i = 0; i < p.Timeline.Count; i++)
         {
@@ -999,7 +1046,52 @@ public sealed class TimelineControl : Control
         Scrub:
         ClearSelection();
         _drag = Drag.Scrub;
-        SeekRequested?.Invoke(this, T(e.X));
+        Scrub(e.X);
+    }
+
+    // ---------------- Scrub with edge auto-scroll ----------------
+
+    /// <summary>
+    /// Within a few pixels of the playhead line, but not on a clip's trim handle: after a split the playhead sits
+    /// exactly on the cut, and grabbing the edge there must still trim.
+    /// </summary>
+    bool OnPlayheadLine(Point pt)
+    {
+        if (pt.Y < RulerH || Math.Abs(pt.X - X(_playhead())) > 4) return false;
+        for (int i = 0; i < _session.Project.Timeline.Count; i++)
+        {
+            var r = ClipRect(i);
+            if (r.Contains(pt) && (pt.X <= r.Left + Grab(r) || pt.X >= r.Right - Grab(r))) return false;
+        }
+        return true;
+    }
+
+    float ScrubRight => Math.Max(1, ClientSize.Width - 21); // matches EnsurePlayheadVisible's margin, so it never jumps
+
+    /// <summary>Move the playhead to the mouse, held at the edge of the view while the mouse is beyond it.</summary>
+    void Scrub(int x)
+    {
+        _scrubX = x;
+        SeekRequested?.Invoke(this, T(Math.Clamp(x, 0, ScrubRight)));
+        bool outside = x < 0 || x > ScrubRight;
+        if (outside && !_edgeScroll.Enabled) _edgeScroll.Start();
+        else if (!outside) _edgeScroll.Stop();
+    }
+
+    void EdgeScrollTick()
+    {
+        if (_drag != Drag.Scrub || _session is null) { _edgeScroll.Stop(); return; }
+        // Further past the edge = faster, like drag-selecting text past the edge of an editor.
+        float over = _scrubX < 0 ? _scrubX : _scrubX - ScrubRight;
+        if (over == 0) { _edgeScroll.Stop(); return; }
+        float step = Math.Sign(over) * Math.Clamp(Math.Abs(over) * 0.4f, 4, 120);
+        // Stop at the end of the project (plus a little room), not off into empty space.
+        float maxScroll = Math.Max(0, (float)(TimelineOps.TotalDuration(_session.Project).TotalSeconds * _pps) - ScrubRight + 40);
+        float next = Math.Clamp(_scrollX + step, 0, Math.Max(maxScroll, _scrollX));
+        if (next == _scrollX) return;
+        _scrollX = next;
+        SeekRequested?.Invoke(this, T(Math.Clamp(_scrubX, 0, ScrubRight)));
+        Invalidate();
     }
 
     void ClearSelection()
@@ -1071,7 +1163,7 @@ public sealed class TimelineControl : Control
         switch (_drag)
         {
             case Drag.Scrub:
-                SeekRequested?.Invoke(this, T(e.X));
+                Scrub(e.X);
                 break;
             case Drag.Marquee:
                 _marqueeTo = e.Location;
@@ -1155,6 +1247,7 @@ public sealed class TimelineControl : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        _edgeScroll.Stop();
         if (_drag == Drag.Marquee)
         {
             _marqueeBase = null;
@@ -1246,6 +1339,7 @@ public sealed class TimelineControl : Control
             return;
         }
         if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
+        if (OnPlayheadLine(pt)) { Cursor = Cursors.SizeWE; return; }
         for (int i = 0; i < p.Timeline.Count; i++)
         {
             var r = ClipRect(i);
@@ -1363,6 +1457,8 @@ public sealed class TimelineControl : Control
         {
             foreach (var img in _thumbs.Values) img.Dispose();
             foreach (var t in _tiles.Values) t.Dispose();
+            foreach (var f in _frames.Values) f.Dispose();
+            _edgeScroll.Dispose();
         }
         base.Dispose(disposing);
     }

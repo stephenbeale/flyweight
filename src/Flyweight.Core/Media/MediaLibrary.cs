@@ -261,6 +261,46 @@ public sealed class MediaLibrary
         catch (FfmpegException) { }
     }
 
+    readonly ConcurrentDictionary<string, Task<string?>> _frameJobs = new();
+
+    /// <summary>
+    /// Small JPEG of the proxy frame at <paramref name="at"/> (source time), e.g. a clip's first frame for the timeline,
+    /// so the pieces of a cut clip each show their own picture. Cached next to the proxy; repeat calls for the same
+    /// frame share one job. Null while there's no proxy yet, or if ffmpeg fails (callers fall back to the poster).
+    /// </summary>
+    public Task<string?> FrameThumbnailAsync(Guid mediaId, TimeSpan at, CancellationToken ct = default)
+    {
+        var proxy = GetState(mediaId).ProxyPath;
+        if (proxy is null || !File.Exists(proxy)) return Task.FromResult<string?>(null);
+        var path = Path.Combine(Path.GetDirectoryName(proxy)!, "frames", $"f{Math.Max(0, (long)at.TotalMilliseconds)}.jpg");
+        if (File.Exists(path)) return Task.FromResult<string?>(path);
+        return _frameJobs.GetOrAdd(path, _ => MakeFrameAsync(proxy, at, path, ct));
+    }
+
+    async Task<string?> MakeFrameAsync(string proxy, TimeSpan at, string path, CancellationToken ct)
+    {
+        try
+        {
+            await _thumbJobs.WaitAsync(ct);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                var tmp = path + ".partial.jpg";
+                // Proxies are all-intra, so a seek before -i lands on the exact frame and is cheap.
+                await RunFfmpegAsync([
+                    "-ss", Sec(at < TimeSpan.Zero ? TimeSpan.Zero : at), "-i", proxy, "-frames:v", "1", "-update", "1",
+                    "-vf", "scale=-2:120", "-q:v", "4", tmp,
+                ], ct: ct);
+                if (!File.Exists(tmp)) return null;
+                File.Move(tmp, path, overwrite: true);
+                return path;
+            }
+            finally { _thumbJobs.Release(); }
+        }
+        catch (Exception e) when (e is FfmpegException or IOException or OperationCanceledException) { return null; }
+        finally { _frameJobs.TryRemove(path, out _); }
+    }
+
     void Set(Guid id, Action<MediaState> change)
     {
         change(GetState(id));

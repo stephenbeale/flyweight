@@ -547,6 +547,9 @@ public sealed class MainForm : Form
             case Keys.Right: _engine.StepFrames(1); return true;
             case Keys.Shift | Keys.Left: _engine.Seek(_engine.Position - TimeSpan.FromSeconds(1)); return true;
             case Keys.Shift | Keys.Right: _engine.Seek(_engine.Position + TimeSpan.FromSeconds(1)); return true;
+            // Bigger jumps for moving around inside a long clip.
+            case Keys.Control | Keys.Left: case Keys.PageUp: _engine.Seek(_engine.Position - TimeSpan.FromSeconds(10)); return true;
+            case Keys.Control | Keys.Right: case Keys.PageDown: _engine.Seek(_engine.Position + TimeSpan.FromSeconds(10)); return true;
             case Keys.Home: _engine.Seek(TimeSpan.Zero); return true;
             case Keys.End: _engine.Seek(TimelineOps.TotalDuration(_session.Project)); return true;
             case Keys.S: Split(); return true;
@@ -1060,6 +1063,15 @@ public sealed class MainForm : Form
             _statusText.Text = $"Split the audio at {TimelineControl.FormatTime(at, tenths: true)} (Ctrl+Z to undo)";
             return;
         }
+        // Main track. It used to fail silently when the playhead was too near a clip end (owner, 2026-11-28: "having
+        // issues splitting at full zoom"); say why instead.
+        if (TimelineOps.Locate(p, at) is { } hit && !hit.Clip.IsGap
+            && (hit.SourceTime - hit.Clip.In < TimelineOps.MinClipLength || hit.Clip.Out - hit.SourceTime < TimelineOps.MinClipLength))
+        {
+            _statusText.Text = $"Can't split within {TimelineOps.MinClipLength.TotalMilliseconds:0} ms of a clip's start or end (pieces that short "
+                             + "can't be exported). To shave a few frames off, drag the clip's edge instead.";
+            return;
+        }
         _session.Execute(proj => TimelineOps.SplitAt(proj, at));
     }
 
@@ -1268,6 +1280,11 @@ public sealed class MainForm : Form
 
     async Task ImportAsync(IEnumerable<string> paths)
     {
+        // A project that already has an edit: import into the media bin only, and let the owner place the files
+        // (double-click, I, O). Appending to the end of an edited timeline was rarely what was wanted (owner,
+        // 2026-11-28). An empty project still fills the timeline in one go, so starting a video stays one step.
+        bool binOnly = _session.Project.Timeline.Count > 0;
+        int toBin = 0;
         foreach (var path in paths)
         {
             _statusText.Text = $"Reading {Path.GetFileName(path)}…";
@@ -1278,7 +1295,12 @@ public sealed class MainForm : Form
                 MessageBox.Show(this, $"Couldn't read {Path.GetFileName(path)}:\n\n{ex.Message}", "Import", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 continue;
             }
-            if (media.IsAudioOnly)
+            if (binOnly)
+            {
+                _session.Execute(p => p.Media.Add(media));
+                toBin++;
+            }
+            else if (media.IsAudioOnly)
             {
                 AddAudioAtPlayhead(media); // music / narration goes on the audio track, not the video timeline
             }
@@ -1290,6 +1312,9 @@ public sealed class MainForm : Form
             StartProxy(media);
         }
         UpdateStatus();
+        if (toBin > 0)
+            _statusText.Text = $"Added {toBin} file{(toBin == 1 ? "" : "s")} to Media. Double-click to add to the end, or select and press "
+                             + "I to insert at the playhead (O for an overlay).";
     }
 
     bool _exportingFrame;
