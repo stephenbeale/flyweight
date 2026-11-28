@@ -13,6 +13,7 @@ public class ProjectFoldersTests
         var path = ProjectFolders.NewProjectPath(Root, "My video");
         Assert.Equal(Path.Combine(Root, "My video", "My video.flyweight"), path);
         Assert.Equal(Path.Combine(Root, "My video", "Thumbnails"), ProjectFolders.ThumbnailsDirectory(path));
+        Assert.Equal(Path.Combine(Root, "My video", "Freeze frames"), ProjectFolders.FreezeFramesDirectory(path));
     }
 
     [Fact]
@@ -33,7 +34,7 @@ public class ProjectFoldersTests
     }
 
     [Fact]
-    public void Create_subfolders_makes_thumbnails_and_is_repeatable()
+    public void Create_subfolders_makes_thumbnails_and_freeze_frames_and_is_repeatable()
     {
         var dir = Path.Combine(Root, Guid.NewGuid().ToString("N"));
         try
@@ -42,6 +43,7 @@ public class ProjectFoldersTests
             ProjectFolders.CreateSubfolders(path);
             ProjectFolders.CreateSubfolders(path);
             Assert.True(Directory.Exists(Path.Combine(dir, "Test", "Thumbnails")));
+            Assert.True(Directory.Exists(Path.Combine(dir, "Test", "Freeze frames")));
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
     }

@@ -69,7 +69,7 @@ public sealed class NewProjectForm : Form
         {
             AutoSize = true,
             ForeColor = Color.DimGray,
-            Text = "Makes a folder named after the project, with a Thumbnails folder inside.\nYou can still pick a different size when exporting.",
+            Text = "Makes a folder named after the project, with Thumbnails and Freeze frames folders inside.\nYou can still pick a different size when exporting.",
         };
         var ok = new Button { Text = "Create", AutoSize = true, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };

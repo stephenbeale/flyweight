@@ -1132,8 +1132,10 @@ public sealed class MainForm : Form
         SourceMedia still;
         try
         {
-            // Saved next to the footage (not hidden in AppData), so it travels with the project.
-            var png = await _library.ExtractFrameAsync(media, hit.SourceTime, FrameExport.DefaultFolder(p));
+            // Saved in the project's "Freeze frames" folder (owner, 2026-11-28), not hidden in AppData, so it travels
+            // with the project. An unsaved project has no folder yet: next to the footage, as before.
+            var folder = _session.FilePath is { } projectFile ? ProjectFolders.FreezeFramesDirectory(projectFile) : FrameExport.DefaultFolder(p);
+            var png = await _library.ExtractFrameAsync(media, hit.SourceTime, folder);
             still = await _library.ProbeAsync(png);
         }
         catch (Exception ex)
