@@ -292,6 +292,7 @@ public sealed class MainForm : Form
             // Any playhead move (play, step, seek, clip jump) brings it back into view. Scrolling or
             // zooming the timeline alone doesn't move the playhead, so it doesn't fight the user.
             _timeline.EnsurePlayheadVisible();
+            FollowPlayheadClip();
             _preview.Invalidate();
         };
         _engine.PlayingChanged += (_, _) => UpdateTimecode(); // flips the ▶ / ❚❚ button
@@ -642,6 +643,23 @@ public sealed class MainForm : Form
         _engine.Seek(TimelineOps.ClipStart(_session.Project, pasted[0].Id));
         UpdatePropertyGrid();
         _statusText.Text = $"Pasted {(pasted.Count == 1 ? "1 clip" : $"{pasted.Count} clips")} (Ctrl+Z to undo)";
+    }
+
+    Guid? _playheadClipId;
+
+    /// <summary>
+    /// With one clip selected, moving the playhead into another clip selects that one, so the Properties panel always
+    /// shows the clip you're looking at (owner, 2026-11-28). Only when the playhead CROSSES into another clip, so
+    /// clicking a clip elsewhere (e.g. to trim it) isn't undone by the next position update. Gaps don't take it.
+    /// </summary>
+    void FollowPlayheadClip()
+    {
+        var under = TimelineOps.Locate(_session.Project, _engine.Position)?.Clip;
+        if (under?.Id == _playheadClipId) return;
+        _playheadClipId = under?.Id;
+        if (under is null || under.IsGap || _timeline.IsDragging) return;
+        if (_timeline.SelectedClipIds.Count != 1 || _timeline.SelectedClipId is not { } cur || cur == under.Id) return;
+        _timeline.SelectClips([under.Id]); // raises ClipSelected: the Properties panel follows
     }
 
     Guid? CurrentClipId() =>

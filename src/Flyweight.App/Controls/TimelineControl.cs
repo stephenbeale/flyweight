@@ -672,23 +672,87 @@ public sealed class TimelineControl : Control
         }
 
         var label = media?.DisplayName ?? "(missing)";
-        if (Math.Abs(c.Speed - 1) > 0.0005) label = $"{c.Speed:0.##}×  ·  {label}";
         if (state.Status is ProxyStatus.Optimising or ProxyStatus.Queued) label += $"  ·  optimising {state.Progress:P0}";
         if (state.Status == ProxyStatus.Failed) label += "  ·  failed";
-        if (media is { HasAudio: true })
-        {
-            if (c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0) label += "  ·  sound unlinked";
-            else if (c.Muted) label += "  ·  muted";
-            else if (Math.Abs(c.Volume - 1) >= 0.005) label += $"  ·  vol {c.Volume:P0}";
-        }
-        TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(textX, r.Y + 4, r.Right - textX - 6, 18)),
+        TextRenderer.DrawText(g, label, Font, Rectangle.Round(new RectangleF(textX, r.Y + 4, r.Right - textX - 6, Font.Height + 2)),
             Color.White, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+        // Speed / mute / volume as small icon badges along the bottom, over the thumbnail if need be, so even a short
+        // clip shows them (owner, 2026-11-28: they were the end of a long text label and got cut off). Hover for words.
+        var region2 = g.Clip;
+        g.SetClip(shape, CombineMode.Intersect);
+        float bx = r.X + 6, by = r.Bottom - BadgeH - 4;
+        foreach (var (glyph, text, colour) in ClipBadges(p, c, media))
+            bx = DrawBadge(g, bx, by, glyph, text, colour) + 4;
+        g.Clip = region2;
 
         bool sel = _selectedClips.Contains(c.Id);
         // Thick outlines so neighbouring clips read as separate blocks (owner, 2026-11-28).
         if (sel) Theme.DrawRounded(g, Accent, 3.5f, r);
         else Theme.DrawRounded(g, Color.FromArgb(170, 255, 255, 255), 2f, r);
         Grips(g, r, TrackH, 20, sel);
+    }
+
+    // Segoe MDL2 Assets ships with Windows 10 and 11; GDI+ falls back to a default font if it's ever missing.
+    static readonly Font IconFont = new("Segoe MDL2 Assets", 9f);
+    const string GlyphVolume = "\uE767", GlyphMute = "\uE74F", GlyphSpeed = "\uEC4A";
+    int BadgeH => Font.Height + 4; // follows the font, so display scaling doesn't cut the text off
+
+    /// <summary>The badges a clip shows: speed, then muted (or its sound unlinked) or a volume that isn't 100%.</summary>
+    static List<(string? Glyph, string? Text, Color Colour)> ClipBadges(Project p, Clip c, SourceMedia? media)
+    {
+        var list = new List<(string?, string?, Color)>();
+        if (Math.Abs(c.Speed - 1) > 0.0005) list.Add((GlyphSpeed, $"{c.Speed:0.##}×", Color.FromArgb(150, 110, 20)));
+        if (media is { HasAudio: true })
+        {
+            if (c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0) list.Add((GlyphMute, "unlinked", Color.FromArgb(70, 80, 110)));
+            else if (c.Muted) list.Add((GlyphMute, null, Color.FromArgb(160, 50, 50)));
+            else if (Math.Abs(c.Volume - 1) >= 0.005) list.Add((GlyphVolume, $"{c.Volume:P0}", Color.FromArgb(40, 110, 70)));
+        }
+        return list;
+    }
+
+    /// <summary>A small rounded pill with an icon and optional text. Returns its right edge.</summary>
+    float DrawBadge(Graphics g, float x, float y, string? glyph, string? text, Color colour)
+    {
+        const TextFormatFlags f = TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter;
+        int gw = glyph is null ? 0 : TextRenderer.MeasureText(g, glyph, IconFont, Size.Empty, f).Width;
+        int tw = text is null ? 0 : TextRenderer.MeasureText(g, text, Font, Size.Empty, f).Width;
+        float w = 6 + gw + (gw > 0 && tw > 0 ? 3 : 0) + tw + 6;
+        var pill = new RectangleF(x, y, w, BadgeH);
+        var mode = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        Theme.FillRounded(g, Color.FromArgb(230, colour), pill, BadgeH / 2f);
+        g.SmoothingMode = mode;
+        float cx = x + 6;
+        if (glyph is not null)
+        {
+            TextRenderer.DrawText(g, glyph, IconFont, new Rectangle((int)cx, (int)y, gw + 2, BadgeH), Color.White, f);
+            cx += gw + 3;
+        }
+        if (text is not null)
+            TextRenderer.DrawText(g, text, Font, new Rectangle((int)cx, (int)y, tw + 2, BadgeH), Color.White, f);
+        return pill.Right;
+    }
+
+    /// <summary>Hover text for a clip: everything the badges abbreviate.</summary>
+    string ClipSummary(Clip c)
+    {
+        var p = _session.Project;
+        var media = p.FindMedia(c.SourceId);
+        var lines = new List<string>
+        {
+            media?.DisplayName ?? "(missing file)",
+            $"{FormatTime(TimelineOps.ClipStart(p, c.Id), tenths: true)} – {FormatTime(TimelineOps.ClipStart(p, c.Id) + c.Duration, tenths: true)}  ({c.Duration.TotalSeconds:0.0}s)" +
+            $"  ·  from {FormatTime(c.In, tenths: true)} in the file",
+        };
+        if (Math.Abs(c.Speed - 1) > 0.0005) lines.Add($"Speed {c.Speed:0.##}×");
+        if (media is { HasAudio: true })
+            lines.Add(c.Muted && TimelineOps.UnlinkedSoundOf(p, c.Id).Count > 0 ? "Sound unlinked (it's on the audio track)"
+                : c.Muted ? "Muted"
+                : $"Volume {c.Volume:P0}");
+        else if (media is not null) lines.Add("No sound");
+        return string.Join("\n", lines);
     }
 
     /// <summary>A gap on the main track: an empty dashed slot (black in the video), selectable so Delete can close it.</summary>
@@ -1360,21 +1424,29 @@ public sealed class TimelineControl : Control
             }
             return;
         }
-        if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
-        if (OnPlayheadLine(pt)) { Cursor = Cursors.SizeWE; return; }
+        if (OnPlayheadLine(pt))
+        {
+            if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
+            Cursor = Cursors.SizeWE;
+            return;
+        }
         for (int i = 0; i < p.Timeline.Count; i++)
         {
             var r = ClipRect(i);
             if (!r.Contains(pt)) continue;
             Cursor = pt.X <= r.Left + Grab(r) || pt.X >= r.Right - Grab(r) ? Cursors.SizeWE : Cursors.Hand;
-            if (p.Timeline[i] is { IsGap: true } gap && _tipFor != gap.Id)
+            var c = p.Timeline[i];
+            if (_tipFor != c.Id)
             {
-                _tipFor = gap.Id;
-                _tip.SetToolTip(this, $"Gap ({gap.Duration.TotalSeconds:0.0}s): black, with only the audio track and overlays playing\n" +
-                                      "Click it and press Del to close it up · drag its edges to make it shorter or longer");
+                _tipFor = c.Id;
+                _tip.SetToolTip(this, c.IsGap
+                    ? $"Gap ({c.Duration.TotalSeconds:0.0}s): black, with only the audio track and overlays playing\n" +
+                      "Click it and press Del to close it up · drag its edges to make it shorter or longer"
+                    : ClipSummary(c));
             }
             return;
         }
+        if (_tipFor is not null) { _tipFor = null; _tip.SetToolTip(this, null); }
         Cursor = Cursors.Default;
     }
 

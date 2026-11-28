@@ -254,7 +254,7 @@ public sealed class ExportForm : Form
 
     void ShowDone(string output, double sizeMb, TimeSpan took, string encoder, string? detailsFile)
     {
-        string instructions = "Open YouTube Studio to upload it: the file will be selected in Explorer so you can drag it into Studio" +
+        string instructions = "To upload it, the button below selects the file in Explorer and opens YouTube Studio, so you can drag it straight in" +
                               (detailsFile is null ? "." : ", and your title, description and tags open in a text file to paste in.");
         using var done = new ExportDoneForm(output, $"{sizeMb:0} MB · {took:m\\:ss} · {encoder}", instructions, BuyMeACoffeeUrl);
         done.ShowDialog(this);
