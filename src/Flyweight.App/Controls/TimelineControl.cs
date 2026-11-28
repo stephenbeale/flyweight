@@ -112,7 +112,7 @@ public sealed class TimelineControl : Control
     TimeSpan _dragClipStart;
     /// <summary>Scrubbing with the mouse past the left/right edge keeps the view scrolling (and the playhead with it).</summary>
     readonly System.Windows.Forms.Timer _edgeScroll = new() { Interval = 30 };
-    int _scrubX;
+    Point _dragMouse; // last mouse position during a drag, replayed as the view auto-scrolls under it
 
     public TimelineControl()
     {
@@ -1068,29 +1068,49 @@ public sealed class TimelineControl : Control
 
     float ScrubRight => Math.Max(1, ClientSize.Width - 21); // matches EnsurePlayheadVisible's margin, so it never jumps
 
-    /// <summary>Move the playhead to the mouse, held at the edge of the view while the mouse is beyond it.</summary>
-    void Scrub(int x)
+    /// <summary>
+    /// Auto-scroll starts this close to an edge, not only past it: with the window maximised or against the screen
+    /// edge the mouse can't leave the timeline, so "past the edge" never happened (owner, 2026-11-28).
+    /// </summary>
+    const float EdgeZone = 40;
+
+    /// <summary>Move the playhead to the mouse (held at the edge of the view while the mouse is beyond it).</summary>
+    void Scrub(int x) => SeekRequested?.Invoke(this, T(Math.Clamp(x, 0, ScrubRight)));
+
+    /// <summary>How far into the edge zone (negative = left) the drag is, or 0 when the view shouldn't scroll.</summary>
+    float EdgeOverlap()
     {
-        _scrubX = x;
-        SeekRequested?.Invoke(this, T(Math.Clamp(x, 0, ScrubRight)));
-        bool outside = x < 0 || x > ScrubRight;
-        if (outside && !_edgeScroll.Enabled) _edgeScroll.Start();
-        else if (!outside) _edgeScroll.Stop();
+        // Not for a box select (its corner is in screen space), and not until the mouse has really moved, so a
+        // click near an edge doesn't set the view sliding.
+        if (_drag is Drag.None or Drag.Marquee || (!_dragMoved)) return 0;
+        float x = _dragMouse.X;
+        if (x < EdgeZone) return _scrollX > 0 ? x - EdgeZone : 0;
+        if (x > ScrubRight - EdgeZone) return x - (ScrubRight - EdgeZone);
+        return 0;
+    }
+
+    void UpdateEdgeScroll()
+    {
+        if (EdgeOverlap() != 0) { if (!_edgeScroll.Enabled) _edgeScroll.Start(); }
+        else _edgeScroll.Stop();
     }
 
     void EdgeScrollTick()
     {
-        if (_drag != Drag.Scrub || _session is null) { _edgeScroll.Stop(); return; }
-        // Further past the edge = faster, like drag-selecting text past the edge of an editor.
-        float over = _scrubX < 0 ? _scrubX : _scrubX - ScrubRight;
+        float over = _session is null ? 0 : EdgeOverlap();
         if (over == 0) { _edgeScroll.Stop(); return; }
-        float step = Math.Sign(over) * Math.Clamp(Math.Abs(over) * 0.4f, 4, 120);
-        // Stop at the end of the project (plus a little room), not off into empty space.
-        float maxScroll = Math.Max(0, (float)(TimelineOps.TotalDuration(_session.Project).TotalSeconds * _pps) - ScrubRight + 40);
+        // Deeper into the zone / further past the edge = faster, like drag-selecting text in an editor.
+        float step = Math.Sign(over) * Math.Clamp(Math.Abs(over) * 0.4f, 3, 120);
+        // Stop at the end of the project plus a little room (half a screen when moving or trimming, so a clip
+        // can still be dragged out past the end), not off into empty space forever.
+        float room = _drag == Drag.Scrub ? 40 : ScrubRight / 2;
+        float maxScroll = Math.Max(0, (float)(TimelineOps.TotalDuration(_session!.Project).TotalSeconds * _pps) - ScrubRight + room);
         float next = Math.Clamp(_scrollX + step, 0, Math.Max(maxScroll, _scrollX));
         if (next == _scrollX) return;
+        // The content moved under a still mouse: shift the drag origin with it, then replay the move.
+        _downX -= (int)Math.Round(next - _scrollX);
         _scrollX = next;
-        SeekRequested?.Invoke(this, T(Math.Clamp(_scrubX, 0, ScrubRight)));
+        OnMouseMove(new MouseEventArgs(MouseButtons.Left, 0, _dragMouse.X, _dragMouse.Y, 0));
         Invalidate();
     }
 
@@ -1152,6 +1172,7 @@ public sealed class TimelineControl : Control
         if (_session is null) return;
         if (_drag == Drag.None) { UpdateCursor(e.Location); return; }
 
+        _dragMouse = e.Location;
         var dt = TimeSpan.FromSeconds((e.X - _downX) / _pps);
         if (Math.Abs(e.X - _downX) > 3) _dragMoved = true;
         if (_drag == Drag.Marquee && Math.Abs(e.Y - _downY) > 3) _dragMoved = true; // a box can be dragged straight up/down
@@ -1159,6 +1180,7 @@ public sealed class TimelineControl : Control
         // A click is not a drag: nothing changes until the mouse has really moved (a stray 1 px move
         // used to "move" an annotation piece and break its link).
         if (!_dragMoved && _drag is not Drag.Scrub) return;
+        UpdateEdgeScroll();
 
         switch (_drag)
         {
